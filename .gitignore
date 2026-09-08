@@ -1,0 +1,14 @@
+# Go
+*.exe
+*.exe~
+*.test
+*.out
+*.prof
+/bin/
+/dist/
+
+# Редакторы и ОС
+.idea/
+.vscode/
+*.swp
+.DS_Store
