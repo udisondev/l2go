@@ -10,9 +10,3 @@ func TestVersionSmoke(t *testing.T) {
 		t.Fatal("версия не должна быть пустой строкой")
 	}
 }
-
-// TestGatesTurnRed — НАМЕРЕННО СЛОМАН: доказательство, что ворота CI краснеют (P0.2).
-// Будет immediately reverted; см. план/прогресс.md.
-func TestGatesTurnRed(t *testing.T) {
-	t.Fatal("намеренный сбой: если вы это видите в зелёном CI — ворота сломаны")
-}
