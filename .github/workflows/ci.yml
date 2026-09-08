@@ -1,0 +1,34 @@
+# Ворота CI (план/p0.md, P0.2). Активация ворот по фазам (research/r2.md):
+#   - активно сейчас: build + vet + staticcheck + test -race (make check)
+#   - fuzz-смоук:      фаза 1 (протокольный слой) — заглушка ниже
+#   - бюджеты бенчей:  фаза 4 (p99 тика)          — заглушка ниже
+#   - нагрузочный смоук с ботами: фаза 4          — заглушка ниже
+# Ворота, которые всегда зелёные, — карго-культ; заглушки активируются вместе с кодом фаз.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Ворота (build + vet + staticcheck + test -race)
+        run: make check
+
+      # Фаза 1: go test -fuzz=./internal/protocol/... -fuzztime=10s (смоук)
+      # Фаза 4: go test -bench=. -benchmem + benchstat-бюджет p99 тика (red при регрессе)
+      # Фаза 4: нагрузочный смоук с ботами (headless-клиенты из фазы 1)
