@@ -34,4 +34,4 @@
 |---|---|---|
 | [0001](0001-licenzionnaya-poziciya.md) | Лицензионная позиция: GPLv3, открытая разработка | accepted |
 | [0002](0002-model-tika.md) | Модель тика: общий метроном без барьера | accepted |
-| [0003](0003-poryadok-soobscheniy-pri-khandoffe.md) | Доставка и владение при хэндоффе: эпохи, seq, draft-модель | draft (ревью-цикл) |
+| [0003](0003-poryadok-soobscheniy-pri-khandoffe.md) | Транспорт и владение: потоковая модель (ящик, курсор, черновик) | draft (ревью-цикл) |
