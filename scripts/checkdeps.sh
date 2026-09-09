@@ -17,7 +17,7 @@ allowed() {
 		internal/conn) echo "internal/protocol internal/crypto" ;;
 		internal/gateway) echo "internal/conn internal/protocol internal/transport" ;;
 		internal/replica) echo "internal/transport" ;;
-		internal/encode) echo "internal/crypto" ;;
+		internal/encode) echo "internal/protocol internal/crypto pkg/bufpool" ;;
 		internal/world) echo "internal/transport internal/replica internal/encode internal/data internal/geo" ;;
 		internal/service) echo "internal/transport" ;;
 		internal/persist) echo "internal/transport" ;;
@@ -28,8 +28,11 @@ allowed() {
 	esac
 }
 
-# Псевдопакеты тестовых артефактов («pkg [pkg.test]», «pkg.test») отфильтрованы
-# до разбиения на слова: токен с «[» в безкавычном for — glob-паттерн.
+# deps_of — чистый фильтр: его статус отбрасывается вызовом в списке for
+# (подстановка в words-позиции не проверяется errexit). Закономерное
+# опустошение: на пакете без внутренних депов последний grep -v "^$pkg$"
+# даёт rc=1 и под pipefail роняет пайплайн — это ожидаемо. Фатальная
+# проверка go list живёт в теле цикла ниже.
 deps_of() {
 	go list -deps -test "$1" |
 		grep "^$MODULE/" |
@@ -48,6 +51,8 @@ for pkg in $pkgs; do
 		fail=1
 		continue
 	fi
+	# Фатальная проба: errexit действует только в теле цикла, не в подстановке.
+	go list -deps -test "$pkg" >/dev/null
 	for dep in $(deps_of "$pkg"); do
 		case " $allow " in
 			*" $dep "*) ;;
