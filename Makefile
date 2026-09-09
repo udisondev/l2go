@@ -3,8 +3,9 @@ GO ?= go
 STATICCHECK_VERSION ?= v0.8.1
 
 # check — единственная команда для агентов и CI: все ворота разом
-# (build + vet + staticcheck + test -race). План: план/p0.md, задача P0.1/P0.2.
-.PHONY: build test race lint check tidy
+# (build + vet + staticcheck + test -race + матрица зависимостей ADR-0005).
+# План: план/p0.md, задачи P0.1/P0.2/P0.9.
+.PHONY: build test race lint checkdeps check tidy
 
 build:
 	$(GO) build ./...
@@ -19,7 +20,10 @@ lint:
 	$(GO) vet ./...
 	$(GO) run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
 
+checkdeps:
+	bash scripts/checkdeps.sh
+
 tidy:
 	$(GO) mod tidy
 
-check: build lint race
+check: build lint checkdeps race
