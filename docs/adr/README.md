@@ -37,4 +37,4 @@
 | [0002](0002-model-tika.md) | Модель тика: общий метроном без барьера | accepted |
 | [0003](0003-poryadok-soobscheniy-pri-khandoffe.md) | Транспорт и владение: потоковая модель (ящик, курсор, черновик) | accepted |
 | [0004](0004-napravlenie-knownlist-aoi.md) | Направление knownlist/AoI: ячеечная репликация у владельца наблюдателя | accepted |
-| [0005](0005-karta-komponentov.md) | Карта компонентов и правила зависимостей (package-driven) | draft |
+| [0005](0005-karta-komponentov.md) | Карта компонентов и правила зависимостей (package-driven) | accepted |
