@@ -19,7 +19,7 @@ allowed() {
 		internal/replica) echo "internal/transport" ;;
 		internal/encode) echo "internal/protocol internal/crypto pkg/bufpool" ;;
 		internal/world) echo "internal/transport internal/replica internal/encode internal/data internal/geo" ;;
-		internal/service) echo "internal/transport" ;;
+		internal/party|internal/chat|internal/clan|internal/market) echo "internal/transport" ;;
 		internal/persist) echo "internal/transport" ;;
 		internal/loginlink|internal/admin) echo "internal/transport" ;;
 		internal/l2client) echo "internal/protocol internal/crypto" ;;
