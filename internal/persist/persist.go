@@ -1,6 +1,7 @@
-// Package persist — потребитель выходного потока тика: WAL transferID
-// journal-before-apply + write-behind снапшоты; пишет только подтверждённый
-// владелец. Здесь контракт потребителя.
+// Package persist — типы данных выходного потока тика (один из трёх выходных
+// потребителей: пакеты игрокам, бухгалтерия на диск, публикация снапшота):
+// WAL transferID journal-before-apply + write-behind снапшоты; пишет только
+// подтверждённый владелец. Интерфейс потребителя объявит код владельца.
 package persist
 
 import "github.com/udisondev/l2go/internal/transport"
@@ -10,10 +11,4 @@ import "github.com/udisondev/l2go/internal/transport"
 type Record struct {
 	Tick uint64
 	Envs []transport.Envelope
-}
-
-// Writer — выходной потребитель тика (один из трёх: пакеты игрокам,
-// бухгалтерия на диск, публикация снапшота).
-type Writer interface {
-	Write(rec Record) error
 }

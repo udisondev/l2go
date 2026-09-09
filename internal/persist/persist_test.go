@@ -1,15 +1,19 @@
 package persist
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
-type fakeWriter struct{}
-
-func (fakeWriter) Write(Record) error { return nil }
-
-func TestWriterContract(t *testing.T) {
-	var _ Writer = fakeWriter{}
-	rec := Record{Tick: 3}
-	if rec.Tick != 3 {
-		t.Errorf("Record.Tick = %d; want 3", rec.Tick)
+func TestRecordZeroValue(t *testing.T) {
+	var r Record
+	if r.Tick != 0 || r.Envs != nil {
+		t.Errorf("нулевое значение Record не пригодно: %+v", r)
 	}
+}
+
+func ExampleRecord() {
+	r := Record{Tick: 3}
+	fmt.Println(r.Tick, len(r.Envs))
+	// Output: 3 0
 }

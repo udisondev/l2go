@@ -6,6 +6,6 @@ package encode
 // Frame — исходящий кадр клиента в пер-клиентском FIFO (payload уже собран
 // пакетом-писателем).
 type Frame struct {
-	ClientID uint32
+	ClientID uint64 // идентификатор коннекта клиента
 	Payload  []byte
 }

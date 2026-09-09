@@ -18,6 +18,7 @@ race:
 lint:
 	$(GO) vet ./...
 	$(GO) run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
+	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt required:"; echo "$$out"; exit 1; fi
 
 checkdeps:
 	bash scripts/checkdeps.sh

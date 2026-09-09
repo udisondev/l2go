@@ -1,6 +1,9 @@
 package protocol
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestWriterConventionSample(t *testing.T) {
 	var dst [64]byte
@@ -10,4 +13,10 @@ func TestWriterConventionSample(t *testing.T) {
 	if v := (AttackView)(nil).TargetID(); v != 0 {
 		t.Errorf("TargetID = %d; want 0 (стаб)", v)
 	}
+}
+
+func ExampleWriteAttack() {
+	var dst [64]byte
+	fmt.Println(WriteAttack(dst[:], 1, 2))
+	// Output: 0
 }
