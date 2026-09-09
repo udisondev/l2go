@@ -35,4 +35,4 @@
 | [0001](0001-licenzionnaya-poziciya.md) | Лицензионная позиция: GPLv3, открытая разработка | accepted |
 | [0002](0002-model-tika.md) | Модель тика: общий метроном без барьера | accepted |
 | [0003](0003-poryadok-soobscheniy-pri-khandoffe.md) | Транспорт и владение: потоковая модель (ящик, курсор, черновик) | accepted |
-| [0004](0004-napravlenie-knownlist-aoi.md) | Направление knownlist/AoI: ячеечная репликация у владельца наблюдателя | draft |
+| [0004](0004-napravlenie-knownlist-aoi.md) | Направление knownlist/AoI: ячеечная репликация у владельца наблюдателя | accepted |
