@@ -38,4 +38,4 @@
 | [0003](0003-poryadok-soobscheniy-pri-khandoffe.md) | Транспорт и владение: потоковая модель (ящик, курсор, черновик) | accepted |
 | [0004](0004-napravlenie-knownlist-aoi.md) | Направление knownlist/AoI: ячеечная репликация у владельца наблюдателя | accepted |
 | [0005](0005-karta-komponentov.md) | Карта компонентов и правила зависимостей (package-driven) | accepted |
-| [0006](0006-revyu-konveyer-zadach.md) | Ревью-конвейер задачи: стадии, роли, верификация находок | draft |
+| [0006](0006-revyu-konveyer-zadach.md) | Ревью-конвейер задачи: стадии, роли, верификация находок | accepted |
