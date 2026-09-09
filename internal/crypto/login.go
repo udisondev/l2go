@@ -23,10 +23,12 @@ var ErrStaticPhase = errors.New("static-фаза завершена")
 // затираются.
 const MaxFrameOverhead = 24
 
-// LoginCrypt — шифрование login-канала. Двухфазен: создаётся до знания ключа
-// (static-фаза: первый Init-пакет статическим Blowfish + XOR-pass), после
-// расшифровки Init вызывающий извлекает ключ и ставит его SetKey'ом — дальше
-// обе стороны динамические.
+// LoginCrypt — шифрование login-канала. Порт udisondev/interlude@34fe4c86
+// (pkg/crypto/login_encryption.go); канон паддинга — L2J Mobius CT0 Interlude.
+//
+// Двухфазен: создаётся до знания ключа (static-фаза: первый Init-пакет
+// статическим Blowfish + XOR-pass), после расшифровки Init вызывающий извлекает
+// ключ и ставит его SetKey'ом — дальше обе стороны динамические.
 //
 // Форма отправляемого кадра — канон L2J Mobius CT0 (безусловное добивание до
 // кратности 8 + хвостовой блок; изолирована в frameSize). Приём —
@@ -78,7 +80,9 @@ func frameSize(payload int, static bool) int {
 
 // EncryptInit строит кадр первого Init-пакета в dst (static-фаза): копия
 // payload, XOR-pass с ключом xorKey (генерация случайного — забота вызывающего),
-// паддинг нулями, статический Blowfish. Возвращает размер кадра.
+// паддинг нулями, статический Blowfish. Возвращает размер кадра. Контракт буфера
+// тот же, что у Encrypt: cap(dst) >= len(payload) + MaxFrameOverhead; байты в
+// [len(payload), кадр) затираются.
 func (lc *LoginCrypt) EncryptInit(dst, payload []byte, xorKey uint32) (int, error) {
 	if lc.dynamic != nil {
 		return 0, fmt.Errorf("EncryptInit: %w", ErrStaticPhase)
@@ -87,7 +91,9 @@ func (lc *LoginCrypt) EncryptInit(dst, payload []byte, xorKey uint32) (int, erro
 }
 
 // Encrypt строит динамический кадр в dst: копия payload, чексумма, паддинг
-// нулями, динамический Blowfish. Возвращает размер кадра.
+// нулями, динамический Blowfish. Возвращает размер кадра. Контракт буфера:
+// cap(dst) >= len(payload) + MaxFrameOverhead; байты в [len(payload), кадр)
+// затираются.
 func (lc *LoginCrypt) Encrypt(dst, payload []byte) (int, error) {
 	if lc.dynamic == nil {
 		return 0, fmt.Errorf("Encrypt: %w", ErrKeyNotSet)
@@ -114,15 +120,15 @@ func (lc *LoginCrypt) encryptFrame(dst, payload []byte, c *bfCipher, xorKey uint
 	}
 	if static {
 		if err := encXORPass(dst, xorKey); err != nil {
-			return 0, fmt.Errorf("xor-pass: %w", err)
+			return 0, err
 		}
 	} else {
 		if err := appendChecksum(dst); err != nil {
-			return 0, fmt.Errorf("checksum: %w", err)
+			return 0, err
 		}
 	}
 	if err := c.encrypt(dst); err != nil {
-		return 0, fmt.Errorf("blowfish: %w", err)
+		return 0, err
 	}
 	return frame, nil
 }

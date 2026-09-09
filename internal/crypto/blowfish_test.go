@@ -4,17 +4,18 @@ import (
 	"bytes"
 	"encoding/hex"
 	"testing"
+
+	//lint:ignore SA1019 Blowfish обязателен: легаси-провод протокола L2 Interlude, не выбор криптографии для новых систем
+	"golang.org/x/crypto/blowfish"
 )
 
 // Golden-векторы: запуск udisondev/interlude@34fe4c8657d8b6bf338a5d2e788e197489a44f8f
 // (cmd/vectorgen, фиксированные входы, буферы занулены).
 
 func mustHex(t *testing.T, s string) []byte {
+	t.Helper()
 	b, err := hex.DecodeString(s)
 	if err != nil {
-		if t == nil {
-			panic(err)
-		}
 		t.Fatalf("hex decode: %v", err)
 	}
 	return b
@@ -54,8 +55,8 @@ func TestBFCipherGoldenBlock(t *testing.T) {
 }
 
 func TestBFCipherLENotBE(t *testing.T) {
-	// Напоминание-инвариант: LE-семантика обязательна; BE-шифр (голый x/crypto без
-	// свопов) обязан давать ДРУГИЕ байты (дефект la2go — BE-ядро, F11 реестра P1.1).
+	// Инвариант LE-семантики: BE-шифр (голый x/crypto без свопов) обязан давать
+	// ДРУГИЕ байты — свопы нельзя выносить из обёртки.
 	c, err := newBFCipher(staticLoginKey)
 	if err != nil {
 		t.Fatalf("newBFCipher: %v", err)
@@ -65,9 +66,12 @@ func TestBFCipherLENotBE(t *testing.T) {
 		t.Fatalf("encrypt: %v", err)
 	}
 	be := mustHex(t, "000102030405060708090a0b0c0d0e0f")
-	beCipher := c.bare()
-	beCipher.Encrypt(be[:8], be[:8])
-	beCipher.Encrypt(be[8:], be[8:])
+	bare, err := blowfish.NewCipher(staticLoginKey)
+	if err != nil {
+		t.Fatalf("bare cipher: %v", err)
+	}
+	bare.Encrypt(be[:8], be[:8])
+	bare.Encrypt(be[8:], be[8:])
 	if bytes.Equal(le, be) {
 		t.Fatal("LE и BE шифротексты совпали: вектор не дискриминирует")
 	}

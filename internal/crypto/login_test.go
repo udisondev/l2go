@@ -180,17 +180,56 @@ func TestLoginCryptLifecycle(t *testing.T) {
 	}
 }
 
+func TestLoginCryptRoundtripProperty(t *testing.T) {
+	// Полный цикл обеих веток на всех остатках длины payload mod 8 и много
+	// блоков: ловит residue-специфичные ошибки построения кадра (копирование,
+	// зануление паддинга, зона XOR-pass коротких static-кадров).
+	for p := 1; p <= 64; p++ {
+		payload := fill(p)
+
+		// Static: EncryptInit → DecryptInit.
+		lc := NewLoginCrypt()
+		dst := make([]byte, p+MaxFrameOverhead)
+		n, err := lc.EncryptInit(dst, payload, 0x11223344)
+		if err != nil {
+			t.Fatalf("p=%d EncryptInit: %v", p, err)
+		}
+		frame := bytes.Clone(dst[:n])
+		if err := lc.DecryptInit(frame); err != nil {
+			t.Fatalf("p=%d DecryptInit: %v", p, err)
+		}
+		if !bytes.Equal(frame[:p], payload) {
+			t.Fatalf("p=%d static: payload не восстановлен", p)
+		}
+
+		// Dynamic: Encrypt → Decrypt (свежий движок со «случайным» ключом).
+		lc2 := NewLoginCrypt()
+		if err := lc2.SetKey(fill(16)); err != nil {
+			t.Fatalf("p=%d SetKey: %v", p, err)
+		}
+		n, err = lc2.Encrypt(dst, payload)
+		if err != nil {
+			t.Fatalf("p=%d Encrypt: %v", p, err)
+		}
+		frame = bytes.Clone(dst[:n])
+		if err := lc2.Decrypt(frame); err != nil {
+			t.Fatalf("p=%d Decrypt: %v", p, err)
+		}
+		if !bytes.Equal(frame[:p], payload) {
+			t.Fatalf("p=%d dynamic: payload не восстановлен", p)
+		}
+		if n != frameSize(p, false) {
+			t.Fatalf("p=%d: размер кадра %d != frameSize %d", p, n, frameSize(p, false))
+		}
+	}
+}
+
 func TestLoginCryptBadChecksum(t *testing.T) {
 	lc := newDynLogin(t)
 	frame := buildFrame(t, mustHex(t, dynKeyHex), []byte{0x05, 0x00, 0x00, 0x00}, false, true)
-	frame[2] ^= 0xFF // ломаем payload до шифра нельзя — уже зашифрован; ломаем шифртекст
-	var err error
-	func() {
-		defer func() { recover() }()
-		err = lc.Decrypt(frame)
-	}()
-	if err == nil {
-		t.Fatal("битый кадр: Decrypt обязан вернуть ошибку (и не паниковать)")
+	frame[2] ^= 0xFF // ломаем шифртекст
+	if err := lc.Decrypt(frame); err == nil {
+		t.Fatal("битый кадр: Decrypt обязан вернуть ошибку")
 	}
 }
 

@@ -66,12 +66,12 @@ func RSAUnscrambleModulus(scrambled []byte) ([]byte, error) {
 	return m, nil
 }
 
-// ErrBadLength — вход RSA-операции неверной длины (дублируется здесь для
-// godoc-порядка; объявлен выше).
-
 // RSAEncryptNoPadding шифрует блок открытым ключом без паддинга
 // (c = m^e mod n), результат выравнен до размера ключа.
 func RSAEncryptNoPadding(pub *rsa.PublicKey, plaintext []byte) ([]byte, error) {
+	if pub == nil || pub.N == nil || pub.E < 2 {
+		return nil, fmt.Errorf("RSAEncryptNoPadding: вырожденный открытый ключ: %w", ErrBadKey)
+	}
 	keySize := (pub.N.BitLen() + 7) / 8
 	if len(plaintext) == 0 || len(plaintext) > keySize {
 		return nil, fmt.Errorf("RSAEncryptNoPadding: вход %d байт против ключа %d: %w",

@@ -35,13 +35,10 @@ type bfCipher struct {
 func newBFCipher(key []byte) (*bfCipher, error) {
 	c, err := blowfish.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("blowfish key: %w", err)
+		return nil, err
 	}
 	return &bfCipher{c: c}, nil
 }
-
-// bare возвращает ядро без LE-обвязки (для теста-инварианта LE ≠ BE).
-func (b *bfCipher) bare() *blowfish.Cipher { return b.c }
 
 func guardBlock(data []byte) error {
 	if len(data) == 0 {

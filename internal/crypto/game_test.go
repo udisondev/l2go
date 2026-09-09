@@ -5,51 +5,54 @@ import (
 	"testing"
 )
 
-var gameFixtures = []struct{ plain, encS, encC []byte }{}
+// Векторы: запуск udisondev/interlude@34fe4c86 (cmd/vectorgen).
+// wantAfterEncrypt — исходящий каскад (outKey), wantAfterDecrypt — входящий
+// (inKey) на тех же байтах payload; это слепки трансформов каждого направления,
+// а не одна проводная пара «шифртекст→расшифровка».
 
-func init() {
-	p2 := bytes.Repeat([]byte{0xCD}, 100)
-	gameFixtures = []struct{ plain, encS, encC []byte }{
-		// Последовательность пакетов: счётчик ключа меняет поток от пакета к пакету.
+func TestGameCryptGoldenSequence(t *testing.T) {
+	golden := []struct {
+		payload          []byte
+		wantAfterEncrypt []byte
+		wantAfterDecrypt []byte
+	}{
 		{
-			mustHex(nil, "0000002c01"),
-			mustHex(nil, "a113d028cc"),
-			mustHex(nil, "a1b2c3f8c8"),
+			mustHex(t, "0000002c01"),
+			mustHex(t, "a113d028cc"),
+			mustHex(t, "a1b2c3f8c8"),
 		},
 		{
 			bytes.Repeat([]byte{0xAB}, 20),
-			mustHex(nil, "0a137b044a17bd1472fec66c66a13b070d147c03"),
-			mustHex(nil, "0ab2c3d4e5f60102cd279301a16c3197a1b2c3d4"),
+			mustHex(t, "0a137b044a17bd1472fec66c66a13b070d147c03"),
+			mustHex(t, "0ab2c3d4e5f60102cd279301a16c3197a1b2c3d4"),
 		},
 		{
-			p2,
-			mustHex(nil, "6c131d042c17db1438d28c402c8d712b4738362f073cf03f13f9a76b07a65a006c131d042c17db1438d28c402c8d712b4738362f073cf03f13f9a76b07a65a006c131d042c17db1438d28c402c8d712b4738362f073cf03f13f9a76b07a65a006c131d04"),
-			mustHex(nil, "6cb2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4"),
+			bytes.Repeat([]byte{0xCD}, 100),
+			mustHex(t, "6c131d042c17db1438d28c402c8d712b4738362f073cf03f13f9a76b07a65a006c131d042c17db1438d28c402c8d712b4738362f073cf03f13f9a76b07a65a006c131d042c17db1438d28c402c8d712b4738362f073cf03f13f9a76b07a65a006c131d04"),
+			mustHex(t, "6cb2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4e5f60102e1279301a16c3197a1b2c3d4"),
 		},
 	}
-}
 
-func TestGameCryptGoldenSequence(t *testing.T) {
 	var wire [8]byte
 	copy(wire[:], mustHex(t, "a1b2c3d4e5f60102"))
 	gc := NewGameCrypt(wire)
 	gc.Enable()
 
-	for i, f := range gameFixtures {
-		encS := bytes.Clone(f.plain)
-		if err := gc.Encrypt(encS); err != nil {
+	for i, f := range golden {
+		enc := bytes.Clone(f.payload)
+		if err := gc.Encrypt(enc); err != nil {
 			t.Fatalf("p%d Encrypt: %v", i, err)
 		}
-		if !bytes.Equal(encS, f.encS) {
-			t.Fatalf("p%d encS: got %x, want %x", i, encS, f.encS)
+		if !bytes.Equal(enc, f.wantAfterEncrypt) {
+			t.Fatalf("p%d Encrypt: got %x, want %x", i, enc, f.wantAfterEncrypt)
 		}
 
-		encC := bytes.Clone(f.plain)
-		if err := gc.Decrypt(encC); err != nil {
+		dec := bytes.Clone(f.payload)
+		if err := gc.Decrypt(dec); err != nil {
 			t.Fatalf("p%d Decrypt: %v", i, err)
 		}
-		if !bytes.Equal(encC, f.encC) {
-			t.Fatalf("p%d encC: got %x, want %x", i, encC, f.encC)
+		if !bytes.Equal(dec, f.wantAfterDecrypt) {
+			t.Fatalf("p%d Decrypt: got %x, want %x", i, dec, f.wantAfterDecrypt)
 		}
 	}
 }

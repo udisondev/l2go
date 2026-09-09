@@ -76,12 +76,23 @@ func TestAllocsChecksumAndXORPass(t *testing.T) {
 		t.Fatalf("appendChecksum: %v аллокаций, ожидалось 0", n)
 	}
 
+	// Публичный путь encXORPass: полный static-цикл EncryptInit→DecryptInit
+	// (ECB-детерминирован, шифртекст восстанавливается).
+	lc := NewLoginCrypt()
+	payload := fill(8)
+	dst := make([]byte, len(payload)+MaxFrameOverhead)
+	if _, err := lc.EncryptInit(dst, payload, 0x11223344); err != nil {
+		t.Fatalf("EncryptInit: %v", err)
+	}
 	n = testing.AllocsPerRun(100, func() {
-		if err := encXORPass(frame, 0x11223344); err != nil {
+		if err := lc.DecryptInit(dst); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := lc.EncryptInit(dst, payload, 0x11223344); err != nil {
 			t.Fatal(err)
 		}
 	})
 	if n != 0 {
-		t.Fatalf("encXORPass: %v аллокаций, ожидалось 0", n)
+		t.Fatalf("LoginCrypt static-цикл: %v аллокаций, ожидалось 0", n)
 	}
 }

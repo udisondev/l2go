@@ -5,8 +5,8 @@ import (
 	"fmt"
 )
 
-// GameCrypt — XOR-каскад game-канала (port of udisondev/interlude
-// pkg/crypto/game_crypt.go, канон L2J GameCrypt.java). Ключ 16 байт: 8 случайных
+// GameCrypt — XOR-каскад game-канала (порт udisondev/interlude@34fe4c86,
+// pkg/crypto/game_crypt.go; канон L2J GameCrypt.java). Ключ 16 байт: 8 случайных
 // из KeyPacket + 8 статических; каскад i&15 с prev = предыдущий шифрбайт; после
 // каждого пакета LE-u32 счётчик key[8:12] увеличивается на размер payload.
 // До Enable шифрование прозрачно (ProtocolVersion идёт открыто).

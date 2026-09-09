@@ -61,19 +61,18 @@ for pkg in $pkgs; do
 	done
 done
 
-# Внешние зависимости (require в go.mod) — закрытый allowlist. Расширение списка —
-# вместе с зафиксированным решением (ADR/план), не молча.
-externals="$(awk '
-	/^require[^\(]/ { print $2; next }
-	/^require \(/, /^\)/ { if ($1 ~ /^golang.org|^github.com|^gopkg|^modernc|^cel\.dev|^istio/) print $1 }
-' go.mod | grep -v "^$MODULE$" || true)"
+# Внешние модули графа (весь `go list -m all`: прямые и косвенные) — закрытый
+# allowlist. golang.org/x/crypto — единственная прямая зависимость; последние
+# четыре — её собственный граф (рост графа = сознательная правка списка).
+# Расширение списка — вместе с зафиксированным решением (ADR/план), не молча.
+mods="$(go list -m all)" || { echo "checkdeps: go list -m all недоступен" >&2; exit 1; }
 while IFS= read -r dep; do
 	[ -z "$dep" ] && continue
-	case " golang.org/x/crypto " in
+	case " golang.org/x/crypto golang.org/x/net golang.org/x/sys golang.org/x/term golang.org/x/text " in
 		*" $dep "*) ;;
 		*) echo "checkdeps: внешняя зависимость вне allowlist: $dep" >&2; fail=1 ;;
 	esac
-done <<< "$externals"
+done < <(printf '%s\n' "$mods" | tail -n +2 | grep -v "^$MODULE$" | awk '{print $1}')
 
 if [ "$fail" -ne 0 ]; then
 	echo "checkdeps: FAIL" >&2

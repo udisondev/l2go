@@ -33,29 +33,29 @@ func BenchmarkBlowfishEncrypt(b *testing.B) {
 	}
 }
 
-func BenchmarkBlowfishDecrypt(b *testing.B) {
+// BenchmarkBlowfishEncryptDecrypt — раундтрип-пара в одном замере: ns/op —
+// суммарная стоимость decrypt+encrypt (SetBytes — удвоенный размер).
+// Восстановление входа через StopTimer/StartTimer не используется: таймер-механика
+// вносит систематическую добавку (~+100 нс/итерацию, STW ReadMemStats).
+
+func BenchmarkBlowfishEncryptDecrypt(b *testing.B) {
 	c, err := newBFCipher(staticLoginKey)
 	if err != nil {
 		b.Fatal(err)
 	}
 	for _, size := range benchSizes() {
 		b.Run(sizeName(size), func(b *testing.B) {
-			enc := fill(size)
-			if err := c.encrypt(enc); err != nil {
-				b.Fatal(err)
-			}
-			b.SetBytes(int64(size))
+			data := fill(size)
+			b.SetBytes(int64(2 * size))
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				if err := c.decrypt(enc); err != nil {
+				if err := c.decrypt(data); err != nil {
 					b.Fatal(err)
 				}
-				b.StopTimer()
-				if err := c.encrypt(enc); err != nil { // восстановление вне замера
+				if err := c.encrypt(data); err != nil {
 					b.Fatal(err)
 				}
-				b.StartTimer()
 			}
 		})
 	}

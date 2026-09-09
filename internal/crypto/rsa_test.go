@@ -75,4 +75,13 @@ func TestRSAGuards(t *testing.T) {
 	if _, err := RSAEncryptNoPadding(pub, nil); err == nil {
 		t.Fatal("RSAEncryptNoPadding(nil): ожидалась ошибка")
 	}
+	if _, err := RSAEncryptNoPadding(nil, []byte{1}); err == nil {
+		t.Fatal("RSAEncryptNoPadding(nil-ключ): ожидалась ошибка")
+	}
+	if _, err := RSAEncryptNoPadding(&rsa.PublicKey{E: 65537}, []byte{1}); err == nil {
+		t.Fatal("RSAEncryptNoPadding(без N): ожидалась ошибка")
+	}
+	if _, err := RSAEncryptNoPadding(&rsa.PublicKey{N: pub.N, E: 1}, []byte{1}); err == nil {
+		t.Fatal("RSAEncryptNoPadding(E=1): ожидалась ошибка")
+	}
 }

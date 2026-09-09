@@ -3,7 +3,9 @@ package crypto
 import "testing"
 
 // LoginCrypt: payload 40/256/1440 → кадры 56/272/1456 (канон CT0: +4,
-// безусловное добивание, +8). Буфер — кадр + MaxFrameOverhead, до цикла.
+// безусловное добивание, +8). Буфер — payload + MaxFrameOverhead (≥ кадра),
+// выделяется до цикла. Decrypt меряется парой EncryptDecrypt: таймер-механика
+// восстановления вносит систематическую добавку в замер.
 
 func loginBenchPayloads() []int { return []int{40, 256, 1440} }
 
@@ -28,7 +30,7 @@ func BenchmarkLoginCryptEncrypt(b *testing.B) {
 	}
 }
 
-func BenchmarkLoginCryptDecrypt(b *testing.B) {
+func BenchmarkLoginCryptEncryptDecrypt(b *testing.B) {
 	for _, p := range loginBenchPayloads() {
 		b.Run(sizeName(p), func(b *testing.B) {
 			lc := NewLoginCrypt()
@@ -41,19 +43,16 @@ func BenchmarkLoginCryptDecrypt(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			frame = frame[:n]
-			b.SetBytes(int64(n))
+			b.SetBytes(int64(2 * n))
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
 				if err := lc.Decrypt(frame); err != nil {
 					b.Fatal(err)
 				}
-				b.StopTimer()
-				if _, err := lc.Encrypt(frame, frame[:p]); err != nil { // восстановление вне замера
+				if _, err := lc.Encrypt(frame, frame[:p]); err != nil {
 					b.Fatal(err)
 				}
-				b.StartTimer()
 			}
 		})
 	}

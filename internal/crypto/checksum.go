@@ -6,7 +6,7 @@ import (
 )
 
 // Checksum и XOR-pass login-кадров. Семантика L2J NewCrypt
-// (ported from udisondev/interlude pkg/crypto/checksum.go):
+// (порт udisondev/interlude@34fe4c86, pkg/crypto/checksum.go):
 // чексумма — XOR всех LE-u32 слов кадра, хранится в последнем слове;
 // encXORPass — проход с накапливающимся ключом по словам [4, len-8), накопленный
 // ключ записывается в слово [len-8, len-4) — эти 4 байта payload затираются.
