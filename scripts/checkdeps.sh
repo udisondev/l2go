@@ -60,6 +60,21 @@ for pkg in $pkgs; do
 		esac
 	done
 done
+
+# Внешние зависимости (require в go.mod) — закрытый allowlist. Расширение списка —
+# вместе с зафиксированным решением (ADR/план), не молча.
+externals="$(awk '
+	/^require[^\(]/ { print $2; next }
+	/^require \(/, /^\)/ { if ($1 ~ /^golang.org|^github.com|^gopkg|^modernc|^cel\.dev|^istio/) print $1 }
+' go.mod | grep -v "^$MODULE$" || true)"
+while IFS= read -r dep; do
+	[ -z "$dep" ] && continue
+	case " golang.org/x/crypto " in
+		*" $dep "*) ;;
+		*) echo "checkdeps: внешняя зависимость вне allowlist: $dep" >&2; fail=1 ;;
+	esac
+done <<< "$externals"
+
 if [ "$fail" -ne 0 ]; then
 	echo "checkdeps: FAIL" >&2
 	exit 1
