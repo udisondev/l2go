@@ -56,3 +56,92 @@ type Envelope struct {
 	Attrs   Attrs
 	Payload []byte
 }
+
+// Kind — тип письма таксономии. Реестр закрыт: новый тип — правка таксономии.
+type Kind uint16
+
+const (
+	// Действия над сущностью: применяет владелец цели, валидация на применении.
+	KindApplyDamage    Kind = iota + 1 // урон: наступательная часть от атакующего
+	KindAggro                          // аггро
+	KindKillCredit                     // зачёт убийства атакующему
+	KindXP                             // опыт
+	KindControlEffect                  // контроли (стан/рут и т.п.)
+	KindBroadcastState                 // рассылка состояния (огонь/флаги)
+
+	// Передача ресурсов: reserve → commit/abort, журнал до применения.
+	KindReserve    // резервирование предмета/денег
+	KindCommit     // подтверждение передачи
+	KindAbort      // откат передачи
+	KindLootPickup // подбор лута с земли
+	KindSpoil      // спойл трупа
+	KindSweep      // свип
+
+	// Сервисные письма доменов без географии.
+	KindMemberStatus // статус члена пати получателю
+	KindServiceMsg   // прочие письма доменов (инвайты, переписка)
+
+	// Контрольные письма региону: ящик региона, приоритетная полоса.
+	KindSuitcase   // чемодан переезда
+	KindInstallAck // подтверждение установки черновика
+	KindConfirmAck // подтверждение забвения копии источника
+	KindRetire     // гашение черновика/устаревшей попытки
+	KindSeed       // затравка известности при переезде наблюдателя
+)
+
+// Class возвращает класс доставки типа. Неизвестный тип — нулевой класс:
+// валидация на применении такое отклоняет.
+func (k Kind) Class() Class {
+	switch k {
+	case KindApplyDamage, KindBroadcastState:
+		return ClassFireAndForget
+	case KindAggro, KindKillCredit, KindXP, KindControlEffect,
+		KindMemberStatus, KindServiceMsg, KindInstallAck, KindConfirmAck,
+		KindRetire, KindSeed:
+		return ClassReliable
+	case KindReserve, KindCommit, KindAbort, KindLootPickup, KindSpoil,
+		KindSweep, KindSuitcase:
+		return ClassTransfer
+	}
+	return 0
+}
+
+// Regional сообщает, что письмо контрольное: адресат — регион, доставка в
+// контрольный ящик приоритетной полосой.
+func (k Kind) Regional() bool {
+	switch k {
+	case KindSuitcase, KindInstallAck, KindConfirmAck, KindRetire, KindSeed:
+		return true
+	}
+	return false
+}
+
+// Service сообщает, что письмо принадлежит домену без географии.
+func (k Kind) Service() bool {
+	return k == KindMemberStatus || k == KindServiceMsg
+}
+
+// Domain — домен адресата для валидации на применении: письмо применяется,
+// только если домен разрешает тип; по умолчанию — запрет.
+type Domain uint8
+
+const (
+	DomainWorld  Domain = iota + 1 // сущность мира: применяет регион-владелец
+	DomainParty                    // пати
+	DomainChat                     // чат-каналы
+	DomainClan                     // клан
+	DomainMarket                   // маркет/аукцион
+)
+
+// Allows — полный whitelist домена; всё вне перечисленного запрещено.
+func (d Domain) Allows(k Kind) bool {
+	switch d {
+	case DomainWorld:
+		return !k.Service()
+	case DomainParty:
+		return k.Service()
+	case DomainChat, DomainClan, DomainMarket:
+		return k == KindServiceMsg
+	}
+	return false
+}

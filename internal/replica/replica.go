@@ -34,3 +34,20 @@ type AdvisoryInput struct {
 type Advisory interface {
 	Snapshot(cell CellID, id transport.EntityID) (Snapshot, bool)
 }
+
+// MembershipHeader — заголовок членства per-owner блоба: генерация блоба и
+// издатели в состоянии переезда (источник старой эпохи держится до появления
+// новой — анти-мигание на стыке).
+type MembershipHeader struct {
+	Generation uint64
+	Moving     []transport.EntityID
+}
+
+// GroundItem — AoI-запись лёгкого класса: предмет на земле не является
+// сущностью транспорта (decay — состояние региона позиции; подбор — transfer).
+type GroundItem struct {
+	ID         uint64
+	X, Y, Z    int32
+	TemplateID uint32
+	Count      uint32
+}

@@ -28,3 +28,16 @@ func ExampleSnapshot() {
 	fmt.Println(s.Entity(), s.Epoch())
 	// Output: 9 4
 }
+
+func TestMembershipHeader(t *testing.T) {
+	h := MembershipHeader{Generation: 6, Moving: []transport.EntityID{1, 2}}
+	if h.Generation != 6 || len(h.Moving) != 2 {
+		t.Errorf("MembershipHeader = %+v; want генерация 6, 2 переезжающих", h)
+	}
+}
+
+func ExampleGroundItem() {
+	g := GroundItem{ID: 5, X: 10, Y: 20, Z: 30, TemplateID: 1060, Count: 1}
+	fmt.Println(g.ID, g.TemplateID, g.Count)
+	// Output: 5 1060 1
+}
