@@ -3,8 +3,7 @@ GO ?= go
 STATICCHECK_VERSION ?= v0.8.1
 
 # check — единственная команда для агентов и CI: все ворота разом
-# (build + vet + staticcheck + test -race + матрица зависимостей ADR-0005).
-# План: план/p0.md, задачи P0.1/P0.2/P0.9.
+# (build + vet + staticcheck + test -race + матрица зависимостей).
 .PHONY: build test race lint checkdeps check tidy
 
 build:

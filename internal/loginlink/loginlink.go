@@ -1,13 +1,12 @@
-// Package loginlink — клиент стыка login↔game в game-процессе (r4):
+// Package loginlink — клиент стыка login↔game в игровом процессе:
 // LoginServer — один процесс на все миры, GameServer — процесс на мир, стык
-// всегда сетевой. Транспорт — gRPC с фазы 3 (семантика перенесена из pkg/rpc
-// interlude); пограничный лист: пакеты мира этот пакет не импортируют
-// (карта ADR-0005).
+// всегда сетевой (транспорт — gRPC). Пограничный лист: пакеты мира этот пакет
+// не импортируют.
 package loginlink
 
 import "context"
 
-// Client — семантика стыка login↔game (gRPC-реализация — фаза 3).
+// Client — семантика стыка login↔game.
 type Client interface {
 	// RegisterSession регистрирует ключ сессии после успешного логина.
 	RegisterSession(ctx context.Context, key, account string) error

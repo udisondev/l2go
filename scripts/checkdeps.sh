@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Проверка матрицы зависимостей ADR-0005: пакетам internal/ и pkg/ разрешён
-# импорт только нижележащих; пакет вне матрицы = ошибка. Часть make check.
+# Проверка матрицы зависимостей: пакетам internal/ и pkg/ разрешён импорт
+# только ниже лежащих; пакет вне матрицы = ошибка. Часть make check.
+# Матрица дублирует решение о карте компонентов; меняется только вместе с ним.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MODULE=github.com/udisondev/l2go
 
 # allowed <суффикс пакета> печатает список разрешённых внутренних импортов.
-# Синхронно с таблицей ADR-0005 п.5; изменение матрицы = правка ADR.
 allowed() {
 	case "$1" in
 		internal/version|internal/crypto|internal/transport|internal/data|internal/geo) echo "" ;;
@@ -31,14 +31,14 @@ for pkg in $(go list ./... | grep -E "^$MODULE/(internal|pkg)/"); do
 	suffix=${pkg#"$MODULE"/}
 	allow=$(allowed "$suffix")
 	if [ "$allow" = "UNLISTED" ]; then
-		echo "checkdeps: пакет не в матрице ADR-0005: $suffix" >&2
+		echo "checkdeps: пакет не в матрице: $suffix" >&2
 		fail=1
 		continue
 	fi
 	for dep in $(go list -deps "$pkg" | grep "^$MODULE/" | grep -v "^$pkg$" | sed "s|^$MODULE/||"); do
 		case " $allow " in
 			*" $dep "*) ;;
-			*) echo "checkdeps: $suffix импортирует $dep — не разрешено матрицей ADR-0005" >&2; fail=1 ;;
+			*) echo "checkdeps: $suffix импортирует $dep — не разрешено матрицей" >&2; fail=1 ;;
 		esac
 	done
 done

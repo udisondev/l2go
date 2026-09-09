@@ -1,6 +1,6 @@
-// Package net — провода game-процесса: TCP-коннекты клиентов, кадры, обвязка
-// крипты (TCP_NODELAY и read/write deadlines обязательны — docs/perf.md §3).
-// Перенос фрейминга interlude — фаза 1; серверные коннекты — фаза 3.
+// Package net — провода игрового процесса: TCP-коннекты клиентов, кадры,
+// обвязка крипты. TCP_NODELAY и read/write deadlines на каждом соединении
+// обязательны.
 package net
 
 // ConnID — идентификатор коннекта в пределах процесса.
@@ -13,7 +13,7 @@ type Frame struct {
 }
 
 // Handler — потребитель кадров; реализуется gateway. OnClose обязателен:
-// жизненный цикл горутины соединения конечен (codestyle §9).
+// жизненный цикл горутины соединения конечен.
 type Handler interface {
 	OnFrame(f Frame)
 	OnClose(conn ConnID)

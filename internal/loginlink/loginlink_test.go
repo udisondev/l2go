@@ -12,6 +12,6 @@ func (fakeClient) Kick(context.Context, string) error                    { retur
 func (fakeClient) OnlineReport(context.Context, int) error               { return nil }
 
 func TestClientContract(t *testing.T) {
-	// compile-time контракт семантики стыка (реализация — gRPC, фаза 3).
+	// compile-time контракт семантики стыка.
 	var _ Client = fakeClient{}
 }
