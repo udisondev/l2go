@@ -43,6 +43,7 @@ func BenchmarkLoginCryptEncryptDecrypt(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
+			frame = frame[:n]
 			b.SetBytes(int64(2 * n))
 			b.ReportAllocs()
 			b.ResetTimer()

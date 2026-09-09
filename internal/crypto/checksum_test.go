@@ -1,3 +1,5 @@
+// Векторы: запуск udisondev/interlude@34fe4c86 (cmd/vectorgen).
+
 package crypto
 
 import (

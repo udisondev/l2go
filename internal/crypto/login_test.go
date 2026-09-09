@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// Векторы: запуск udisondev/interlude@34fe4c86 (cmd/vectorgen).
+
 const dynKeyHex = "112233445566778899aabbccddeeff00"
 
 func newDynLogin(t *testing.T) *LoginCrypt {
