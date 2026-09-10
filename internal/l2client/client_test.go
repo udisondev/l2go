@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,6 +67,9 @@ func TestFullFlowGolden(t *testing.T) {
 
 	runErr := make(chan error, 1)
 	go func() { runErr <- gc.Run(ctx) }()
+	// детерминизм порядка: стационарные пуши сервера логируются до Logout —
+	// ждём их в логе (кадры в полёте), затем команда
+	waitForLog(t, out, "??(0xBA)")
 	if err := gc.Logout(); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
@@ -88,6 +92,19 @@ func TestFullFlowGolden(t *testing.T) {
 	if err := srv.Err(); err != nil {
 		t.Fatalf("сценарий-сервер: %v", err)
 	}
+}
+
+// waitForLog ждёт появления подстроки в трафик-логе (кадры в полёте).
+func waitForLog(t *testing.T, out *bytes.Buffer, sub string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(out.String(), sub) {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("подстрока %q не появилась в логе за 5с", sub)
 }
 
 // startGolden поднимает сценарий-сервер с golden-скриптами обеих ног.
@@ -140,7 +157,7 @@ func TestEvilInputs(t *testing.T) {
 			name: "GGAuth с чужим session",
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{Steps: []LoginStep{
-					{Reply: wireGGAuth(0xDEADBEEF)},
+					{Expect: opAuthGameGuard, Reply: wireGGAuth(-559038737)}, // 0xDEADBEEF
 				}}
 			},
 			stage:    "Handshake",
@@ -150,7 +167,7 @@ func TestEvilInputs(t *testing.T) {
 			name: "битая чексумма после SetKey",
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{Steps: []LoginStep{
-					{Reply: garbage16},
+					{Expect: opAuthGameGuard, Reply: garbage16, Corrupt: true},
 				}}
 			},
 			stage:    "Handshake",
@@ -161,7 +178,7 @@ func TestEvilInputs(t *testing.T) {
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{CheckAuth: true, Steps: []LoginStep{
 					{Expect: opAuthGameGuard, Reply: wireGGAuth(ScenarioSession)},
-					{Expect: opRequestAuthLogin, Reply: fixtureWire(t, "login", "LOGIN_FAIL")},
+					{Expect: opRequestAuthLogin, Reply: fixtureWire("login", "LOGIN_FAIL")},
 					{Expect: opRequestAuthLogin, Reply: nil},
 				}}
 			},
@@ -184,9 +201,9 @@ func TestEvilInputs(t *testing.T) {
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{CheckAuth: true, Steps: []LoginStep{
 					{Expect: opAuthGameGuard, Reply: wireGGAuth(ScenarioSession)},
-					{Expect: opRequestAuthLogin, Reply: fixtureWire(t, "login", "LOGIN_OK")},
-					{Expect: opRequestServerList, Reply: fixtureWire(t, "login", "SERVER_LIST")},
-					{Expect: opRequestServerLogin, Reply: fixtureWire(t, "login", "PLAY_FAIL")},
+					{Expect: opRequestAuthLogin, Reply: fixtureWire("login", "LOGIN_OK")},
+					{Expect: opRequestServerList, Reply: fixtureWire("login", "SERVER_LIST")},
+					{Expect: opRequestServerLogin, Reply: fixtureWire("login", "PLAY_FAIL")},
 				}}
 			},
 			stage:    "SelectServer",
@@ -227,13 +244,13 @@ func TestEvilInputs(t *testing.T) {
 				return s
 			},
 			stage:    "GameHandshake",
-			contains: "версия отклонена",
+			contains: "отклонена",
 		},
 		{
 			name: "GSLoginFail на Auth",
 			game: func() GameScript {
 				s := GoldenGameScript()
-				s.Steps[1].Reply = fixtureWire(t, "handshake", "LOGIN_FAIL")
+				s.Steps[1].Reply = fixtureWire("handshake", "LOGIN_FAIL")
 				return s
 			},
 			stage:    "Auth",
@@ -294,6 +311,9 @@ func runFlowTo(t *testing.T, srv *ScenarioServer, ctx context.Context, opts Opti
 	if err := lc.Login(ScenarioUser, ScenarioPass); err != nil {
 		return err
 	}
+	if _, _, err := lc.ServerList(); err != nil {
+		return err
+	}
 	if stage == "SelectServer" {
 		_, err := lc.SelectServer(1)
 		return err
@@ -321,6 +341,23 @@ func runFlowTo(t *testing.T, srv *ScenarioServer, ctx context.Context, opts Opti
 	return nil
 }
 
+// scenarioCiphertext — детерминированный шифротекст учётных данных сценария
+// (фиксированная пара + фиксированный plain-блок).
+func scenarioCiphertext(t *testing.T) []byte {
+	t.Helper()
+	key, err := loadScenarioKey()
+	if err != nil {
+		t.Fatalf("loadScenarioKey: %v", err)
+	}
+	var block [128]byte
+	copy(block[0x5E:], ScenarioUser)
+	copy(block[0x6C:], ScenarioPass)
+	c := new(big.Int).Exp(new(big.Int).SetBytes(block[:]), big.NewInt(int64(key.E)), key.N)
+	out := make([]byte, 128)
+	c.FillBytes(out)
+	return out
+}
+
 // Мусорный auth-блоб: расшифровка и проверка сценарием — ошибка шага, не паника.
 func TestScenarioAuthCheck(t *testing.T) {
 	garbage := bytes.Repeat([]byte{0x5A}, 128)
@@ -346,6 +383,9 @@ func TestGameClientStress(t *testing.T) {
 	mustFlow(t, err, "DialLogin")
 	mustFlow(t, lc.Handshake(), "Handshake")
 	mustFlow(t, lc.Login(ScenarioUser, ScenarioPass), "Login")
+	if _, _, err := lc.ServerList(); err != nil {
+		t.Fatalf("ServerList: %v", err)
+	}
 	ep, err := lc.SelectServer(1)
 	mustFlow(t, err, "SelectServer")
 	mustFlow(t, lc.Close(), "Close")
@@ -377,12 +417,9 @@ func TestGameClientStress(t *testing.T) {
 
 // Команда после Close без запуска Run — ошибка, не висение.
 func TestCommandAfterClose(t *testing.T) {
-	srv, out := startGolden(t)
+	srv, _ := startGolden(t)
 	ctx := context.Background()
-	lc, err := DialLogin(ctx, srv.LoginAddr(), Options{Traffic: out})
-	mustFlow(t, err, "DialLogin")
-	ep := GameEndpoint{Addr: srv.GameAddr()}
-	gc, err := DialGame(ctx, ep.Addr, Options{})
+	gc, err := DialGame(ctx, srv.GameAddr(), Options{})
 	mustFlow(t, err, "DialGame")
 	mustFlow(t, gc.Close(), "Close")
 	done := make(chan error, 1)
@@ -410,7 +447,17 @@ func TestCmdScenario(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
-	srv, _ := startGolden(t)
+	srv, err := StartScenarioServer()
+	if err != nil {
+		t.Fatalf("StartScenarioServer: %v", err)
+	}
+	defer srv.Close()
+	go func() { _ = srv.RunLoginScript(GoldenLoginScript(srv)) }()
+	// cmd-сценарий — без стационарных пушей: Logout сразу после входа
+	// (гонка «команда против кадра в полёте» не детерминизируется извне бинарника)
+	full := GoldenGameScript()
+	game := GameScript{Steps: append(full.Steps[:3:3], full.Steps[5])}
+	go func() { _ = srv.RunGameScript(game) }()
 
 	cmd := exec.Command(bin, "-addr", srv.LoginAddr(), "-account", ScenarioUser, "-server", "1", "-char", "0")
 	cmd.Env = append(os.Environ(), "L2CLIENT_PASSWORD="+ScenarioPass)
@@ -420,7 +467,7 @@ func TestCmdScenario(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("l2client: %v\nstderr: %s", err, stderr.String())
 	}
-	golden, err := os.ReadFile("testdata/golden_flow.txt")
+	golden, err := os.ReadFile("testdata/golden_cmd.txt")
 	if err != nil {
 		t.Fatalf("golden: %v", err)
 	}

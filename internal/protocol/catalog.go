@@ -538,3 +538,45 @@ var gameServerExOpcodes = []opcodeDef{
 	{Name: "EX_VARIATION_CANCEL_RESULT", Value: 0x57},
 	{Name: "EX_SHOW_SLIDESHOW_KAMAEL", Value: 0x5B},
 }
+
+// ExGSOpcode — опкод Ex-семейства GameServer→C: sub лежит в байтах 1–2 тела
+// (uint16LE); основной GS→C-таблице записи 0xFE нет — семейство адресуется
+// отдельной таблицей gameServerExOpcodes.
+const ExGSOpcode = 0xFE
+
+// Lookup-имена направлений S→C (диспетчер клиента и лог трафика; C→S
+// форматируется в момент отправки). Мапы строятся из таблиц каталога при
+// инициализации и неизменны — глобальная иммутабельная статика.
+var (
+	loginServerNames  = buildNameMap(loginServerOpcodes)
+	gameServerNames   = buildNameMap(gameServerOpcodes)
+	gameServerExNames = buildNameMap(gameServerExOpcodes)
+)
+
+func buildNameMap(tbl []opcodeDef) map[uint16]string {
+	m := make(map[uint16]string, len(tbl))
+	for _, def := range tbl {
+		m[def.Value] = def.Name
+	}
+	return m
+}
+
+// LoginServerPacketName возвращает имя пакета LoginServer→C по опкоду.
+func LoginServerPacketName(op byte) (string, bool) {
+	name, ok := loginServerNames[uint16(op)]
+	return name, ok
+}
+
+// GameServerPacketName возвращает имя пакета GameServer→C по опкоду
+// (Ex-семейство — GameServerExName).
+func GameServerPacketName(op byte) (string, bool) {
+	name, ok := gameServerNames[uint16(op)]
+	return name, ok
+}
+
+// GameServerExName возвращает имя пакета Ex-семейства GameServer→C по sub
+// (uint16LE в байтах 1–2 тела; sub=0 — «нет sub»).
+func GameServerExName(sub uint16) (string, bool) {
+	name, ok := gameServerExNames[sub]
+	return name, ok
+}

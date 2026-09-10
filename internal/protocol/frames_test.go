@@ -40,9 +40,8 @@ func TestNextFrame(t *testing.T) {
 				t.Errorf("body = %v; want %v", got, tt.want)
 			}
 			// потреблено всегда len(body)+2 — тело это срез в буфере вызывающего
-			off := cap(got) - cap(tt.in)
-			if off != len(got) && len(got) > 0 {
-				t.Errorf("тело не срез в b: смещение %d; want %d", off, len(got))
+			if len(got) > 0 && &got[0] != &tt.in[2] {
+				t.Error("тело не срез в b[2:]")
 			}
 		})
 	}
@@ -70,6 +69,7 @@ func TestNextFrameStream(t *testing.T) {
 // Разрез — 0 аллокаций (путь реестра ADR-0005).
 func TestNextFrameZeroAllocs(t *testing.T) {
 	buf := make([]byte, 4096)
+	buf[0], buf[1] = 0xFF, 0x0F // заявлено 4095 — полный кадр в буфере
 	allocs := testing.AllocsPerRun(100, func() {
 		_, _ = NextFrame(buf)
 	})
