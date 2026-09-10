@@ -548,7 +548,9 @@ const ExGSOpcode = 0xFE
 // форматируется в момент отправки). Мапы строятся из таблиц каталога при
 // инициализации и неизменны — глобальная иммутабельная статика.
 var (
+	loginClientNames  = buildNameMap(loginClientOpcodes)
 	loginServerNames  = buildNameMap(loginServerOpcodes)
+	gameClientNames   = buildNameMap(gameClientOpcodes)
 	gameServerNames   = buildNameMap(gameServerOpcodes)
 	gameServerExNames = buildNameMap(gameServerExOpcodes)
 )
@@ -559,6 +561,19 @@ func buildNameMap(tbl []opcodeDef) map[uint16]string {
 		m[def.Value] = def.Name
 	}
 	return m
+}
+
+// LoginClientPacketName возвращает имя пакета C→LoginServer по опкоду
+// (имена исходящих кадров трафик-лога).
+func LoginClientPacketName(op byte) (string, bool) {
+	name, ok := loginClientNames[uint16(op)]
+	return name, ok
+}
+
+// GameClientPacketName возвращает имя пакета C→GameServer по опкоду.
+func GameClientPacketName(op byte) (string, bool) {
+	name, ok := gameClientNames[uint16(op)]
+	return name, ok
 }
 
 // LoginServerPacketName возвращает имя пакета LoginServer→C по опкоду.

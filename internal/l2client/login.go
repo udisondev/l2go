@@ -23,20 +23,34 @@ import (
 	"github.com/udisondev/l2go/internal/protocol"
 )
 
-// Опкоды пакетов логин-флоу (значения — из каталога опкодов пакета protocol;
-// локальные имена клиента, экспорта опкодов из protocol нет).
+// Опкоды пакетов логин-флоу и их имена трафик-лога (значения — из каталога
+// опкодов пакета protocol; машинная связь констант с каталогом —
+// TestLogNamesCatalog, экспорта опкодов из protocol нет).
 const (
-	opRequestAuthLogin   = 0x00 // REQUEST_AUTH_LOGIN, C→LS
-	opRequestServerLogin = 0x02 // REQUEST_SERVER_LOGIN, C→LS
-	opRequestServerList  = 0x05 // REQUEST_SERVER_LIST, C→LS
-	opAuthGameGuard      = 0x07 // AUTH_GAME_GUARD, C→LS
-
-	opAccountKicked = 0x02 // ACCOUNT_KICKED, LS→C
-	opLoginFail     = 0x01 // LOGIN_FAIL, LS→C
-	opLoginOk       = 0x03 // LOGIN_OK, LS→C
-	opServerList    = 0x04 // SERVER_LIST, LS→C
-	opPlayFail      = 0x06 // PLAY_FAIL, LS→C
-	opPlayOk        = 0x07 // PLAY_OK, LS→C
+	opRequestAuthLogin     = 0x00                   // C→LS
+	opRequestServerLogin   = 0x02                   // C→LS
+	opRequestServerList    = 0x05                   // C→LS
+	opAuthGameGuard        = 0x07                   // C→LS
+	opAccountKicked        = 0x02                   // LS→C
+	opGGAuth               = 0x0B                   // LS→C
+	opLoginFail            = 0x01                   // LS→C
+	opLoginOk              = 0x03                   // LS→C
+	opServerList           = 0x04                   // LS→C
+	opPlayFail             = 0x06                   // LS→C
+	opPlayOk               = 0x07                   // LS→C
+	opInit                 = 0x00                   // LS→C
+	nameAuthGameGuard      = "AUTH_GAME_GUARD"      // C→LS
+	nameRequestAuthLogin   = "REQUEST_AUTH_LOGIN"   // C→LS
+	nameRequestServerList  = "REQUEST_SERVER_LIST"  // C→LS
+	nameRequestServerLogin = "REQUEST_SERVER_LOGIN" // C→LS
+	nameAccountKicked      = "ACCOUNT_KICKED"       // LS→C
+	nameGGAuth             = "GG_AUTH"              // LS→C
+	nameInit               = "INIT"                 // LS→C
+	nameLoginFail          = "LOGIN_FAIL"           // LS→C
+	nameLoginOk            = "LOGIN_OK"             // LS→C
+	namePlayFail           = "PLAY_FAIL"            // LS→C
+	namePlayOk             = "PLAY_OK"              // LS→C
+	nameServerList         = "SERVER_LIST"          // LS→C
 )
 
 // rsaExponent — публичная экспонента RSA login-протокола L2 (канон).
@@ -173,7 +187,7 @@ func (lc *LoginClient) Handshake() error {
 		return fmt.Errorf("стадия Init: %w", err)
 	}
 	lc.pub = &rsa.PublicKey{N: new(big.Int).SetBytes(mod), E: rsaExponent}
-	lc.logRecv("INIT",
+	lc.logRecv(nameInit,
 		Field{K: "session", V: num32(v.SessionID())},
 		Field{K: "revision", V: fmt.Sprintf("0x%04X", v.Revision())})
 
@@ -182,7 +196,7 @@ func (lc *LoginClient) Handshake() error {
 	if err := lc.writeEnc(guard[:]); err != nil {
 		return fmt.Errorf("стадия AuthGameGuard: %w", err)
 	}
-	lc.logSend("AUTH_GAME_GUARD", Field{K: "session", V: num32(lc.sessionID)})
+	lc.logSend(nameAuthGameGuard, Field{K: "session", V: num32(lc.sessionID)})
 
 	reply, err := lc.readDec()
 	if err != nil {
@@ -195,7 +209,7 @@ func (lc *LoginClient) Handshake() error {
 	if gg.Response() != lc.sessionID {
 		return fmt.Errorf("стадия GGAuth: чужой session %d; want %d", gg.Response(), lc.sessionID)
 	}
-	lc.logRecv("GG_AUTH", Field{K: "response", V: num32(gg.Response())})
+	lc.logRecv(nameGGAuth, Field{K: "response", V: num32(gg.Response())})
 	return nil
 }
 
@@ -216,7 +230,7 @@ func (lc *LoginClient) Login(user, pass string) error {
 		return fmt.Errorf("стадия RequestAuthLogin: %w", err)
 	}
 	// Учётные данные не печатаются: только шифротекст (знание пассивного слушателя).
-	lc.logSend("REQUEST_AUTH_LOGIN", Field{K: "rsa", V: hexs(ct)})
+	lc.logSend(nameRequestAuthLogin, Field{K: "rsa", V: hexs(ct)})
 
 	reply, err := lc.readDec()
 	if err != nil {
@@ -229,7 +243,7 @@ func (lc *LoginClient) Login(user, pass string) error {
 			return fmt.Errorf("стадия LoginOk: обрезанное тело (%d Б)", len(reply))
 		}
 		lc.loginOk1, lc.loginOk2 = v.LoginOkID1(), v.LoginOkID2()
-		lc.logRecv("LOGIN_OK",
+		lc.logRecv(nameLoginOk,
 			Field{K: "loginOk1", V: num32(lc.loginOk1)},
 			Field{K: "loginOk2", V: num32(lc.loginOk2)})
 		return nil
@@ -238,14 +252,14 @@ func (lc *LoginClient) Login(user, pass string) error {
 		if !ok {
 			return fmt.Errorf("стадия LoginFail: обрезанное тело (%d Б)", len(reply))
 		}
-		lc.logRecv("LOGIN_FAIL", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		lc.logRecv(nameLoginFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
 		return fmt.Errorf("логин отклонён: reason=0x%02X", v.Reason())
 	case opAccountKicked:
 		v, ok := protocol.NewAccountKickedView(reply)
 		if !ok {
 			return fmt.Errorf("стадия AccountKicked: обрезанное тело (%d Б)", len(reply))
 		}
-		lc.logRecv("ACCOUNT_KICKED", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		lc.logRecv(nameAccountKicked, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
 		return fmt.Errorf("аккаунт исключён: reason=0x%02X", v.Reason())
 	default:
 		return fmt.Errorf("неожиданный ответ логина: опкод 0x%02X", reply[0])
@@ -259,7 +273,7 @@ func (lc *LoginClient) ServerList() ([]protocol.ServerListEntry, []protocol.Serv
 	if err := lc.writeEnc(wire[:]); err != nil {
 		return nil, nil, fmt.Errorf("стадия ServerList: %w", err)
 	}
-	lc.logSend("REQUEST_SERVER_LIST",
+	lc.logSend(nameRequestServerList,
 		Field{K: "loginOk1", V: num32(lc.loginOk1)},
 		Field{K: "loginOk2", V: num32(lc.loginOk2)})
 
@@ -273,7 +287,7 @@ func (lc *LoginClient) ServerList() ([]protocol.ServerListEntry, []protocol.Serv
 	if reply[0] != opServerList {
 		if reply[0] == opLoginFail {
 			if v, ok := protocol.NewLoginFailView(reply); ok {
-				lc.logRecv("LOGIN_FAIL", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+				lc.logRecv(nameLoginFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
 				return nil, nil, fmt.Errorf("список серверов отклонён: reason=0x%02X", v.Reason())
 			}
 		}
@@ -302,7 +316,7 @@ func (lc *LoginClient) ServerList() ([]protocol.ServerListEntry, []protocol.Serv
 		}
 	}
 	lc.servers = servers
-	lc.logRecv("SERVER_LIST", serverListFields(v)...)
+	lc.logRecv(nameServerList, serverListFields(v)...)
 	return servers, chars, nil
 }
 
@@ -314,7 +328,7 @@ func (lc *LoginClient) SelectServer(id byte) (GameEndpoint, error) {
 	if err := lc.writeEnc(wire[:]); err != nil {
 		return GameEndpoint{}, fmt.Errorf("стадия PlayOk: %w", err)
 	}
-	lc.logSend("REQUEST_SERVER_LOGIN", Field{K: "server", V: num(int64(id))})
+	lc.logSend(nameRequestServerLogin, Field{K: "server", V: num(int64(id))})
 
 	reply, err := lc.readDec()
 	if err != nil {
@@ -327,7 +341,7 @@ func (lc *LoginClient) SelectServer(id byte) (GameEndpoint, error) {
 			return GameEndpoint{}, fmt.Errorf("стадия PlayOk: обрезанное тело (%d Б)", len(reply))
 		}
 		lc.playOk1, lc.playOk2 = v.PlayOkID1(), v.PlayOkID2()
-		lc.logRecv("PLAY_OK",
+		lc.logRecv(namePlayOk,
 			Field{K: "playOk1", V: num32(lc.playOk1)},
 			Field{K: "playOk2", V: num32(lc.playOk2)})
 	case opPlayFail:
@@ -335,7 +349,7 @@ func (lc *LoginClient) SelectServer(id byte) (GameEndpoint, error) {
 		if !ok {
 			return GameEndpoint{}, fmt.Errorf("стадия PlayFail: обрезанное тело (%d Б)", len(reply))
 		}
-		lc.logRecv("PLAY_FAIL", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		lc.logRecv(namePlayFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
 		return GameEndpoint{}, fmt.Errorf("выбор сервера отклонён: reason=0x%02X", v.Reason())
 	default:
 		return GameEndpoint{}, fmt.Errorf("неожиданный ответ выбора сервера: опкод 0x%02X", reply[0])

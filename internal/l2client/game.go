@@ -22,17 +22,28 @@ import (
 	"github.com/udisondev/l2go/internal/protocol"
 )
 
-// Опкоды game-флоу (значения — из каталога опкодов пакета protocol).
+// Опкоды game-флоу и их имена трафик-лога (значения — из каталога опкодов
+// пакета protocol; машинная связь — TestLogNamesCatalog).
 const (
-	opProtocolVersion = 0x00 // PROTOCOL_VERSION, C→GS
-	opAuthLogin       = 0x08 // AUTH_LOGIN, C→GS
-	opLogout          = 0x09 // LOGOUT, C→GS
-	opCharacterSelect = 0x0D // CHARACTER_SELECT, C→GS
+	opProtocolVersion = 0x00 // C→GS
+	opAuthLogin       = 0x08 // C→GS
+	opLogout          = 0x09 // C→GS
+	opCharacterSelect = 0x0D // C→GS
 
-	opKeyPacket      = 0x00 // KEY_PACKET, GS→C
-	opCharSelectInfo = 0x13 // CHAR_SELECT_INFO, GS→C
-	opGSLoginFail    = 0x14 // LOGIN_FAIL, GS→C
-	opCharSelected   = 0x15 // CHAR_SELECTED, GS→C
+	opKeyPacket      = 0x00 // GS→C
+	opCharSelectInfo = 0x13 // GS→C
+	opGSLoginFail    = 0x14 // GS→C
+	opCharSelected   = 0x15 // GS→C
+
+	nameProtocolVersion = "PROTOCOL_VERSION" // C→GS
+	nameAuthLogin       = "AUTH_LOGIN"       // C→GS
+	nameLogout          = "LOGOUT"           // C→GS
+	nameCharacterSelect = "CHARACTER_SELECT" // C→GS
+
+	nameKeyPacket      = "KEY_PACKET"       // GS→C
+	nameCharSelectInfo = "CHAR_SELECT_INFO" // GS→C
+	nameGSLoginFail    = "LOGIN_FAIL"       // GS→C
+	nameCharSelected   = "CHAR_SELECTED"    // GS→C
 )
 
 // ErrClosed — команда после выхода Run или Close: детерминированная ошибка,
@@ -91,7 +102,7 @@ func (gc *GameClient) Handshake() error {
 	if err := writeRecord(gc.conn, gc.opts.timeout(), wire[:]); err != nil {
 		return fmt.Errorf("стадия ProtocolVersion: %w", err)
 	}
-	gc.logSend("PROTOCOL_VERSION", Field{K: "version", V: num32(protocol.ProtocolVersionInterlude)})
+	gc.logSend(nameProtocolVersion, Field{K: "version", V: num32(protocol.ProtocolVersionInterlude)})
 
 	frame, err := readFrame(gc.conn, gc.opts.timeout())
 	if err != nil {
@@ -108,7 +119,7 @@ func (gc *GameClient) Handshake() error {
 	copy(wireKey[:], v.Key())
 	gc.crypt = crypto.NewGameCrypt(wireKey)
 	gc.crypt.Enable()
-	gc.logRecv("KEY_PACKET",
+	gc.logRecv(nameKeyPacket,
 		Field{K: "result", V: num(int64(v.Result()))},
 		Field{K: "encryption", V: boolean(v.Encryption())},
 		Field{K: "serverID", V: num32(v.ServerID())},
@@ -125,7 +136,7 @@ func (gc *GameClient) Auth(ep GameEndpoint, account string) ([]protocol.CharSele
 		return nil, fmt.Errorf("стадия AuthLogin: %w", err)
 	}
 	// Аккаунт не печатается — учётные данные.
-	gc.logSend("AUTH_LOGIN",
+	gc.logSend(nameAuthLogin,
 		Field{K: "playKey2", V: num32(ep.PlayOk2)},
 		Field{K: "playKey1", V: num32(ep.PlayOk1)},
 		Field{K: "loginKey1", V: num32(ep.LoginOk1)},
@@ -149,7 +160,7 @@ func (gc *GameClient) Auth(ep GameEndpoint, account string) ([]protocol.CharSele
 			}
 			entries = append(entries, e)
 		}
-		gc.logRecv("CHAR_SELECT_INFO", charSelectionFields(v)...)
+		gc.logRecv(nameCharSelectInfo, charSelectionFields(v)...)
 		return entries, nil
 	case opGSLoginFail:
 		v, ok := protocol.NewGSLoginFailView(reply)
@@ -169,7 +180,7 @@ func (gc *GameClient) SelectChar(slot int32) error {
 	if err := gc.sendEnc(wire[:]); err != nil {
 		return fmt.Errorf("стадия CharacterSelect: %w", err)
 	}
-	gc.logSend("CHARACTER_SELECT", Field{K: "slot", V: num32(slot)})
+	gc.logSend(nameCharacterSelect, Field{K: "slot", V: num32(slot)})
 
 	reply, err := gc.readDec()
 	if err != nil {
@@ -181,14 +192,14 @@ func (gc *GameClient) SelectChar(slot int32) error {
 		if !ok {
 			return fmt.Errorf("стадия CharSelected: обрезанное тело (%d Б)", len(reply))
 		}
-		gc.logRecv("CHAR_SELECTED", charSelectedFields(v)...)
+		gc.logRecv(nameCharSelected, charSelectedFields(v)...)
 		return nil
 	case opGSLoginFail:
 		v, ok := protocol.NewGSLoginFailView(reply)
 		if !ok {
 			return fmt.Errorf("стадия LoginFail: обрезанное тело (%d Б)", len(reply))
 		}
-		gc.logRecv("LOGIN_FAIL", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		gc.logRecv(nameGSLoginFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
 		return fmt.Errorf("выбор персонажа отклонён: reason=0x%02X", v.Reason())
 	default:
 		return fmt.Errorf("неожиданный ответ выбора персонажа: опкод 0x%02X", reply[0])
@@ -212,7 +223,9 @@ func (gc *GameClient) Run(ctx context.Context) error {
 	go gc.readPump(frames, pumpErr)
 	defer func() {
 		_ = gc.Close()
-		for range frames { // дренаж: кадры в полёте логируются до выхода
+		// дренаж: разблокирует ReadPump (отправитель не зависает в send);
+		// кадры после выхода Run отбрасываются — лог уже не пишется
+		for range frames {
 		}
 	}()
 	for {
@@ -271,7 +284,7 @@ func (gc *GameClient) Logout() error {
 	var wire [protocol.LogoutSize]byte
 	protocol.WriteLogout(wire[:])
 	select {
-	case gc.commands <- command{wire: wire[:], name: "LOGOUT"}:
+	case gc.commands <- command{wire: wire[:], name: nameLogout}:
 		return nil
 	case <-gc.done:
 		return ErrClosed

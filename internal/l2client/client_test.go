@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/udisondev/l2go/internal/protocol"
 )
 
 // Полный флоу на сценарий-сервере: логин → выбор сервера → game-хендшейк →
@@ -669,5 +671,43 @@ func TestErrorsWrapped(t *testing.T) {
 	}
 	if !errors.Is(err, errDial) && !strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Errorf("ошибка без контекста адреса: %v", err)
+	}
+}
+
+// TestLogNamesCatalog — имена трафик-лога машинно равны именам каталога своих
+// направлений: дрейф констант ловится (литералы в вызовах лога запрещены).
+func TestLogNamesCatalog(t *testing.T) {
+	tests := []struct {
+		name   string
+		op     byte
+		want   string
+		lookup func(byte) (string, bool)
+	}{
+		{"C→LS AUTH_GAME_GUARD", opAuthGameGuard, nameAuthGameGuard, protocol.LoginClientPacketName},
+		{"C→LS REQUEST_AUTH_LOGIN", opRequestAuthLogin, nameRequestAuthLogin, protocol.LoginClientPacketName},
+		{"C→LS REQUEST_SERVER_LIST", opRequestServerList, nameRequestServerList, protocol.LoginClientPacketName},
+		{"C→LS REQUEST_SERVER_LOGIN", opRequestServerLogin, nameRequestServerLogin, protocol.LoginClientPacketName},
+		{"LS→C INIT", opInit, nameInit, protocol.LoginServerPacketName},
+		{"LS→C GG_AUTH", opGGAuth, nameGGAuth, protocol.LoginServerPacketName},
+		{"LS→C LOGIN_OK", opLoginOk, nameLoginOk, protocol.LoginServerPacketName},
+		{"LS→C LOGIN_FAIL", opLoginFail, nameLoginFail, protocol.LoginServerPacketName},
+		{"LS→C ACCOUNT_KICKED", opAccountKicked, nameAccountKicked, protocol.LoginServerPacketName},
+		{"LS→C SERVER_LIST", opServerList, nameServerList, protocol.LoginServerPacketName},
+		{"LS→C PLAY_OK", opPlayOk, namePlayOk, protocol.LoginServerPacketName},
+		{"LS→C PLAY_FAIL", opPlayFail, namePlayFail, protocol.LoginServerPacketName},
+		{"C→GS PROTOCOL_VERSION", opProtocolVersion, nameProtocolVersion, protocol.GameClientPacketName},
+		{"C→GS AUTH_LOGIN", opAuthLogin, nameAuthLogin, protocol.GameClientPacketName},
+		{"C→GS LOGOUT", opLogout, nameLogout, protocol.GameClientPacketName},
+		{"C→GS CHARACTER_SELECT", opCharacterSelect, nameCharacterSelect, protocol.GameClientPacketName},
+		{"GS→C KEY_PACKET", opKeyPacket, nameKeyPacket, protocol.GameServerPacketName},
+		{"GS→C CHAR_SELECT_INFO", opCharSelectInfo, nameCharSelectInfo, protocol.GameServerPacketName},
+		{"GS→C LOGIN_FAIL", opGSLoginFail, nameGSLoginFail, protocol.GameServerPacketName},
+		{"GS→C CHAR_SELECTED", opCharSelected, nameCharSelected, protocol.GameServerPacketName},
+	}
+	for _, tt := range tests {
+		got, ok := tt.lookup(tt.op)
+		if !ok || got != tt.want {
+			t.Errorf("%s: каталог = %q, %v; константа = %q", tt.name, got, ok, tt.want)
+		}
 	}
 }

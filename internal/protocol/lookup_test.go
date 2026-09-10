@@ -51,6 +51,16 @@ func TestGameServerExName(t *testing.T) {
 
 // Полнота: каждая запись таблицы находится lookup'ом своего направления.
 func TestPacketNamesComplete(t *testing.T) {
+	for _, def := range loginClientOpcodes {
+		if name, ok := LoginClientPacketName(byte(def.Value)); !ok || name != def.Name {
+			t.Errorf("LC: %02X → %q, %v; want %q", def.Value, name, ok, def.Name)
+		}
+	}
+	for _, def := range gameClientOpcodes {
+		if name, ok := GameClientPacketName(byte(def.Value)); !ok || name != def.Name {
+			t.Errorf("GC: %02X → %q, %v; want %q", def.Value, name, ok, def.Name)
+		}
+	}
 	for _, def := range loginServerOpcodes {
 		if name, ok := LoginServerPacketName(byte(def.Value)); !ok || name != def.Name {
 			t.Errorf("LS: %02X → %q, %v; want %q", def.Value, name, ok, def.Name)
