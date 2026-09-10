@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"testing"
-
-	//lint:ignore SA1019 Blowfish обязателен: легаси-провод протокола L2 Interlude, не выбор криптографии для новых систем
-	"golang.org/x/crypto/blowfish"
 )
 
 // Golden-векторы: запуск udisondev/interlude@34fe4c8657d8b6bf338a5d2e788e197489a44f8f
@@ -55,8 +52,8 @@ func TestBFCipherGoldenBlock(t *testing.T) {
 }
 
 func TestBFCipherLENotBE(t *testing.T) {
-	// Инвариант LE-семантики: BE-шифр (голый x/crypto без свопов) обязан давать
-	// ДРУГИЕ байты — свопы нельзя выносить из обёртки.
+	// Инвариант LE-упаковки: BE-шифрование того же блока (слова в BE-представлении —
+	// эквивалент реверса 4-байтовых групп до и после) обязано давать ДРУГИЕ байты.
 	c, err := newBFCipher(staticLoginKey)
 	if err != nil {
 		t.Fatalf("newBFCipher: %v", err)
@@ -66,14 +63,20 @@ func TestBFCipherLENotBE(t *testing.T) {
 		t.Fatalf("encrypt: %v", err)
 	}
 	be := mustHex(t, "000102030405060708090a0b0c0d0e0f")
-	bare, err := blowfish.NewCipher(staticLoginKey)
-	if err != nil {
-		t.Fatalf("bare cipher: %v", err)
+	swapWords(be)
+	if err := c.encrypt(be); err != nil {
+		t.Fatalf("encrypt: %v", err)
 	}
-	bare.Encrypt(be[:8], be[:8])
-	bare.Encrypt(be[8:], be[8:])
+	swapWords(be)
 	if bytes.Equal(le, be) {
 		t.Fatal("LE и BE шифротексты совпали: вектор не дискриминирует")
+	}
+}
+
+// swapWords меняет порядок байтов в каждом 4-байтовом слове (LE↔BE представление).
+func swapWords(b []byte) {
+	for i := 0; i+4 <= len(b); i += 4 {
+		b[i], b[i+1], b[i+2], b[i+3] = b[i+3], b[i+2], b[i+1], b[i]
 	}
 }
 

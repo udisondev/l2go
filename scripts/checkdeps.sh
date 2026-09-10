@@ -62,16 +62,13 @@ for pkg in $pkgs; do
 done
 
 # Внешние модули графа (весь `go list -m all`: прямые и косвенные) — закрытый
-# allowlist. golang.org/x/crypto — единственная прямая зависимость; последние
-# четыре — её собственный граф (рост графа = сознательная правка списка).
-# Расширение списка — вместе с зафиксированным решением (ADR/план), не молча.
+# allowlist. Допустимых внешних зависимостей нет: добавление любой — красный и
+# явное решение (ADR/план), не молча.
 mods="$(go list -m all)" || { echo "checkdeps: go list -m all недоступен" >&2; exit 1; }
 while IFS= read -r dep; do
 	[ -z "$dep" ] && continue
-	case " golang.org/x/crypto golang.org/x/net golang.org/x/sys golang.org/x/term golang.org/x/text " in
-		*" $dep "*) ;;
-		*) echo "checkdeps: внешняя зависимость вне allowlist: $dep" >&2; fail=1 ;;
-	esac
+	echo "checkdeps: внешняя зависимость вне allowlist (пуст): $dep" >&2
+	fail=1
 done < <(printf '%s\n' "$mods" | tail -n +2 | grep -v "^$MODULE$" | awk '{print $1}')
 
 if [ "$fail" -ne 0 ]; then
