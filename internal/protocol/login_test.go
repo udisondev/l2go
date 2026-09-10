@@ -636,22 +636,84 @@ func TestLoginWritersPanics(t *testing.T) {
 	}
 }
 
-// Счётчик — ограничитель навигации, а не только буфер: count=1 при двух
-// записях в буфере не отдаёт вторую запись.
+// Счётчик — ограничитель навигации, а не только буфер: заниженный счётчик
+// не отдаёт записи, целиком лежащие в буфере (обе секции).
 func TestServerListViewCountLimiter(t *testing.T) {
 	full := wire(loginFixtures(t)["SERVER_LIST"]) // count=2, обе записи валидны
-	short := append([]byte(nil), full...)
-	short[1] = 1 // счётчик секции 1 занижен
-	v, ok := NewServerListView(short)
+
+	sec1 := append([]byte(nil), full...)
+	sec1[1] = 1 // счётчик секции 1 занижен
+	v, ok := NewServerListView(sec1)
 	if !ok {
 		t.Fatal("NewServerListView: ok = false")
 	}
 	if _, ok := v.Server(1); ok {
 		t.Error("Server(1) при count=1: ok = true; want false (счётчик ограничивает)")
 	}
-	short[1] = 2
-	v2, _ := NewServerListView(short)
-	if _, ok := v2.Server(1); !ok {
-		t.Error("Server(1) при count=2: ok = false; want true")
+	if _, ok := v.Server(0); !ok {
+		t.Error("Server(0) при count=1: ok = false; want true")
+	}
+
+	sec2 := append([]byte(nil), full...)
+	sec2[47] = 1 // счётчик секции 2 (офсет 3+21·2+2) занижен
+	v2, ok := NewServerListView(sec2)
+	if !ok {
+		t.Fatal("NewServerListView: ok = false")
+	}
+	if _, ok := v2.Chars(1); ok {
+		t.Error("Chars(1) при count2=1: ok = true; want false (счётчик ограничивает)")
+	}
+	if _, ok := v2.Chars(0); !ok {
+		t.Error("Chars(0) при count2=1: ok = false; want true")
+	}
+}
+
+// Короткий dst — паник-контракт каждого писателя пакета (диагностика с
+// именем функции и размером).
+func TestWritersShortDst(t *testing.T) {
+	big := make([]byte, 16<<10)
+	chars := []CharSelectionEntry{tChar1, tChar2}
+	tests := []struct {
+		name string
+		size int
+		call func(dst []byte)
+	}{
+		{"WriteInit", InitSize, func(d []byte) { WriteInit(d, 1, tModulus, tBFKey) }},
+		{"WriteLoginOk", LoginOkSize, func(d []byte) { WriteLoginOk(d, 1, 2) }},
+		{"WriteLoginFail", LoginFailSize, func(d []byte) { WriteLoginFail(d, ReasonAccountInUse) }},
+		{"WriteAccountKicked", AccountKickedSize, func(d []byte) { WriteAccountKicked(d, KickDataStealer) }},
+		{"WritePlayOk", PlayOkSize, func(d []byte) { WritePlayOk(d, 1, 2) }},
+		{"WritePlayFail", PlayFailSize, func(d []byte) { WritePlayFail(d, ReasonSystemErrorLoginLater) }},
+		{"WriteGGAuth", GGAuthSize, func(d []byte) { WriteGGAuth(d, 1) }},
+		{"WriteServerList", ServerListSize(tServers, tChars), func(d []byte) { WriteServerList(d, tServers, tChars, 0) }},
+		{"WriteRequestAuthLogin", RequestAuthLoginSize, func(d []byte) { WriteRequestAuthLogin(d, tRSABlk) }},
+		{"WriteRequestAuthLoginPlain", RequestAuthLoginPlainSize, func(d []byte) {
+			_ = WriteRequestAuthLoginPlain(d, "u", "p")
+		}},
+		{"WriteRequestServerList", RequestServerListSize, func(d []byte) { WriteRequestServerList(d, 1, 2) }},
+		{"WriteRequestServerLogin", RequestServerLoginSize, func(d []byte) { WriteRequestServerLogin(d, 1, 2, 1) }},
+		{"WriteAuthGameGuard", AuthGameGuardSize, func(d []byte) { WriteAuthGameGuard(d, 1) }},
+		{"WriteProtocolVersion", ProtocolVersionSize, func(d []byte) { WriteProtocolVersion(d, 746) }},
+		{"WriteAuthLogin", AuthLoginSize("user"), func(d []byte) { WriteAuthLogin(d, "user", 1, 2, 3, 4) }},
+		{"WriteLogout", LogoutSize, func(d []byte) { WriteLogout(d) }},
+		{"WriteCharacterSelect", CharacterSelectSize, func(d []byte) { WriteCharacterSelect(d, 0) }},
+		{"WriteKeyPacket", KeyPacketSize, func(d []byte) { WriteKeyPacket(d, 1, tKeyPacketKey, true, 1) }},
+		{"WriteGSLoginFail", GSLoginFailSize, func(d []byte) { WriteGSLoginFail(d, GSReasonNoText) }},
+		{"WriteCharSelectionInfo", CharSelectionInfoSize(chars), func(d []byte) { WriteCharSelectionInfo(d, chars, 0) }},
+		{"WriteCharSelected", CharSelectedSize(tCharSelected), func(d []byte) { WriteCharSelected(d, tCharSelected) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("%s: паника на dst %d байт не поднята; want контракт", tt.name, tt.size-1)
+				}
+				if msg, ok := r.(string); !ok || !strings.Contains(msg, tt.name) {
+					t.Errorf("%s: паника = %v; want имя функции в диагностике", tt.name, r)
+				}
+			}()
+			tt.call(big[:tt.size-1])
+		})
 	}
 }
