@@ -50,7 +50,8 @@ slog, простота, гайды стиля и производительно�
 | `internal/data` | — |
 | `internal/geo` | — |
 | `internal/transport` | — |
-| `internal/protocol` | — |
+| `internal/protocol` | protocol/fixture |
+| `internal/protocol/fixture` | — |
 | `internal/conn` | protocol, crypto |
 | `internal/gateway` | conn, protocol, transport |
 | `internal/replica` | transport |
@@ -61,7 +62,7 @@ slog, простота, гайды стиля и производительно�
 | `internal/clan` | transport |
 | `internal/market` | transport |
 | `internal/persist` | transport |
-| `internal/l2client` | protocol, crypto |
+| `internal/l2client` | protocol, protocol/fixture, crypto |
 | `internal/login` | protocol, crypto |
 | `internal/loginlink` | transport |
 | `internal/admin` | transport |

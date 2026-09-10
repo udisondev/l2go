@@ -42,13 +42,21 @@ func FuzzRoundtripS(f *testing.F) {
 			t.Fatalf("WriteS(%q) = %d; LenS = %d", s, n, LenS(s))
 		}
 		got, rn, ok := ReadS(buf, 0)
-		if !ok || rn != n {
-			t.Fatalf("ReadS(%q): %q, %d, %v", s, got, rn, ok)
+		if !ok {
+			t.Fatalf("ReadS(%q): ok=false", s)
 		}
-		if validUTF8(s) && !containsNUL(s) && got != s {
+		if containsNUL(s) {
+			// NUL — терминатор: WriteS пишет поле целиком, ReadS останавливается
+			// на первом NUL; равенство n==rn не требуется.
+			return
+		}
+		if rn != n {
+			t.Fatalf("ReadS(%q): n=%d; want %d", s, rn, n)
+		}
+		if validUTF8(s) && got != s {
 			t.Fatalf("валидная строка %q прошла как %q", s, got)
 		}
-		if (!validUTF8(s) || containsNUL(s)) && got == s {
+		if !validUTF8(s) && got == s {
 			t.Fatalf("невалидный вход %q прошёл без канонизации", s)
 		}
 	})

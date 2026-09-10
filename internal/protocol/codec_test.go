@@ -13,20 +13,21 @@ import (
 
 func TestWriteFixedPrimitives(t *testing.T) {
 	cases := []struct {
-		name string
+		name  string
+		size  int
 		write func(dst []byte)
 		want  string // hex
 	}{
-		{"WriteD отрицательное", func(d []byte) { WriteD(d, -2) }, "feffffff"},
-		{"WriteD max", func(d []byte) { WriteD(d, math.MaxInt32) }, "ffffffff"},
-		{"WriteH", func(d []byte) { WriteH(d, -2) }, "feff"},
-		{"WriteQ", func(d []byte) { WriteQ(d, -1) }, "ffffffffffffffff"},
-		{"WriteF", func(d []byte) { WriteF(d, 1.5) }, "000000000000f83f"},
+		{"WriteD отрицательное", 4, func(d []byte) { WriteD(d, -2) }, "feffffff"},
+		{"WriteD max", 4, func(d []byte) { WriteD(d, math.MaxInt32) }, "ffffff7f"},
+		{"WriteH", 2, func(d []byte) { WriteH(d, -2) }, "feff"},
+		{"WriteQ", 8, func(d []byte) { WriteQ(d, -1) }, "ffffffffffffffff"},
+		{"WriteF", 8, func(d []byte) { WriteF(d, 1.5) }, "000000000000f83f"},
 	}
 	for _, c := range cases {
 		var dst [8]byte
 		c.write(dst[:])
-		if got := hexStr(dst[:]); got != c.want {
+		if got := hexStr(dst[:c.size]); got != c.want {
 			t.Errorf("%s = %s; want %s", c.name, got, c.want)
 		}
 	}
@@ -72,7 +73,7 @@ func TestLenSMatchesWriteS(t *testing.T) {
 		"",
 		"a",
 		"ИмяПерсонажа",
-		"😀👍",       // не-BMP: 2 юнита на руну
+		"😀👍",             // не-BMP: 2 юнита на руну
 		"a\xed\xa0\x80b", // невалидный UTF-8: замены U+FFFD
 		strings.Repeat("щ", 300),
 	}
@@ -162,7 +163,7 @@ func TestStringCanonicalization(t *testing.T) {
 		{"\xff", "�"},
 		{"a\xc0\xafb", "a��b"},
 		{"\xed\xa0\x80", "���"}, // WTF-8 половинка суррогата: 3 байта → 3 замены
-		{"a\x00b", "a"},        // NUL в середине — терминатор
+		{"a\x00b", "a"},         // NUL в середине — терминатор
 	}
 	for _, c := range cases {
 		dst := make([]byte, LenS(c.in))
@@ -199,22 +200,35 @@ func TestWriteSMatchesUTF16Encode(t *testing.T) {
 
 func TestReadEvilOffsets(t *testing.T) {
 	src := []byte{1, 2, 3, 4, 5, 6, 7, 8}
-	cases := []struct {
+	type probe struct {
 		name string
-		call func() bool // true = ok
-	}{
-		{"ReadD off=-1", func() { _, ok := ReadD(src, -1); return ok }},
-		{"ReadD off=len", func() { _, ok := ReadD(src, len(src)); return ok }},
-		{"ReadD off=len-3 (хвост)", func() { _, ok := ReadD(src, len(src)-3); return ok }},
-		{"ReadD off=MaxInt", func() { _, ok := ReadD(src, math.MaxInt); return ok }},
-		{"ReadD off=MinInt", func() { _, ok := ReadD(src, math.MinInt); return ok }},
-		{"ReadH off=-2", func() { _, ok := ReadH(src, -2); return ok }},
-		{"ReadQ off=MaxInt-2", func() { _, ok := ReadQ(src, math.MaxInt-2); return ok }},
-		{"ReadF off=-8", func() { _, ok := ReadF(src, -8); return ok }},
+		call func(src []byte, off int) bool
 	}
-	for _, c := range cases {
-		if ok := c.call(); ok {
-			t.Errorf("%s: ok=true на злом офсете", c.name)
+	probes := []probe{
+		{"ReadD", func(src []byte, off int) bool { _, ok := ReadD(src, off); return ok }},
+		{"ReadH", func(src []byte, off int) bool { _, ok := ReadH(src, off); return ok }},
+		{"ReadQ", func(src []byte, off int) bool { _, ok := ReadQ(src, off); return ok }},
+		{"ReadF", func(src []byte, off int) bool { _, ok := ReadF(src, off); return ok }},
+	}
+	offs := []struct {
+		name string
+		off  int
+	}{
+		{"off=-1", -1},
+		{"off=-8", -8},
+		{"off=len-1", len(src) - 1},
+		{"off=len", len(src)},
+		{"off=MaxInt", math.MaxInt},
+		{"off=MinInt", math.MinInt},
+	}
+	for _, p := range probes {
+		for _, o := range offs {
+			if ok := p.call(src, o.off); ok {
+				t.Errorf("%s %s: ok=true на злом офсете", p.name, o.name)
+			}
+		}
+		if ok := p.call(src, 0); !ok {
+			t.Errorf("%s off=0: ok=false на валидном офсете", p.name)
 		}
 	}
 }
@@ -226,7 +240,7 @@ func TestReadSNoTerminator(t *testing.T) {
 		t.Errorf("ReadS без терминатора = %q, %d, %v; want \"\", 0, false", s, n, ok)
 	}
 	// терминатор найден — непарный хвост после него не причина отказа
-	src2 := []byte{'a', 0, 0x05}
+	src2 := []byte{'a', 0, 0, 0, 0x05}
 	s, n, ok = ReadS(src2, 0)
 	if !ok || s != "a" || n != 4 {
 		t.Errorf("ReadS с непарным хвостом = %q, %d, %v; want \"a\", 4, true", s, n, ok)

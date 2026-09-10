@@ -8,7 +8,7 @@ func attackViewBytes(extra ...byte) []byte {
 		100, 0, 0, 0, // attackerID
 		0xC8, 0, 0, 0, // targetID 200
 		0xDC, 0x05, 0, 0, // damage 1500
-		0x20, // flags HitFlagCrit
+		0x20,                                  // flags HitFlagCrit
 		10, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 0, // atkXYZ
 		0, 0, // extraHits = 0
 		40, 0, 0, 0, 50, 0, 0, 0, 60, 0, 0, 0, // tgtXYZ
@@ -52,7 +52,7 @@ func TestAttackViewExtraHits(t *testing.T) {
 		0x00, // flags
 	)
 	b := attackViewBytes()
-	b[27] = 1 // extraHits (H на офсете 26)
+	b[26] = 1                                                     // extraHits (H на офсете 26, LE)
 	b = append(b[:len(b)-12], append(extra, b[len(b)-12:]...)...) // extra перед tgtXYZ
 	v, ok := NewAttackView(b)
 	if !ok {

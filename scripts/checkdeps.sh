@@ -13,7 +13,8 @@ allowed() {
 	case "$1" in
 		internal/version|internal/crypto|internal/transport|internal/data|internal/geo) echo "" ;;
 		pkg/bufpool) echo "" ;;
-		internal/protocol) echo "" ;;
+		internal/protocol) echo "internal/protocol/fixture" ;;
+	internal/protocol/fixture) echo "" ;;
 		internal/conn) echo "internal/protocol internal/crypto" ;;
 		internal/gateway) echo "internal/conn internal/protocol internal/transport" ;;
 		internal/replica) echo "internal/transport" ;;
@@ -22,7 +23,7 @@ allowed() {
 		internal/party|internal/chat|internal/clan|internal/market) echo "internal/transport" ;;
 		internal/persist) echo "internal/transport" ;;
 		internal/loginlink|internal/admin) echo "internal/transport" ;;
-		internal/l2client) echo "internal/protocol internal/crypto" ;;
+		internal/l2client) echo "internal/protocol internal/protocol/fixture internal/crypto" ;;
 		internal/login) echo "internal/protocol internal/crypto" ;;
 		*) echo "UNLISTED" ;;
 	esac

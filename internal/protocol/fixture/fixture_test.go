@@ -32,7 +32,7 @@ func TestLoadErrors(t *testing.T) {
 	cases := []struct {
 		name  string
 		setup func(t *testing.T) string // возвращает имя для Load
-		want  string // подстрока ошибки
+		want  string                    // подстрока ошибки
 	}{
 		{
 			"нет файла",
