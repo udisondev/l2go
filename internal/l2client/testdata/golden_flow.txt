@@ -1,0 +1,18 @@
+← INIT session=305419896 revision=0xC621
+→ AUTH_GAME_GUARD session=305419896
+← GG_AUTH response=305419896
+→ REQUEST_AUTH_LOGIN rsa=b38075bdf6987cc29cc864fcc63b122e94c77f420734bc6e9a73d635b526a6c7039ab0ad764d37763f63a069c05b2cbe178865ef4af73e0721ddca8f4b80a7297595e120fff3bc04e5bd0e93802a03eb30013bd1bb6b91695dba14e862d8b01c2f777b2d48ba933a7c94d9f3f8d5b85f775fb4ceb24d3d2e48e47bc5618184ef
+← LOGIN_OK loginOk1=169090605 loginOk2=1298967152
+→ REQUEST_SERVER_LIST loginOk1=169090605 loginOk2=1298967152
+← SERVER_LIST count=2 last=1 s1={id=1 cur=42 max=500 age=0 pvp=false status=1 type=1 brackets=false chars=3 del=3600} s2={id=2 cur=7 max=100 age=15 pvp=true status=1 type=4 brackets=true chars=0}
+→ REQUEST_SERVER_LOGIN server=1
+← PLAY_OK playOk1=287454020 playOk2=1432778632
+→ PROTOCOL_VERSION version=746
+← KEY_PACKET result=1 encryption=true serverID=1 key=1f44698eb3d8fd22
+→ AUTH_LOGIN playKey2=1432778632 playKey1=287454020 loginKey1=169090605 loginKey2=1298967152
+← CHAR_SELECT_INFO count=2 [0]={name="Warrior" id=268478617 level=10 class=0 base=0 sex=0 race=0 hp=42.5/85.5 mp=39.25/78.5 sp=100 exp=123456789 karma=0} [1]={name="Маг" id=268478618 level=1 class=10 base=10 sex=1 race=2 hp=25.5/51 mp=100.125/100.5 sp=32767 exp=9876543210 karma=0}
+→ CHARACTER_SELECT slot=0
+← CHAR_SELECTED name="Warrior" id=268478617 title="Novice" level=10 class=0 x=-84000 y=247000 z=-3700 hp=42.5 mp=39.25 sp=100 exp=123456789 karma=0 pk=0 gameTime=905
+← SUNRISE hex=1c0102
+← ??(0xBA) hex=baab01
+→ LOGOUT
