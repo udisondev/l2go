@@ -2,6 +2,7 @@ package bufpool
 
 import (
 	"fmt"
+	"runtime"
 	"testing"
 )
 
@@ -41,13 +42,12 @@ func BenchmarkGetPutParallel(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
-				local := sink // per-goroutine sink: глобальный дал бы write/write гонку
+				var local []byte // per-goroutine sink: общая запись дала бы write/write гонку
 				for pb.Next() {
-					buf := p.Get(size)
-					local = buf
-					p.Put(buf)
+					local = p.Get(size)
+					p.Put(local)
 				}
-				sink = local
+				runtime.KeepAlive(local) // удержание от DCE без общей записи
 			})
 		})
 	}
@@ -90,15 +90,14 @@ func BenchmarkGetPutMixed(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
-		local := sink
+		var local []byte
 		i := 0
 		for pb.Next() {
 			size := mix[i%len(mix)]
 			i++
-			buf := p.Get(size)
-			local = buf
-			p.Put(buf)
+			local = p.Get(size)
+			p.Put(local)
 		}
-		sink = local
+		runtime.KeepAlive(local)
 	})
 }
