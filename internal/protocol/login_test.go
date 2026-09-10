@@ -91,19 +91,19 @@ func TestLoginFixtureMeta(t *testing.T) {
 		dir  fixture.Direction
 		op   byte
 	}{
-		{"INIT", fixture.LoginServer, loginInit},
-		{"LOGIN_OK", fixture.LoginServer, loginOk},
-		{"LOGIN_FAIL", fixture.LoginServer, loginFail},
-		{"ACCOUNT_KICKED", fixture.LoginServer, accountKicked},
-		{"SERVER_LIST", fixture.LoginServer, serverList},
-		{"PLAY_OK", fixture.LoginServer, playOk},
-		{"PLAY_FAIL", fixture.LoginServer, playFail},
-		{"GG_AUTH", fixture.LoginServer, ggAuth},
-		{"REQUEST_AUTH_LOGIN", fixture.LoginClient, requestAuthLogin},
-		{"REQUEST_AUTH_LOGIN_PLAIN", fixture.LoginClient, requestAuthLogin},
-		{"REQUEST_SERVER_LIST", fixture.LoginClient, requestServerList},
-		{"REQUEST_SERVER_LOGIN", fixture.LoginClient, requestServerLogin},
-		{"AUTH_GAME_GUARD", fixture.LoginClient, authGameGuard},
+		{"INIT", fixture.LoginServer, OpInit},
+		{"LOGIN_OK", fixture.LoginServer, OpLoginOk},
+		{"LOGIN_FAIL", fixture.LoginServer, OpLoginFail},
+		{"ACCOUNT_KICKED", fixture.LoginServer, OpAccountKicked},
+		{"SERVER_LIST", fixture.LoginServer, OpServerList},
+		{"PLAY_OK", fixture.LoginServer, OpPlayOk},
+		{"PLAY_FAIL", fixture.LoginServer, OpPlayFail},
+		{"GG_AUTH", fixture.LoginServer, OpGGAuth},
+		{"REQUEST_AUTH_LOGIN", fixture.LoginClient, OpRequestAuthLogin},
+		{"REQUEST_AUTH_LOGIN_PLAIN", fixture.LoginClient, OpRequestAuthLogin},
+		{"REQUEST_SERVER_LIST", fixture.LoginClient, OpRequestServerList},
+		{"REQUEST_SERVER_LOGIN", fixture.LoginClient, OpRequestServerLogin},
+		{"AUTH_GAME_GUARD", fixture.LoginClient, OpAuthGameGuard},
 	}
 	fixes := loginFixtures(t)
 	for _, w := range want {
@@ -129,40 +129,40 @@ func TestWriteLoginPacketsGolden(t *testing.T) {
 		op    byte
 		write func(dst []byte) int
 	}{
-		{"INIT", InitSize, loginInit, func(dst []byte) int {
+		{"INIT", InitSize, OpInit, func(dst []byte) int {
 			return WriteInit(dst, tSessionID, tModulus, tBFKey)
 		}},
-		{"LOGIN_OK", LoginOkSize, loginOk, func(dst []byte) int {
+		{"LOGIN_OK", LoginOkSize, OpLoginOk, func(dst []byte) int {
 			return WriteLoginOk(dst, tLoginOk1, tLoginOk2)
 		}},
-		{"LOGIN_FAIL", LoginFailSize, loginFail, func(dst []byte) int {
+		{"LOGIN_FAIL", LoginFailSize, OpLoginFail, func(dst []byte) int {
 			return WriteLoginFail(dst, ReasonAccountInUse)
 		}},
-		{"ACCOUNT_KICKED", AccountKickedSize, accountKicked, func(dst []byte) int {
+		{"ACCOUNT_KICKED", AccountKickedSize, OpAccountKicked, func(dst []byte) int {
 			return WriteAccountKicked(dst, KickDataStealer)
 		}},
-		{"SERVER_LIST", 58, serverList, func(dst []byte) int {
+		{"SERVER_LIST", 58, OpServerList, func(dst []byte) int {
 			return WriteServerList(dst, tServers, tChars, tLastServer)
 		}},
-		{"PLAY_OK", PlayOkSize, playOk, func(dst []byte) int {
+		{"PLAY_OK", PlayOkSize, OpPlayOk, func(dst []byte) int {
 			return WritePlayOk(dst, tPlayOk1, tPlayOk2)
 		}},
-		{"PLAY_FAIL", PlayFailSize, playFail, func(dst []byte) int {
+		{"PLAY_FAIL", PlayFailSize, OpPlayFail, func(dst []byte) int {
 			return WritePlayFail(dst, ReasonSystemErrorLoginLater)
 		}},
-		{"GG_AUTH", GGAuthSize, ggAuth, func(dst []byte) int {
+		{"GG_AUTH", GGAuthSize, OpGGAuth, func(dst []byte) int {
 			return WriteGGAuth(dst, tSessionID)
 		}},
-		{"REQUEST_AUTH_LOGIN", RequestAuthLoginSize, requestAuthLogin, func(dst []byte) int {
+		{"REQUEST_AUTH_LOGIN", RequestAuthLoginSize, OpRequestAuthLogin, func(dst []byte) int {
 			return WriteRequestAuthLogin(dst, tRSABlk)
 		}},
-		{"REQUEST_SERVER_LIST", RequestServerListSize, requestServerList, func(dst []byte) int {
+		{"REQUEST_SERVER_LIST", RequestServerListSize, OpRequestServerList, func(dst []byte) int {
 			return WriteRequestServerList(dst, tLoginOk1, tLoginOk2)
 		}},
-		{"REQUEST_SERVER_LOGIN", RequestServerLoginSize, requestServerLogin, func(dst []byte) int {
+		{"REQUEST_SERVER_LOGIN", RequestServerLoginSize, OpRequestServerLogin, func(dst []byte) int {
 			return WriteRequestServerLogin(dst, tLoginOk1, tLoginOk2, 1)
 		}},
-		{"AUTH_GAME_GUARD", AuthGameGuardSize, authGameGuard, func(dst []byte) int {
+		{"AUTH_GAME_GUARD", AuthGameGuardSize, OpAuthGameGuard, func(dst []byte) int {
 			return WriteAuthGameGuard(dst, tSessionID)
 		}},
 	}
@@ -436,7 +436,7 @@ func TestLoginViewsTruncated(t *testing.T) {
 // Зона 129–256: конструктор ok, валиден только RSABlock (короткий блоб).
 func TestRequestAuthLoginViewShortBlock(t *testing.T) {
 	b := make([]byte, 200)
-	b[0] = requestAuthLogin
+	b[0] = OpRequestAuthLogin
 	v, ok := NewRequestAuthLoginView(b)
 	if !ok {
 		t.Fatal("NewRequestAuthLoginView(200 Б): ok = false; want true")
@@ -458,8 +458,8 @@ func TestLoginViewsNoPanic(t *testing.T) {
 	evils := [][]byte{
 		nil, {}, {0x00}, {0xFF, 0xFF}, pattern(2, 1), pattern(123, 2), pattern(125, 3),
 		pattern(126, 4), pattern(127, 5), pattern(129, 6), pattern(255, 7),
-		append([]byte{serverList, 0xFF, 0xFF, 0xFF, 0xFF}, pattern(64, 8)...),
-		append([]byte{serverList, 0x02, 0x01}, pattern(30, 9)...),
+		append([]byte{OpServerList, 0xFF, 0xFF, 0xFF, 0xFF}, pattern(64, 8)...),
+		append([]byte{OpServerList, 0x02, 0x01}, pattern(30, 9)...),
 	}
 	defer func() {
 		if r := recover(); r != nil {

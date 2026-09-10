@@ -13,21 +13,35 @@ import (
 	"fmt"
 )
 
-// Опкоды типизируемых пакетов логин-флоу (значения — из каталога, связь
-// проверяется TestConstantsMatchCatalog).
+// Опкоды и имена каталога пакетов логин-флоу: константы живут с писателями
+// и представлениями этого файла; машинная связь с каталогом —
+// TestConstantsMatchCatalog (значения и имена сверяются с таблицами).
 const (
-	loginInit          = 0x00 // INIT, LS→C
-	loginFail          = 0x01 // LOGIN_FAIL, LS→C
-	accountKicked      = 0x02 // ACCOUNT_KICKED, LS→C
-	loginOk            = 0x03 // LOGIN_OK, LS→C
-	serverList         = 0x04 // SERVER_LIST, LS→C
-	playFail           = 0x06 // PLAY_FAIL, LS→C
-	playOk             = 0x07 // PLAY_OK, LS→C
-	authGameGuard      = 0x07 // AUTH_GAME_GUARD, C→LS
-	requestAuthLogin   = 0x00 // REQUEST_AUTH_LOGIN, C→LS
-	requestServerLogin = 0x02 // REQUEST_SERVER_LOGIN, C→LS
-	requestServerList  = 0x05 // REQUEST_SERVER_LIST, C→LS
-	ggAuth             = 0x0B // GG_AUTH, LS→C
+	OpInit               = 0x00 // INIT, LS→C
+	OpLoginFail          = 0x01 // LOGIN_FAIL, LS→C
+	OpAccountKicked      = 0x02 // ACCOUNT_KICKED, LS→C
+	OpLoginOk            = 0x03 // LOGIN_OK, LS→C
+	OpServerList         = 0x04 // SERVER_LIST, LS→C
+	OpPlayFail           = 0x06 // PLAY_FAIL, LS→C
+	OpPlayOk             = 0x07 // PLAY_OK, LS→C
+	OpGGAuth             = 0x0B // GG_AUTH, LS→C
+	OpRequestAuthLogin   = 0x00 // REQUEST_AUTH_LOGIN, C→LS
+	OpRequestServerLogin = 0x02 // REQUEST_SERVER_LOGIN, C→LS
+	OpRequestServerList  = 0x05 // REQUEST_SERVER_LIST, C→LS
+	OpAuthGameGuard      = 0x07 // AUTH_GAME_GUARD, C→LS
+
+	NameInit               = "INIT"
+	NameLoginFail          = "LOGIN_FAIL"
+	NameAccountKicked      = "ACCOUNT_KICKED"
+	NameLoginOk            = "LOGIN_OK"
+	NameServerList         = "SERVER_LIST"
+	NamePlayFail           = "PLAY_FAIL"
+	NamePlayOk             = "PLAY_OK"
+	NameGGAuth             = "GG_AUTH"
+	NameRequestAuthLogin   = "REQUEST_AUTH_LOGIN"
+	NameRequestServerLogin = "REQUEST_SERVER_LOGIN"
+	NameRequestServerList  = "REQUEST_SERVER_LIST"
+	NameAuthGameGuard      = "AUTH_GAME_GUARD"
 )
 
 // Фиксированные размеры пакетов (с опкодом).
@@ -169,7 +183,7 @@ func WriteInit(dst []byte, sessionID int32, scrambledModulus, blowfishKey []byte
 	if len(blowfishKey) != 16 {
 		panic(fmt.Sprintf("protocol: WriteInit: Blowfish-ключ %d байт; want 16", len(blowfishKey)))
 	}
-	dst[0] = loginInit
+	dst[0] = OpInit
 	WriteD(dst[1:], sessionID)
 	WriteD(dst[5:], initProtocolRevision)
 	copy(dst[9:], scrambledModulus)
@@ -188,7 +202,7 @@ func WriteLoginOk(dst []byte, loginOkID1, loginOkID2 int32) int {
 	if len(dst) < LoginOkSize {
 		panic(fmt.Sprintf("protocol: WriteLoginOk: dst длиной %d байт < LoginOkSize=%d", len(dst), LoginOkSize))
 	}
-	dst[0] = loginOk
+	dst[0] = OpLoginOk
 	WriteD(dst[1:], loginOkID1)
 	WriteD(dst[5:], loginOkID2)
 	WriteD(dst[9:], 0)
@@ -207,7 +221,7 @@ func WriteLoginFail(dst []byte, reason LoginFailReason) int {
 	if len(dst) < LoginFailSize {
 		panic(fmt.Sprintf("protocol: WriteLoginFail: dst длиной %d байт < LoginFailSize=%d", len(dst), LoginFailSize))
 	}
-	dst[0] = loginFail
+	dst[0] = OpLoginFail
 	dst[1] = byte(reason)
 	return LoginFailSize
 }
@@ -218,7 +232,7 @@ func WriteAccountKicked(dst []byte, reason KickReason) int {
 	if len(dst) < AccountKickedSize {
 		panic(fmt.Sprintf("protocol: WriteAccountKicked: dst длиной %d байт < AccountKickedSize=%d", len(dst), AccountKickedSize))
 	}
-	dst[0] = accountKicked
+	dst[0] = OpAccountKicked
 	WriteD(dst[1:], int32(reason))
 	return AccountKickedSize
 }
@@ -229,7 +243,7 @@ func WritePlayOk(dst []byte, playOkID1, playOkID2 int32) int {
 	if len(dst) < PlayOkSize {
 		panic(fmt.Sprintf("protocol: WritePlayOk: dst длиной %d байт < PlayOkSize=%d", len(dst), PlayOkSize))
 	}
-	dst[0] = playOk
+	dst[0] = OpPlayOk
 	WriteD(dst[1:], playOkID1)
 	WriteD(dst[5:], playOkID2)
 	return PlayOkSize
@@ -241,7 +255,7 @@ func WritePlayFail(dst []byte, reason PlayFailReason) int {
 	if len(dst) < PlayFailSize {
 		panic(fmt.Sprintf("protocol: WritePlayFail: dst длиной %d байт < PlayFailSize=%d", len(dst), PlayFailSize))
 	}
-	dst[0] = playFail
+	dst[0] = OpPlayFail
 	dst[1] = byte(reason)
 	return PlayFailSize
 }
@@ -253,7 +267,7 @@ func WriteGGAuth(dst []byte, response int32) int {
 	if len(dst) < GGAuthSize {
 		panic(fmt.Sprintf("protocol: WriteGGAuth: dst длиной %d байт < GGAuthSize=%d", len(dst), GGAuthSize))
 	}
-	dst[0] = ggAuth
+	dst[0] = OpGGAuth
 	WriteD(dst[1:], response)
 	clear(dst[5:21])
 	return GGAuthSize
@@ -282,7 +296,7 @@ func WriteServerList(dst []byte, servers []ServerListEntry, chars []ServerChars,
 	if len(servers) > 255 || len(chars) > 255 {
 		panic(fmt.Sprintf("protocol: WriteServerList: счётчик секции вне байта: servers=%d, chars=%d", len(servers), len(chars)))
 	}
-	dst[0] = serverList
+	dst[0] = OpServerList
 	dst[1] = byte(len(servers))
 	dst[2] = lastServer
 	off := 3
@@ -336,7 +350,7 @@ func WriteRequestAuthLogin(dst, rsaBlock []byte) int {
 	if len(rsaBlock) != 128 {
 		panic(fmt.Sprintf("protocol: WriteRequestAuthLogin: RSA-блоб %d байт; want 128 (new-method не типизируется)", len(rsaBlock)))
 	}
-	dst[0] = requestAuthLogin
+	dst[0] = OpRequestAuthLogin
 	copy(dst[1:], rsaBlock)
 	return RequestAuthLoginSize
 }
@@ -367,7 +381,7 @@ func WriteRequestServerList(dst []byte, loginOkID1, loginOkID2 int32) int {
 	if len(dst) < RequestServerListSize {
 		panic(fmt.Sprintf("protocol: WriteRequestServerList: dst длиной %d байт < RequestServerListSize=%d", len(dst), RequestServerListSize))
 	}
-	dst[0] = requestServerList
+	dst[0] = OpRequestServerList
 	WriteD(dst[1:], loginOkID1)
 	WriteD(dst[5:], loginOkID2)
 	return RequestServerListSize
@@ -380,7 +394,7 @@ func WriteRequestServerLogin(dst []byte, loginOkID1, loginOkID2 int32, serverID 
 	if len(dst) < RequestServerLoginSize {
 		panic(fmt.Sprintf("protocol: WriteRequestServerLogin: dst длиной %d байт < RequestServerLoginSize=%d", len(dst), RequestServerLoginSize))
 	}
-	dst[0] = requestServerLogin
+	dst[0] = OpRequestServerLogin
 	WriteD(dst[1:], loginOkID1)
 	WriteD(dst[5:], loginOkID2)
 	dst[9] = serverID
@@ -394,7 +408,7 @@ func WriteAuthGameGuard(dst []byte, sessionID int32) int {
 	if len(dst) < AuthGameGuardSize {
 		panic(fmt.Sprintf("protocol: WriteAuthGameGuard: dst длиной %d байт < AuthGameGuardSize=%d", len(dst), AuthGameGuardSize))
 	}
-	dst[0] = authGameGuard
+	dst[0] = OpAuthGameGuard
 	WriteD(dst[1:], sessionID)
 	clear(dst[5:21])
 	return AuthGameGuardSize

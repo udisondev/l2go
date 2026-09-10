@@ -59,14 +59,14 @@ func TestHandshakeFixtureMeta(t *testing.T) {
 		dir  fixture.Direction
 		op   byte
 	}{
-		{"KEY_PACKET", fixture.GameServer, keyPacket},
-		{"CHAR_SELECT_INFO", fixture.GameServer, charSelectInfo},
-		{"LOGIN_FAIL", fixture.GameServer, gsLoginFail},
-		{"CHAR_SELECTED", fixture.GameServer, charSelected},
-		{"PROTOCOL_VERSION", fixture.GameClient, protocolVersion},
-		{"AUTH_LOGIN", fixture.GameClient, authLogin},
-		{"LOGOUT", fixture.GameClient, logout},
-		{"CHARACTER_SELECT", fixture.GameClient, characterSelect},
+		{"KEY_PACKET", fixture.GameServer, OpKeyPacket},
+		{"CHAR_SELECT_INFO", fixture.GameServer, OpCharSelectInfo},
+		{"LOGIN_FAIL", fixture.GameServer, OpGSLoginFail},
+		{"CHAR_SELECTED", fixture.GameServer, OpCharSelected},
+		{"PROTOCOL_VERSION", fixture.GameClient, OpProtocolVersion},
+		{"AUTH_LOGIN", fixture.GameClient, OpAuthLogin},
+		{"LOGOUT", fixture.GameClient, OpLogout},
+		{"CHARACTER_SELECT", fixture.GameClient, OpCharacterSelect},
 	}
 	fixes := handshakeFixtures(t)
 	for _, w := range want {
@@ -92,28 +92,28 @@ func TestWriteHandshakePacketsGolden(t *testing.T) {
 		op    byte
 		write func(dst []byte) int
 	}{
-		{"KEY_PACKET", KeyPacketSize, keyPacket, func(dst []byte) int {
+		{"KEY_PACKET", KeyPacketSize, OpKeyPacket, func(dst []byte) int {
 			return WriteKeyPacket(dst, 1, tKeyPacketKey, true, 1)
 		}},
-		{"LOGIN_FAIL", GSLoginFailSize, gsLoginFail, func(dst []byte) int {
+		{"LOGIN_FAIL", GSLoginFailSize, OpGSLoginFail, func(dst []byte) int {
 			return WriteGSLoginFail(dst, GSReasonPasswordDoesNotMatchThisAccount)
 		}},
-		{"CHAR_SELECT_INFO", 659, charSelectInfo, func(dst []byte) int {
+		{"CHAR_SELECT_INFO", 659, OpCharSelectInfo, func(dst []byte) int {
 			return WriteCharSelectionInfo(dst, []CharSelectionEntry{tChar1, tChar2}, 0)
 		}},
-		{"CHAR_SELECTED", 327, charSelected, func(dst []byte) int {
+		{"CHAR_SELECTED", 327, OpCharSelected, func(dst []byte) int {
 			return WriteCharSelected(dst, tCharSelected)
 		}},
-		{"PROTOCOL_VERSION", ProtocolVersionSize, protocolVersion, func(dst []byte) int {
+		{"PROTOCOL_VERSION", ProtocolVersionSize, OpProtocolVersion, func(dst []byte) int {
 			return WriteProtocolVersion(dst, ProtocolVersionInterlude)
 		}},
-		{"AUTH_LOGIN", 35, authLogin, func(dst []byte) int {
+		{"AUTH_LOGIN", 35, OpAuthLogin, func(dst []byte) int {
 			return WriteAuthLogin(dst, "ТестЮзер", tPlayOk2, tPlayOk1, tLoginOk1, tLoginOk2)
 		}},
-		{"LOGOUT", LogoutSize, logout, func(dst []byte) int {
+		{"LOGOUT", LogoutSize, OpLogout, func(dst []byte) int {
 			return WriteLogout(dst)
 		}},
-		{"CHARACTER_SELECT", CharacterSelectSize, characterSelect, func(dst []byte) int {
+		{"CHARACTER_SELECT", CharacterSelectSize, OpCharacterSelect, func(dst []byte) int {
 			return WriteCharacterSelect(dst, 1)
 		}},
 	}
@@ -303,7 +303,7 @@ func TestHandshakeViewsTruncated(t *testing.T) {
 // Злые счётчики и строки без терминатора: навигация отдаёт ok=false, не паникуя.
 func TestHandshakeViewsEvil(t *testing.T) {
 	t.Run("CHAR_SELECT_INFO count=-1", func(t *testing.T) {
-		b := []byte{charSelectInfo, 0xFF, 0xFF, 0xFF, 0xFF}
+		b := []byte{OpCharSelectInfo, 0xFF, 0xFF, 0xFF, 0xFF}
 		v, ok := NewCharSelectionInfoView(b)
 		if !ok {
 			t.Fatal("конструктор: ok = false; want true (заголовок валиден)")
@@ -313,7 +313,7 @@ func TestHandshakeViewsEvil(t *testing.T) {
 		}
 	})
 	t.Run("CHAR_SELECT_INFO count=MaxInt32", func(t *testing.T) {
-		b := []byte{charSelectInfo, 0xFF, 0xFF, 0xFF, 0x7F}
+		b := []byte{OpCharSelectInfo, 0xFF, 0xFF, 0xFF, 0x7F}
 		v, ok := NewCharSelectionInfoView(b)
 		if !ok {
 			t.Fatal("конструктор: ok = false; want true")
@@ -323,7 +323,7 @@ func TestHandshakeViewsEvil(t *testing.T) {
 		}
 	})
 	t.Run("AUTH_LOGIN без терминатора", func(t *testing.T) {
-		b := append([]byte{authLogin}, []byte{0x41, 0x00, 0x42, 0x00, 0x43}...) // «A B C» и непарный хвост
+		b := append([]byte{OpAuthLogin}, []byte{0x41, 0x00, 0x42, 0x00, 0x43}...) // «A B C» и непарный хвост
 		v, ok := NewAuthLoginView(b)
 		if !ok {
 			t.Fatal("конструктор: ok = false; want true (min 1)")
@@ -336,7 +336,7 @@ func TestHandshakeViewsEvil(t *testing.T) {
 		}
 	})
 	t.Run("CHAR_SELECTED строка имени не закрыта", func(t *testing.T) {
-		b := append([]byte{charSelected}, pattern(20, 7)...)
+		b := append([]byte{OpCharSelected}, pattern(20, 7)...)
 		v, ok := NewCharSelectedView(b)
 		if !ok {
 			t.Fatal("конструктор: ok = false; want true")
@@ -354,11 +354,11 @@ func TestHandshakeViewsEvil(t *testing.T) {
 func TestHandshakeViewsNoPanic(t *testing.T) {
 	fixes := handshakeFixtures(t)
 	evils := [][]byte{
-		nil, {}, {0x00}, {keyPacket}, pattern(4, 1), pattern(22, 2), pattern(23, 3),
+		nil, {}, {0x00}, {OpKeyPacket}, pattern(4, 1), pattern(22, 2), pattern(23, 3),
 		pattern(50, 4), pattern(200, 5),
-		append([]byte{charSelectInfo, 0x02, 0x00, 0x00, 0x00}, pattern(16, 6)...),
-		append([]byte{charSelected}, pattern(300, 7)...),
-		append([]byte{authLogin}, pattern(30, 8)...),
+		append([]byte{OpCharSelectInfo, 0x02, 0x00, 0x00, 0x00}, pattern(16, 6)...),
+		append([]byte{OpCharSelected}, pattern(300, 7)...),
+		append([]byte{OpAuthLogin}, pattern(30, 8)...),
 	}
 	defer func() {
 		if r := recover(); r != nil {

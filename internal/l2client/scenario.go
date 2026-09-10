@@ -189,7 +189,7 @@ func (s *ScenarioServer) RunLoginScript(sc LoginScript) error {
 				s.fail("ожидался опкод 0x%02X, пришёл 0x%02X", st.Expect, op)
 				return nil
 			}
-			if st.Expect == opRequestAuthLogin && sc.CheckAuth {
+			if st.Expect == protocol.OpRequestAuthLogin && sc.CheckAuth {
 				if len(frame) < 129 {
 					s.fail("auth: кадр %d Б короче блоба", len(frame))
 					return nil
@@ -260,7 +260,7 @@ func (s *ScenarioServer) RunGameScript(sc GameScript) error {
 				}
 			}
 		}
-		if st.Expect == opProtocolVersion {
+		if st.Expect == protocol.OpProtocolVersion {
 			crypt.Enable() // KeyPacket отправлен — дальше шифрованный обмен
 			plain = false
 		}
@@ -277,10 +277,10 @@ func GoldenLoginScript(s *ScenarioServer) LoginScript {
 	return LoginScript{
 		CheckAuth: true,
 		Steps: []LoginStep{
-			{Expect: opAuthGameGuard, Reply: mustLSFixture("GG_AUTH")},
-			{Expect: opRequestAuthLogin, Reply: mustLSFixture("LOGIN_OK")},
-			{Expect: opRequestServerList, Reply: list},
-			{Expect: opRequestServerLogin, Reply: mustLSFixture("PLAY_OK")},
+			{Expect: protocol.OpAuthGameGuard, Reply: mustLSFixture("GG_AUTH")},
+			{Expect: protocol.OpRequestAuthLogin, Reply: mustLSFixture("LOGIN_OK")},
+			{Expect: protocol.OpRequestServerList, Reply: list},
+			{Expect: protocol.OpRequestServerLogin, Reply: mustLSFixture("PLAY_OK")},
 		},
 	}
 }
@@ -290,13 +290,13 @@ func GoldenLoginScript(s *ScenarioServer) LoginScript {
 // каталогом и неизвестный), закрытие после Logout.
 func GoldenGameScript() GameScript {
 	return GameScript{Steps: []GameStep{
-		{Expect: opProtocolVersion, Reply: mustGSFixture("KEY_PACKET")},
-		{Expect: opAuthLogin, Reply: mustGSFixture("CHAR_SELECT_INFO")},
-		{Expect: opCharacterSelect, Reply: mustGSFixture("CHAR_SELECTED")},
+		{Expect: protocol.OpProtocolVersion, Reply: mustGSFixture("KEY_PACKET")},
+		{Expect: protocol.OpAuthLogin, Reply: mustGSFixture("CHAR_SELECT_INFO")},
+		{Expect: protocol.OpCharacterSelect, Reply: mustGSFixture("CHAR_SELECTED")},
 		{Expect: ExpectNone, Reply: []byte{}},                 // пустое тело — фолбэк «??(0x??)»
 		{Expect: ExpectNone, Reply: []byte{0x1C, 0x01, 0x02}}, // SUNRISE — имя каталога, hex-дамп
 		{Expect: ExpectNone, Reply: []byte{0xBA, 0xAB, 0x01}}, // неизвестный опкод — «??»
-		{Expect: opLogout, Reply: nil},                        // закрытие: клиент завершает флоу
+		{Expect: protocol.OpLogout, Reply: nil},               // закрытие: клиент завершает флоу
 	}}
 }
 

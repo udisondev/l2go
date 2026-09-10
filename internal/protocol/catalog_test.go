@@ -70,34 +70,36 @@ func TestCatalogValueRange(t *testing.T) {
 }
 
 // Константы типизируемых пакетов присутствуют в таблице своего направления
-// с тем же значением (расширяется с каждым новым пакетом).
+// с тем же значением и тем же именем (Name* — строковые константы каталога
+// для трафик-лога; пустое имя — константа ещё не родилась).
 func TestConstantsMatchCatalog(t *testing.T) {
 	consts := []struct {
-		name  string
-		value byte
-		cat   string
+		name      string
+		value     byte
+		cat       string
+		nameConst string
 	}{
-		{"ATTACK", attack, "GameServer→C"},
-		{"INIT", loginInit, "LoginServer→C"},
-		{"LOGIN_OK", loginOk, "LoginServer→C"},
-		{"LOGIN_FAIL", loginFail, "LoginServer→C"},
-		{"ACCOUNT_KICKED", accountKicked, "LoginServer→C"},
-		{"SERVER_LIST", serverList, "LoginServer→C"},
-		{"PLAY_OK", playOk, "LoginServer→C"},
-		{"PLAY_FAIL", playFail, "LoginServer→C"},
-		{"GG_AUTH", ggAuth, "LoginServer→C"},
-		{"REQUEST_AUTH_LOGIN", requestAuthLogin, "C→LoginServer"},
-		{"REQUEST_SERVER_LIST", requestServerList, "C→LoginServer"},
-		{"REQUEST_SERVER_LOGIN", requestServerLogin, "C→LoginServer"},
-		{"AUTH_GAME_GUARD", authGameGuard, "C→LoginServer"},
-		{"PROTOCOL_VERSION", protocolVersion, "C→GameServer"},
-		{"AUTH_LOGIN", authLogin, "C→GameServer"},
-		{"LOGOUT", logout, "C→GameServer"},
-		{"CHARACTER_SELECT", characterSelect, "C→GameServer"},
-		{"KEY_PACKET", keyPacket, "GameServer→C"},
-		{"CHAR_SELECT_INFO", charSelectInfo, "GameServer→C"},
-		{"LOGIN_FAIL", gsLoginFail, "GameServer→C"},
-		{"CHAR_SELECTED", charSelected, "GameServer→C"},
+		{"ATTACK", attack, "GameServer→C", ""},
+		{"INIT", OpInit, "LoginServer→C", NameInit},
+		{"LOGIN_OK", OpLoginOk, "LoginServer→C", NameLoginOk},
+		{"LOGIN_FAIL", OpLoginFail, "LoginServer→C", NameLoginFail},
+		{"ACCOUNT_KICKED", OpAccountKicked, "LoginServer→C", NameAccountKicked},
+		{"SERVER_LIST", OpServerList, "LoginServer→C", NameServerList},
+		{"PLAY_OK", OpPlayOk, "LoginServer→C", NamePlayOk},
+		{"PLAY_FAIL", OpPlayFail, "LoginServer→C", NamePlayFail},
+		{"GG_AUTH", OpGGAuth, "LoginServer→C", NameGGAuth},
+		{"REQUEST_AUTH_LOGIN", OpRequestAuthLogin, "C→LoginServer", NameRequestAuthLogin},
+		{"REQUEST_SERVER_LIST", OpRequestServerList, "C→LoginServer", NameRequestServerList},
+		{"REQUEST_SERVER_LOGIN", OpRequestServerLogin, "C→LoginServer", NameRequestServerLogin},
+		{"AUTH_GAME_GUARD", OpAuthGameGuard, "C→LoginServer", NameAuthGameGuard},
+		{"PROTOCOL_VERSION", OpProtocolVersion, "C→GameServer", NameProtocolVersion},
+		{"AUTH_LOGIN", OpAuthLogin, "C→GameServer", NameAuthLogin},
+		{"LOGOUT", OpLogout, "C→GameServer", NameLogout},
+		{"CHARACTER_SELECT", OpCharacterSelect, "C→GameServer", NameCharacterSelect},
+		{"KEY_PACKET", OpKeyPacket, "GameServer→C", NameKeyPacket},
+		{"CHAR_SELECT_INFO", OpCharSelectInfo, "GameServer→C", NameCharSelectInfo},
+		{"LOGIN_FAIL", OpGSLoginFail, "GameServer→C", NameLoginFail},
+		{"CHAR_SELECTED", OpCharSelected, "GameServer→C", NameCharSelected},
 	}
 	for _, c := range consts {
 		found := false
@@ -106,6 +108,9 @@ func TestConstantsMatchCatalog(t *testing.T) {
 				found = true
 				if def.Value != uint16(c.value) {
 					t.Errorf("константа %s = 0x%02X; в каталоге 0x%02X", c.name, c.value, def.Value)
+				}
+				if c.nameConst != "" && c.nameConst != c.name {
+					t.Errorf("константа %s: Name = %q; в каталоге %q", c.name, c.nameConst, c.name)
 				}
 			}
 		}

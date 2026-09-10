@@ -179,7 +179,7 @@ func TestEvilInputs(t *testing.T) {
 			name: "GGAuth с чужим session",
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{Steps: []LoginStep{
-					{Expect: opAuthGameGuard, Reply: wireGGAuth(-559038737)}, // 0xDEADBEEF
+					{Expect: protocol.OpAuthGameGuard, Reply: wireGGAuth(-559038737)}, // 0xDEADBEEF
 				}}
 			},
 			stage:    "Handshake",
@@ -189,7 +189,7 @@ func TestEvilInputs(t *testing.T) {
 			name: "битая чексумма после SetKey",
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{Steps: []LoginStep{
-					{Expect: opAuthGameGuard, Reply: garbage16, Corrupt: true},
+					{Expect: protocol.OpAuthGameGuard, Reply: garbage16, Corrupt: true},
 				}}
 			},
 			stage:    "Handshake",
@@ -199,9 +199,9 @@ func TestEvilInputs(t *testing.T) {
 			name: "LoginFail с reason",
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{CheckAuth: true, Steps: []LoginStep{
-					{Expect: opAuthGameGuard, Reply: wireGGAuth(ScenarioSession)},
-					{Expect: opRequestAuthLogin, Reply: fixtureWire("login", "LOGIN_FAIL")},
-					{Expect: opRequestAuthLogin, Reply: nil},
+					{Expect: protocol.OpAuthGameGuard, Reply: wireGGAuth(ScenarioSession)},
+					{Expect: protocol.OpRequestAuthLogin, Reply: fixtureWire("login", "LOGIN_FAIL")},
+					{Expect: protocol.OpRequestAuthLogin, Reply: nil},
 				}}
 			},
 			stage:    "Login",
@@ -211,8 +211,8 @@ func TestEvilInputs(t *testing.T) {
 			name: "обрезанный LoginOk",
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{Steps: []LoginStep{
-					{Expect: opAuthGameGuard, Reply: wireGGAuth(ScenarioSession)},
-					{Expect: opRequestAuthLogin, Reply: []byte{0x03, 0x01, 0x02}},
+					{Expect: protocol.OpAuthGameGuard, Reply: wireGGAuth(ScenarioSession)},
+					{Expect: protocol.OpRequestAuthLogin, Reply: []byte{0x03, 0x01, 0x02}},
 				}}
 			},
 			stage:    "Login",
@@ -222,10 +222,10 @@ func TestEvilInputs(t *testing.T) {
 			name: "PlayFail на выборе сервера",
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{CheckAuth: true, Steps: []LoginStep{
-					{Expect: opAuthGameGuard, Reply: wireGGAuth(ScenarioSession)},
-					{Expect: opRequestAuthLogin, Reply: fixtureWire("login", "LOGIN_OK")},
-					{Expect: opRequestServerList, Reply: fixtureWire("login", "SERVER_LIST")},
-					{Expect: opRequestServerLogin, Reply: fixtureWire("login", "PLAY_FAIL")},
+					{Expect: protocol.OpAuthGameGuard, Reply: wireGGAuth(ScenarioSession)},
+					{Expect: protocol.OpRequestAuthLogin, Reply: fixtureWire("login", "LOGIN_OK")},
+					{Expect: protocol.OpRequestServerList, Reply: fixtureWire("login", "SERVER_LIST")},
+					{Expect: protocol.OpRequestServerLogin, Reply: fixtureWire("login", "PLAY_FAIL")},
 				}}
 			},
 			stage:    "SelectServer",
@@ -235,8 +235,8 @@ func TestEvilInputs(t *testing.T) {
 			name: "молчащий сервер — стадийный таймаут",
 			login: func(s *ScenarioServer) LoginScript {
 				return LoginScript{Steps: []LoginStep{
-					{Expect: opAuthGameGuard, Reply: nil},
-					{Expect: opRequestAuthLogin, Reply: nil},
+					{Expect: protocol.OpAuthGameGuard, Reply: nil},
+					{Expect: protocol.OpRequestAuthLogin, Reply: nil},
 				}}
 			},
 			stage:    "Handshake",
@@ -476,7 +476,7 @@ func TestEvilInputsExtra(t *testing.T) {
 		mustFlow(t, err, "StartScenarioServer")
 		defer srv.Close()
 		game := GameScript{Steps: []GameStep{
-			{Expect: opProtocolVersion, Reply: []byte{0x00, 0x01, 0xAA, 0xBB}},
+			{Expect: protocol.OpProtocolVersion, Reply: []byte{0x00, 0x01, 0xAA, 0xBB}},
 		}}
 		go func() { _ = srv.RunLoginScript(GoldenLoginScript(srv)) }()
 		go func() { _ = srv.RunGameScript(game) }()
@@ -496,7 +496,7 @@ func TestEvilInputsExtra(t *testing.T) {
 			huge[i] = byte(i)
 		}
 		go func() {
-			_ = srv.RunLoginScript(LoginScript{Steps: []LoginStep{{Expect: opAuthGameGuard, Reply: huge}}})
+			_ = srv.RunLoginScript(LoginScript{Steps: []LoginStep{{Expect: protocol.OpAuthGameGuard, Reply: huge}}})
 		}()
 		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 2 * time.Second, Traffic: &syncBuffer{}})
 		mustFlow(t, err, "DialLogin")
@@ -515,9 +515,9 @@ func TestRunDrainsFrames(t *testing.T) {
 	defer srv.Close()
 	go func() { _ = srv.RunLoginScript(GoldenLoginScript(srv)) }()
 	pushes := GameScript{Steps: []GameStep{
-		{Expect: opProtocolVersion, Reply: mustGSFixture("KEY_PACKET")},
-		{Expect: opAuthLogin, Reply: mustGSFixture("CHAR_SELECT_INFO")},
-		{Expect: opCharacterSelect, Reply: mustGSFixture("CHAR_SELECTED")},
+		{Expect: protocol.OpProtocolVersion, Reply: mustGSFixture("KEY_PACKET")},
+		{Expect: protocol.OpAuthLogin, Reply: mustGSFixture("CHAR_SELECT_INFO")},
+		{Expect: protocol.OpCharacterSelect, Reply: mustGSFixture("CHAR_SELECTED")},
 		// пять пушей и закрытие: Run обязан залогировать каждый
 		{Expect: ExpectNone, Reply: []byte{0x1C, 0x01}},
 		{Expect: ExpectNone, Reply: []byte{0x1C, 0x02}},
@@ -571,9 +571,9 @@ func TestMutationPack(t *testing.T) {
 		mustFlow(t, err, "StartScenarioServer")
 		// мутация случайного байта каждого golden-ответа LS-ноги
 		mut := LoginScript{CheckAuth: i%2 == 0, Steps: []LoginStep{
-			{Expect: opAuthGameGuard, Reply: mutateWire(rng, mustLSFixture("GG_AUTH"))},
-			{Expect: opRequestAuthLogin, Reply: mutateWire(rng, mustLSFixture("LOGIN_OK"))},
-			{Expect: opRequestServerList, Reply: mutateWire(rng, mustLSFixture("SERVER_LIST"))},
+			{Expect: protocol.OpAuthGameGuard, Reply: mutateWire(rng, mustLSFixture("GG_AUTH"))},
+			{Expect: protocol.OpRequestAuthLogin, Reply: mutateWire(rng, mustLSFixture("LOGIN_OK"))},
+			{Expect: protocol.OpRequestServerList, Reply: mutateWire(rng, mustLSFixture("SERVER_LIST"))},
 		}}
 		go func(sc LoginScript) { _ = srv.RunLoginScript(sc) }(mut)
 		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 500 * time.Millisecond})
@@ -671,43 +671,5 @@ func TestErrorsWrapped(t *testing.T) {
 	}
 	if !errors.Is(err, errDial) && !strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Errorf("ошибка без контекста адреса: %v", err)
-	}
-}
-
-// TestLogNamesCatalog — имена трафик-лога машинно равны именам каталога своих
-// направлений: дрейф констант ловится (литералы в вызовах лога запрещены).
-func TestLogNamesCatalog(t *testing.T) {
-	tests := []struct {
-		name   string
-		op     byte
-		want   string
-		lookup func(byte) (string, bool)
-	}{
-		{"C→LS AUTH_GAME_GUARD", opAuthGameGuard, nameAuthGameGuard, protocol.LoginClientPacketName},
-		{"C→LS REQUEST_AUTH_LOGIN", opRequestAuthLogin, nameRequestAuthLogin, protocol.LoginClientPacketName},
-		{"C→LS REQUEST_SERVER_LIST", opRequestServerList, nameRequestServerList, protocol.LoginClientPacketName},
-		{"C→LS REQUEST_SERVER_LOGIN", opRequestServerLogin, nameRequestServerLogin, protocol.LoginClientPacketName},
-		{"LS→C INIT", opInit, nameInit, protocol.LoginServerPacketName},
-		{"LS→C GG_AUTH", opGGAuth, nameGGAuth, protocol.LoginServerPacketName},
-		{"LS→C LOGIN_OK", opLoginOk, nameLoginOk, protocol.LoginServerPacketName},
-		{"LS→C LOGIN_FAIL", opLoginFail, nameLoginFail, protocol.LoginServerPacketName},
-		{"LS→C ACCOUNT_KICKED", opAccountKicked, nameAccountKicked, protocol.LoginServerPacketName},
-		{"LS→C SERVER_LIST", opServerList, nameServerList, protocol.LoginServerPacketName},
-		{"LS→C PLAY_OK", opPlayOk, namePlayOk, protocol.LoginServerPacketName},
-		{"LS→C PLAY_FAIL", opPlayFail, namePlayFail, protocol.LoginServerPacketName},
-		{"C→GS PROTOCOL_VERSION", opProtocolVersion, nameProtocolVersion, protocol.GameClientPacketName},
-		{"C→GS AUTH_LOGIN", opAuthLogin, nameAuthLogin, protocol.GameClientPacketName},
-		{"C→GS LOGOUT", opLogout, nameLogout, protocol.GameClientPacketName},
-		{"C→GS CHARACTER_SELECT", opCharacterSelect, nameCharacterSelect, protocol.GameClientPacketName},
-		{"GS→C KEY_PACKET", opKeyPacket, nameKeyPacket, protocol.GameServerPacketName},
-		{"GS→C CHAR_SELECT_INFO", opCharSelectInfo, nameCharSelectInfo, protocol.GameServerPacketName},
-		{"GS→C LOGIN_FAIL", opGSLoginFail, nameGSLoginFail, protocol.GameServerPacketName},
-		{"GS→C CHAR_SELECTED", opCharSelected, nameCharSelected, protocol.GameServerPacketName},
-	}
-	for _, tt := range tests {
-		got, ok := tt.lookup(tt.op)
-		if !ok || got != tt.want {
-			t.Errorf("%s: каталог = %q, %v; константа = %q", tt.name, got, ok, tt.want)
-		}
 	}
 }

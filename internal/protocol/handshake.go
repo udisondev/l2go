@@ -11,15 +11,27 @@ package protocol
 import "fmt"
 
 // Опкоды типизируемых пакетов хендшейка (значения — из каталога).
+// Опкоды и имена каталога пакетов game-хендшейка: константы живут с
+// писателями и представлениями; машинная связь с каталогом —
+// TestConstantsMatchCatalog (имя LOGIN_FAIL GS-формы совпадает с LS — общая
+// константа NameLoginFail в login.go).
 const (
-	protocolVersion = 0x00 // PROTOCOL_VERSION, C→GS
-	authLogin       = 0x08 // AUTH_LOGIN, C→GS
-	logout          = 0x09 // LOGOUT, C→GS
-	characterSelect = 0x0D // CHARACTER_SELECT, C→GS
-	keyPacket       = 0x00 // KEY_PACKET, GS→C
-	charSelectInfo  = 0x13 // CHAR_SELECT_INFO, GS→C
-	gsLoginFail     = 0x14 // LOGIN_FAIL, GS→C
-	charSelected    = 0x15 // CHAR_SELECTED, GS→C
+	OpProtocolVersion = 0x00 // PROTOCOL_VERSION, C→GS
+	OpAuthLogin       = 0x08 // AUTH_LOGIN, C→GS
+	OpLogout          = 0x09 // LOGOUT, C→GS
+	OpCharacterSelect = 0x0D // CHARACTER_SELECT, C→GS
+	OpKeyPacket       = 0x00 // KEY_PACKET, GS→C
+	OpCharSelectInfo  = 0x13 // CHAR_SELECT_INFO, GS→C
+	OpGSLoginFail     = 0x14 // LOGIN_FAIL, GS→C
+	OpCharSelected    = 0x15 // CHAR_SELECTED, GS→C
+
+	NameProtocolVersion = "PROTOCOL_VERSION"
+	NameAuthLogin       = "AUTH_LOGIN"
+	NameLogout          = "LOGOUT"
+	NameCharacterSelect = "CHARACTER_SELECT"
+	NameKeyPacket       = "KEY_PACKET"
+	NameCharSelectInfo  = "CHAR_SELECT_INFO"
+	NameCharSelected    = "CHAR_SELECTED"
 )
 
 // ProtocolVersionInterlude — версия протокола, которую шлёт клиент Interlude.
@@ -116,7 +128,7 @@ func WriteProtocolVersion(dst []byte, version int32) int {
 	if len(dst) < ProtocolVersionSize {
 		panic(fmt.Sprintf("protocol: WriteProtocolVersion: dst длиной %d байт < ProtocolVersionSize=%d", len(dst), ProtocolVersionSize))
 	}
-	dst[0] = protocolVersion
+	dst[0] = OpProtocolVersion
 	WriteD(dst[1:], version)
 	return ProtocolVersionSize
 }
@@ -133,7 +145,7 @@ func WriteAuthLogin(dst []byte, account string, playKey2, playKey1, loginKey1, l
 	if len(dst) < size {
 		panic(fmt.Sprintf("protocol: WriteAuthLogin: dst длиной %d байт < AuthLoginSize=%d", len(dst), size))
 	}
-	dst[0] = authLogin
+	dst[0] = OpAuthLogin
 	off := 1 + WriteS(dst[1:], account)
 	WriteD(dst[off:], playKey2)
 	WriteD(dst[off+4:], playKey1)
@@ -148,7 +160,7 @@ func WriteLogout(dst []byte) int {
 	if len(dst) < LogoutSize {
 		panic(fmt.Sprintf("protocol: WriteLogout: dst длиной %d байт < LogoutSize=%d", len(dst), LogoutSize))
 	}
-	dst[0] = logout
+	dst[0] = OpLogout
 	return LogoutSize
 }
 
@@ -158,7 +170,7 @@ func WriteCharacterSelect(dst []byte, charSlot int32) int {
 	if len(dst) < CharacterSelectSize {
 		panic(fmt.Sprintf("protocol: WriteCharacterSelect: dst длиной %d байт < CharacterSelectSize=%d", len(dst), CharacterSelectSize))
 	}
-	dst[0] = characterSelect
+	dst[0] = OpCharacterSelect
 	WriteD(dst[1:], charSlot)
 	WriteH(dst[5:], 0)
 	WriteD(dst[7:], 0)
@@ -177,7 +189,7 @@ func WriteKeyPacket(dst []byte, result byte, key []byte, encryption bool, server
 	if len(key) != 8 {
 		panic(fmt.Sprintf("protocol: WriteKeyPacket: ключ %d байт; want 8 (случайная половина)", len(key)))
 	}
-	dst[0] = keyPacket
+	dst[0] = OpKeyPacket
 	dst[1] = result
 	copy(dst[2:], key)
 	WriteD(dst[10:], int32(boolByte(encryption)))
@@ -193,7 +205,7 @@ func WriteGSLoginFail(dst []byte, reason GSLoginFailReason) int {
 	if len(dst) < GSLoginFailSize {
 		panic(fmt.Sprintf("protocol: WriteGSLoginFail: dst длиной %d байт < GSLoginFailSize=%d", len(dst), GSLoginFailSize))
 	}
-	dst[0] = gsLoginFail
+	dst[0] = OpGSLoginFail
 	WriteD(dst[1:], int32(reason))
 	return GSLoginFailSize
 }
@@ -223,7 +235,7 @@ func WriteCharSelectionInfo(dst []byte, chars []CharSelectionEntry, activeSlot i
 	if len(dst) < size {
 		panic(fmt.Sprintf("protocol: WriteCharSelectionInfo: dst длиной %d байт < CharSelectionInfoSize=%d", len(dst), size))
 	}
-	dst[0] = charSelectInfo
+	dst[0] = OpCharSelectInfo
 	WriteD(dst[1:], int32(len(chars)))
 	off := 5
 	for i, c := range chars {
@@ -318,7 +330,7 @@ func WriteCharSelected(dst []byte, d CharSelectedData) int {
 	if len(dst) < size {
 		panic(fmt.Sprintf("protocol: WriteCharSelected: dst длиной %d байт < CharSelectedSize=%d", len(dst), size))
 	}
-	dst[0] = charSelected
+	dst[0] = OpCharSelected
 	off := 1 + WriteS(dst[1:], d.Name)
 	WriteD(dst[off:], d.CharID)
 	off += 4
