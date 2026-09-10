@@ -1,12 +1,5 @@
-// Package l2client — headless-клиент Interlude 746: логин-флоу, game-хендшейк
-// и стационарная фаза с детерминированным трафик-логом. Порядок флоу — канон
-// L2J Mobius master CT_0_Interlude (43ac8878): login Init ← сервер, затем
-// AuthGameGuard → GGAuth → RequestAuthLogin → LoginOk → ServerList → PlayOk;
-// game — клиент говорит первым (ProtocolVersion открытым текстом), KeyPacket
-// открытым текстом, дальше шифрование; порт семантики — udisondev/interlude
-// pkg/l2client@34fe4c8. Конкурентная модель без общей мутации: хендшейк —
-// синхронные стадии; стационарная фаза — горутина чтения сырых кадров и
-// единственный цикл Run, владеющий криптодвижком, диспетчером и логом.
+// Трафик-лог: детерминированные строки, значения полей и имена пакетов.
+
 package l2client
 
 import (
@@ -54,6 +47,19 @@ func Quote(s string) string {
 // hexDumpMax — длина hex-дампа фолбэка: поток мусорных 0xFFFF-кадров не
 // заливает лог мегабайтами текста.
 const hexDumpMax = 64
+
+// quoteMax — потолок строкового поля лога: гигантские имена недоверенных
+// пакетов не разворачивают строку в сотни килобайт.
+const quoteMax = 128
+
+// quoted — строковое поле лога: Quote с усечением сверх quoteMax рун.
+func quoted(s string) string {
+	r := []rune(s)
+	if len(r) > quoteMax {
+		return Quote(string(r[:quoteMax])) + "…"
+	}
+	return Quote(s)
+}
 
 // HexBytes — hex-дамп байтов: целиком до 64 Б, дальше первые 64 Б и маркер
 // остатка.

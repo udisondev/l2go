@@ -57,10 +57,13 @@ type LoginStep struct {
 }
 
 // LoginScript — диалог LS-ноги: Raw пишется вместо Init байт-в-байт (злые
-// входы: мусор, обрыв посреди кадра), Close закрывает соединение после Raw.
+// входы: мусор, обрыв посреди кадра; пустой срез — закрытие без Init), Close
+// закрывает соединение после отправки, Modulus подменяет модулус собираемого
+// Init (злой вход: вырожденный ключ).
 type LoginScript struct {
 	Init      []byte // nil — собранный Init сценария; непустое — сырые байты тела кадра
 	Raw       []byte // пишется вместо Init байт-в-байт (без шифрования)
+	Modulus   []byte // подмена модулуса собираемого Init
 	Close     bool
 	CheckAuth bool // проверять учётные данные REQUEST_AUTH_LOGIN
 	Steps     []LoginStep
@@ -142,16 +145,21 @@ func (s *ScenarioServer) RunLoginScript(sc LoginScript) error {
 	crypt := crypto.NewLoginCrypt()
 
 	// Init — в статической фазе движка; ключ ставится после отправки
-	// (ответы сценария и расшифровка входящих — динамические).
-	if len(sc.Raw) > 0 {
+	// (ответы сценария и расшифровка входящих — динамические). Raw != nil —
+	// сырые байты вместо Init (злые входы; пустой срез — мгновенное закрытие).
+	if sc.Raw != nil {
 		if _, err := conn.Write(sc.Raw); err != nil {
 			return fmt.Errorf("raw-запись: %w", err)
 		}
 	} else {
 		initWire := sc.Init
 		if initWire == nil {
+			modulus := s.scrambledModulus()
+			if len(sc.Modulus) == 128 {
+				modulus = sc.Modulus
+			}
 			var w [protocol.InitSize]byte
-			protocol.WriteInit(w[:], ScenarioSession, s.scrambledModulus(), scenarioBFKey[:])
+			protocol.WriteInit(w[:], ScenarioSession, modulus, scenarioBFKey[:])
 			initWire = w[:]
 		}
 		if err := writeInitFrame(conn, crypt, initWire); err != nil {
@@ -182,14 +190,19 @@ func (s *ScenarioServer) RunLoginScript(sc LoginScript) error {
 				return nil
 			}
 			if st.Expect == opRequestAuthLogin && sc.CheckAuth {
-				user, pass, err := decodeAuthBlock(frame[1:129])
+				if len(frame) < 129 {
+					s.fail("auth: кадр %d Б короче блоба", len(frame))
+					return nil
+				}
+				user, pass, err := decodeAuthBlock(s.priv, frame[1:129])
 				if err != nil || user != ScenarioUser || pass != ScenarioPass {
-					s.fail("auth: %q/%q (err=%v); want %q/%q", user, pass, err, ScenarioUser, ScenarioPass)
+					// расшифрованные учётные данные не печатаются
+					s.fail("auth: учётные данные не совпали (err=%v)", err)
 					return nil
 				}
 			}
 		}
-		if len(st.Reply) > 0 {
+		if st.Reply != nil {
 			if err := writeEncFrame(conn, crypt, st.Reply, st.Corrupt); err != nil {
 				return fmt.Errorf("ответ 0x%02X: %w", st.Expect, err)
 			}
@@ -228,17 +241,21 @@ func (s *ScenarioServer) RunGameScript(sc GameScript) error {
 				return nil
 			}
 		}
-		if len(st.Reply) > 0 {
-			if plain {
-				if err := writePlainFrame(conn, scenarioTimeout, st.Reply); err != nil {
-					return fmt.Errorf("ответ 0x%02X: %w", st.Expect, err)
+		if st.Reply != nil {
+			payload := st.Reply
+			if len(payload) == 0 {
+				// пустое тело (запись length=2): шифровать нечего
+				if err := writeRecord(conn, scenarioTimeout, payload); err != nil {
+					return fmt.Errorf("ответ пустой: %w", err)
 				}
 			} else {
-				payload := append([]byte(nil), st.Reply...)
-				if err := crypt.Encrypt(payload); err != nil {
-					return fmt.Errorf("шифрование ответа: %w", err)
+				if !plain {
+					payload = append([]byte(nil), st.Reply...)
+					if err := crypt.Encrypt(payload); err != nil {
+						return fmt.Errorf("шифрование ответа: %w", err)
+					}
 				}
-				if err := writePlainFrame(conn, scenarioTimeout, payload); err != nil {
+				if err := writeRecord(conn, scenarioTimeout, payload); err != nil {
 					return fmt.Errorf("ответ 0x%02X: %w", st.Expect, err)
 				}
 			}
@@ -276,6 +293,7 @@ func GoldenGameScript() GameScript {
 		{Expect: opProtocolVersion, Reply: mustGSFixture("KEY_PACKET")},
 		{Expect: opAuthLogin, Reply: mustGSFixture("CHAR_SELECT_INFO")},
 		{Expect: opCharacterSelect, Reply: mustGSFixture("CHAR_SELECTED")},
+		{Expect: ExpectNone, Reply: []byte{}},                 // пустое тело — фолбэк «??(0x??)»
 		{Expect: ExpectNone, Reply: []byte{0x1C, 0x01, 0x02}}, // SUNRISE — имя каталога, hex-дамп
 		{Expect: ExpectNone, Reply: []byte{0xBA, 0xAB, 0x01}}, // неизвестный опкод — «??»
 		{Expect: opLogout, Reply: nil},                        // закрытие: клиент завершает флоу
@@ -287,6 +305,7 @@ func GoldenGameScript() GameScript {
 func goldenServers(gameAddr string) ([]protocol.ServerListEntry, []protocol.ServerChars) {
 	tcp, err := net.ResolveTCPAddr("tcp", gameAddr)
 	if err != nil {
+		// адрес собственным слушателем выдан — недостижимо, инвариант сценария
 		panic(fmt.Sprintf("сценарий: адрес GS-ноги %q: %v", gameAddr, err))
 	}
 	var ip [4]byte
@@ -306,13 +325,9 @@ func goldenServers(gameAddr string) ([]protocol.ServerListEntry, []protocol.Serv
 // decodeAuthBlock расшифровывает 128-байтовый блоб RequestAuthLogin тестовой
 // парой сценария и возвращает учётные данные. Мусорный блоб не паникует:
 // длина проверяется, поля читает конструктор представления.
-func decodeAuthBlock(ct []byte) (user, pass string, err error) {
+func decodeAuthBlock(key *rsa.PrivateKey, ct []byte) (user, pass string, err error) {
 	if len(ct) != 128 {
 		return "", "", fmt.Errorf("блоб %d Б; want 128", len(ct))
-	}
-	key := loadScenarioKeyOrNull()
-	if key == nil {
-		return "", "", errors.New("тестовый ключ сценария недоступен")
 	}
 	m := new(big.Int).Exp(new(big.Int).SetBytes(ct), key.D, key.N)
 	out := make([]byte, 128)
@@ -341,14 +356,7 @@ func writeInitFrame(conn net.Conn, crypt *crypto.LoginCrypt, initWire []byte) er
 	if err != nil {
 		return err
 	}
-	b := buf[:2+n]
-	b[0] = byte(len(b))
-	b[1] = byte(len(b) >> 8)
-	if err := conn.SetWriteDeadline(time.Now().Add(scenarioTimeout)); err != nil {
-		return err
-	}
-	_, err = conn.Write(b)
-	return err
+	return writeRecord(conn, scenarioTimeout, buf[2:2+n])
 }
 
 func writeEncFrame(conn net.Conn, crypt *crypto.LoginCrypt, reply []byte, corrupt bool) error {
@@ -360,18 +368,12 @@ func writeEncFrame(conn net.Conn, crypt *crypto.LoginCrypt, reply []byte, corrup
 	if corrupt && n > 0 {
 		buf[2+n-1] ^= 0xFF // битая чексумма
 	}
-	b := buf[:2+n]
-	b[0] = byte(len(b))
-	b[1] = byte(len(b) >> 8)
-	if err := conn.SetWriteDeadline(time.Now().Add(scenarioTimeout)); err != nil {
-		return err
-	}
-	_, err = conn.Write(b)
-	return err
+	return writeRecord(conn, scenarioTimeout, buf[2:2+n])
 }
 
-// loadScenarioKey читает тестовую RSA-пару (генерация — комментарием в
-// testdata/scenario_test_key.der; ключ тестовый, не секрет).
+// loadScenarioKey читает тестовую RSA-пару. Ключ тестовый, не секрет;
+// одноразовая генерация: rsa.GenerateKey(rand.Reader, 1024) →
+// x509.MarshalPKCS1PrivateKey → testdata/scenario_test_key.der.
 func loadScenarioKey() (*rsa.PrivateKey, error) {
 	_, file, _, _ := runtime.Caller(0)
 	der, err := os.ReadFile(file[:len(file)-len("scenario.go")] + "testdata/scenario_test_key.der")
@@ -383,14 +385,6 @@ func loadScenarioKey() (*rsa.PrivateKey, error) {
 		return nil, fmt.Errorf("разбор тестового ключа сценария: %w", err)
 	}
 	return key, nil
-}
-
-func loadScenarioKeyOrNull() *rsa.PrivateKey {
-	key, err := loadScenarioKey()
-	if err != nil {
-		return nil
-	}
-	return key
 }
 
 // fixtureWire — wire-байты (опкод + payload) фикстуры P1.4 по файлу и имени.

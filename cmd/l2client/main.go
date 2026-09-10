@@ -28,6 +28,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "нужны -addr, -account и env L2CLIENT_PASSWORD")
 		os.Exit(2)
 	}
+	if *serverID < 1 || *serverID > 255 || *slot < 0 {
+		fmt.Fprintln(os.Stderr, "-server вне 1..255 или -char отрицателен")
+		os.Exit(2)
+	}
 
 	ctx := context.Background()
 	lc, err := l2client.DialLogin(ctx, *addr, l2client.Options{Traffic: os.Stdout})

@@ -2,6 +2,7 @@ package l2client
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,8 @@ func TestQuote(t *testing.T) {
 		{"nl\nhere", `"nl\x0Ahere"`},
 		{"esc\x1b]0;x\x07", `"esc\x1B]0;x\x07"`},
 		{"del\x7f", `"del\x7F"`},
+		{`q"uote`, `"q\"uote"`},
+		{`back\slash`, `"back\\slash"`},
 	}
 	for _, tt := range tests {
 		if got := Quote(tt.in); got != tt.want {
@@ -78,5 +81,31 @@ func TestUnknownName(t *testing.T) {
 				t.Errorf("unknownName(% X) = %q; want %q", tt.body, got, tt.want)
 			}
 		})
+	}
+}
+
+// Пайплайн форматтера: поля типизированного пакета и hex-фолбэк.
+func ExampleLogRecv() {
+	var b bytes.Buffer
+	LogRecv(&b, "KEY_PACKET",
+		Field{K: "result", V: "1"},
+		Field{K: "encryption", V: "true"})
+	LogRecvHex(&b, "??(0xFE)", []byte{0xFE, 0x99, 0x09})
+	fmt.Println(b.String())
+	// Output:
+	// ← KEY_PACKET result=1 encryption=true
+	// ← ??(0xFE) hex=fe9909
+}
+
+// Усечение строковых полей: гигантское имя недоверенного пакета не
+// разворачивает строку лога.
+func TestQuotedTruncation(t *testing.T) {
+	long := strings.Repeat("я", 300)
+	got := quoted(long)
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("quoted(300 рун) не усечён: %.40s…", got)
+	}
+	if n := len([]rune(got)); n > quoteMax+3 {
+		t.Errorf("quoted = %d рун; want ≤ %d+3", n, quoteMax)
 	}
 }

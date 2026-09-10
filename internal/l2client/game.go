@@ -20,7 +20,7 @@ import (
 	"github.com/udisondev/l2go/internal/protocol"
 )
 
-// Опкоды game-флоу (значения — из каталога P1.3).
+// Опкоды game-флоу (значения — из каталога опкодов пакета protocol).
 const (
 	opProtocolVersion = 0x00 // PROTOCOL_VERSION, C→GS
 	opAuthLogin       = 0x08 // AUTH_LOGIN, C→GS
@@ -59,8 +59,9 @@ func DialGame(ctx context.Context, addr string, opts Options) (*GameClient, erro
 	d := net.Dialer{Timeout: opts.timeout()}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("%w к %s: %v", errDial, addr, err)
+		return nil, fmt.Errorf("%w к %s: %w", errDial, addr, err)
 	}
+	setNoDelay(conn)
 	return &GameClient{
 		conn:     conn,
 		opts:     opts,
@@ -85,7 +86,7 @@ func (gc *GameClient) Close() error {
 func (gc *GameClient) Handshake() error {
 	var wire [protocol.ProtocolVersionSize]byte
 	protocol.WriteProtocolVersion(wire[:], protocol.ProtocolVersionInterlude)
-	if err := writePlainFrame(gc.conn, gc.opts.timeout(), wire[:]); err != nil {
+	if err := writeRecord(gc.conn, gc.opts.timeout(), wire[:]); err != nil {
 		return fmt.Errorf("стадия ProtocolVersion: %w", err)
 	}
 	gc.logSend("PROTOCOL_VERSION", Field{K: "version", V: num32(protocol.ProtocolVersionInterlude)})
@@ -172,37 +173,61 @@ func (gc *GameClient) SelectChar(slot int32) error {
 	if err != nil {
 		return fmt.Errorf("стадия CharSelected: %w", err)
 	}
-	v, ok := protocol.NewCharSelectedView(reply)
-	if !ok {
-		return fmt.Errorf("стадия CharSelected: обрезанное тело (%d Б)", len(reply))
+	switch reply[0] {
+	case opCharSelected:
+		v, ok := protocol.NewCharSelectedView(reply)
+		if !ok {
+			return fmt.Errorf("стадия CharSelected: обрезанное тело (%d Б)", len(reply))
+		}
+		gc.logRecv("CHAR_SELECTED", charSelectedFields(v)...)
+		return nil
+	case opGSLoginFail:
+		v, ok := protocol.NewGSLoginFailView(reply)
+		if !ok {
+			return fmt.Errorf("стадия LoginFail: обрезанное тело (%d Б)", len(reply))
+		}
+		gc.logRecv("LOGIN_FAIL", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		return fmt.Errorf("выбор персонажа отклонён: reason=0x%02X", v.Reason())
+	default:
+		return fmt.Errorf("неожиданный ответ выбора персонажа: опкод 0x%02X", reply[0])
 	}
-	gc.logRecv("CHAR_SELECTED", charSelectedFields(v)...)
-	return nil
 }
+
+// framesCap — буфер канала кадров: сглаживает паки сервера, не задерживая
+// чтение сокета.
+const framesCap = 16
+
+// priorityBurst — сколько готовых кадров обрабатывается подряд с приоритетом
+// над командами: ограничивает голодание команд/ctx при непрерывном потоке.
+const priorityBurst = 8
 
 // Run — стационарная фаза: единственный владелец криптодвижка, диспетчера и
 // трафик-лога. Завершается чистым закрытием сервера (EOF → nil), ошибкой
 // канала, отменой контекста или Close.
 func (gc *GameClient) Run(ctx context.Context) error {
-	frames := make(chan []byte, 16)
+	frames := make(chan []byte, framesCap)
 	pumpErr := make(chan error, 1)
 	go gc.readPump(frames, pumpErr)
 	defer func() {
 		_ = gc.Close()
-		for range frames { // дренаж: ReadPump закрывает канал при выходе
+		for range frames { // дренаж: кадры в полёте логируются до выхода
 		}
 	}()
 	for {
-		// приоритет входящих: кадры в полёте логируются раньше команд —
-		// порядок строк детерминирован (короткие паки сервера не голодают).
-		select {
-		case f, ok := <-frames:
-			if !ok {
-				return pumpOutcome(pumpErr)
+		// приоритет входящих (с ограничением priorityBurst): готовые кадры
+		// логируются раньше команд — порядок строк детерминирован, а поток
+		// кадров не голодает отмену и команды бесконечно.
+		for i := 0; i < priorityBurst; i++ {
+			select {
+			case f, ok := <-frames:
+				if !ok {
+					return pumpOutcome(pumpErr)
+				}
+				gc.handleFrame(f)
+				continue
+			default:
 			}
-			gc.handleFrame(f)
-			continue
-		default:
+			break
 		}
 		select {
 		case f, ok := <-frames:
@@ -225,14 +250,18 @@ func (gc *GameClient) Run(ctx context.Context) error {
 	}
 }
 
-// pumpOutcome — исход завершения ReadPump: EOF и пустой канал — чистое
-// закрытие сервером.
+// pumpOutcome — исход завершения ReadPump: EOF, пустой канал и закрытие по
+// done — чистое завершение (ReadPump в done-плече может не отправить ошибку).
 func pumpOutcome(pumpErr <-chan error) error {
-	err := <-pumpErr
-	if errors.Is(err, io.EOF) || err == nil {
+	select {
+	case err := <-pumpErr:
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return fmt.Errorf("чтение game-канала: %w", err)
+	default:
 		return nil
 	}
-	return fmt.Errorf("чтение game-канала: %w", err)
 }
 
 // Logout — команда стационарной фазы; после выхода Run или Close — ошибка.
@@ -278,6 +307,7 @@ func (gc *GameClient) readPump(frames chan []byte, pumpErr chan<- error) {
 			select {
 			case frames <- owned:
 			case <-gc.done:
+				pumpErr <- nil // done-плечо: Run не должен ждать ошибку вечно
 				return
 			}
 		}
@@ -289,52 +319,40 @@ func (gc *GameClient) readPump(frames chan []byte, pumpErr chan<- error) {
 }
 
 // handleFrame расшифровывает и диспетчеризирует входящий кадр стационарной
-// фазы: типизированный — поля, прочий — имя из каталога + hex-фолбэк.
+// фазы: пустое тело — фолбэк без расшифровки, типизированный — поля, прочий —
+// имя из каталога + hex-фолбэк.
 func (gc *GameClient) handleFrame(f []byte) {
+	if len(f) == 0 {
+		gc.logRecvHex("??(0x??)", f)
+		return
+	}
 	if gc.crypt != nil {
 		if err := gc.crypt.Decrypt(f); err != nil {
-			slog.Warn("game: расшифровка кадра", "err", err)
+			slog.Debug("game: расшифровка кадра", "err", err)
+			gc.logRecvHex(unknownName(f), f)
 			return
 		}
 	}
+	var name string
 	var fields []Field
 	typed := false
-	if len(f) > 0 {
-		switch f[0] {
-		case opCharSelectInfo:
-			if v, ok := protocol.NewCharSelectionInfoView(f); ok {
-				fields, typed = charSelectionFields(v), true
-			}
-		case opCharSelected:
-			if v, ok := protocol.NewCharSelectedView(f); ok {
-				if _, ok2 := v.Name(); ok2 {
-					fields, typed = charSelectedFields(v), true
-				}
+	switch f[0] {
+	case opCharSelectInfo:
+		if v, ok := protocol.NewCharSelectionInfoView(f); ok {
+			name, fields, typed = "CHAR_SELECT_INFO", charSelectionFields(v), true
+		}
+	case opCharSelected:
+		if v, ok := protocol.NewCharSelectedView(f); ok {
+			if _, ok2 := v.Name(); ok2 {
+				name, fields, typed = "CHAR_SELECTED", charSelectedFields(v), true
 			}
 		}
 	}
-	if gc.opts.Traffic == nil {
-		return
-	}
 	if typed {
-		LogRecv(gc.opts.Traffic, nameOf(f), fields...)
+		gc.logRecv(name, fields...)
 		return
 	}
-	LogRecvHex(gc.opts.Traffic, unknownName(f), f)
-}
-
-// nameOf — имя типизированного пакета (опкод известен диспетчеру).
-func nameOf(f []byte) string {
-	if len(f) == 0 {
-		return "??(0x??)"
-	}
-	switch f[0] {
-	case opCharSelectInfo:
-		return "CHAR_SELECT_INFO"
-	case opCharSelected:
-		return "CHAR_SELECTED"
-	}
-	return unknownName(f)
+	gc.logRecvHex(unknownName(f), f)
 }
 
 // sendEnc шифрует и пишет кадр (включённое шифрование).
@@ -345,14 +363,7 @@ func (gc *GameClient) sendEnc(wire []byte) error {
 	if err := gc.crypt.Encrypt(wire); err != nil {
 		return err
 	}
-	buf := make([]byte, 2+len(wire))
-	buf[0] = byte(len(buf))
-	buf[1] = byte(len(buf) >> 8)
-	copy(buf[2:], wire)
-	if _, err := gc.conn.Write(buf); err != nil {
-		return wrapNet("запись кадра", err)
-	}
-	return nil
+	return writeRecord(gc.conn, gc.opts.timeout(), wire)
 }
 
 // readDec читает кадр хендшейка и расшифровывает его.
@@ -379,6 +390,12 @@ func (gc *GameClient) logSend(name string, fields ...Field) {
 	}
 }
 
+func (gc *GameClient) logRecvHex(name string, body []byte) {
+	if gc.opts.Traffic != nil {
+		LogRecvHex(gc.opts.Traffic, name, body)
+	}
+}
+
 // charSelectionFields — поля списка персонажей (читаемое подмножество полей
 // записи; полный разбор — представление).
 func charSelectionFields(v protocol.CharSelectionInfoView) []Field {
@@ -390,7 +407,7 @@ func charSelectionFields(v protocol.CharSelectionInfoView) []Field {
 		}
 		fields = append(fields, Field{K: fmt.Sprintf("[%d]", i), V: fmt.Sprintf(
 			"{name=%s id=%d level=%d class=%d base=%d sex=%d race=%d hp=%s/%s mp=%s/%s sp=%d exp=%d karma=%d}",
-			Quote(e.Name), e.CharID, e.Level, e.ClassID, e.BaseClassID, e.Sex, e.Race,
+			quoted(e.Name), e.CharID, e.Level, e.ClassID, e.BaseClassID, e.Sex, e.Race,
 			flt(e.CurHP), flt(e.MaxHP), flt(e.CurMP), flt(e.MaxMP), e.SP, e.Exp, e.Karma)})
 	}
 	return fields
@@ -403,13 +420,13 @@ func charSelectedFields(v protocol.CharSelectedView) []Field {
 		fields = append(fields, Field{K: k, V: fmt.Sprintf("%v", val)})
 	}
 	if name, ok := v.Name(); ok {
-		add("name", Quote(name))
+		add("name", quoted(name))
 	}
 	if id, ok := v.CharID(); ok {
 		add("id", id)
 	}
 	if title, ok := v.Title(); ok {
-		add("title", Quote(title))
+		add("title", quoted(title))
 	}
 	if lv, ok := v.Level(); ok {
 		add("level", lv)

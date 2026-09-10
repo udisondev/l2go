@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,8 +95,27 @@ func TestFullFlowGolden(t *testing.T) {
 	}
 }
 
+// syncBuffer — синхронизированный трафик-буфер: Run пишет из своей горутины,
+// тест читает (poll) из своей — без мьютекса это гонка данных.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (sb *syncBuffer) Write(p []byte) (int, error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.b.Write(p)
+}
+
+func (sb *syncBuffer) String() string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.b.String()
+}
+
 // waitForLog ждёт появления подстроки в трафик-логе (кадры в полёте).
-func waitForLog(t *testing.T, out *bytes.Buffer, sub string) {
+func waitForLog(t *testing.T, out *syncBuffer, sub string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -108,7 +128,7 @@ func waitForLog(t *testing.T, out *bytes.Buffer, sub string) {
 }
 
 // startGolden поднимает сценарий-сервер с golden-скриптами обеих ног.
-func startGolden(t *testing.T) (srv *ScenarioServer, out *bytes.Buffer) {
+func startGolden(t *testing.T) (srv *ScenarioServer, out *syncBuffer) {
 	t.Helper()
 	srv, err := StartScenarioServer()
 	if err != nil {
@@ -117,7 +137,7 @@ func startGolden(t *testing.T) (srv *ScenarioServer, out *bytes.Buffer) {
 	t.Cleanup(srv.Close)
 	go func() { _ = srv.RunLoginScript(GoldenLoginScript(srv)) }()
 	go func() { _ = srv.RunGameScript(GoldenGameScript()) }()
-	return srv, &bytes.Buffer{}
+	return srv, &syncBuffer{}
 }
 
 func mustFlow(t *testing.T, err error, stage string) {
@@ -360,13 +380,21 @@ func scenarioCiphertext(t *testing.T) []byte {
 
 // Мусорный auth-блоб: расшифровка и проверка сценарием — ошибка шага, не паника.
 func TestScenarioAuthCheck(t *testing.T) {
+	key, err := loadScenarioKey()
+	if err != nil {
+		t.Fatalf("loadScenarioKey: %v", err)
+	}
 	garbage := bytes.Repeat([]byte{0x5A}, 128)
-	if _, _, err := decodeAuthBlock(garbage); err != nil {
+	if _, _, err := decodeAuthBlock(key, garbage); err != nil {
 		t.Fatalf("decodeAuthBlock(мусор): %v; want nil (блок валиден по длине, мусор в полях)", err)
+	}
+	// короткий блоб — ошибка, не паника (граница среза — на вызывающем)
+	if _, _, err := decodeAuthBlock(key, garbage[:16]); err == nil {
+		t.Error("decodeAuthBlock(16 Б): err = nil; want ошибка длины")
 	}
 	// правильный шифротекст — фиксированная пара сценария
 	ct := scenarioCiphertext(t)
-	user, pass, err := decodeAuthBlock(ct)
+	user, pass, err := decodeAuthBlock(key, ct)
 	if err != nil {
 		t.Fatalf("decodeAuthBlock(фиксированный шифротекст): %v", err)
 	}
@@ -415,6 +443,144 @@ func TestGameClientStress(t *testing.T) {
 	}
 }
 
+// Дополнительные злые входы: вырожденный модулус, обрыв сразу, огромный кадр.
+func TestEvilInputsExtra(t *testing.T) {
+	t.Run("Init с нулевым модулусом", func(t *testing.T) {
+		srv, err := StartScenarioServer()
+		mustFlow(t, err, "StartScenarioServer")
+		defer srv.Close()
+		go func() { _ = srv.RunLoginScript(LoginScript{Modulus: make([]byte, 128)}) }()
+		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 2 * time.Second})
+		mustFlow(t, err, "DialLogin")
+		defer lc.Close()
+		if err := lc.Handshake(); err == nil {
+			t.Fatal("Handshake с нулевым модулусом: err = nil; want ошибка ключа")
+		}
+	})
+	t.Run("обрыв сразу после подключения", func(t *testing.T) {
+		srv, err := StartScenarioServer()
+		mustFlow(t, err, "StartScenarioServer")
+		defer srv.Close()
+		go func() { _ = srv.RunLoginScript(LoginScript{Raw: []byte{}, Close: true}) }()
+		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 2 * time.Second})
+		mustFlow(t, err, "DialLogin")
+		defer lc.Close()
+		if err := lc.Handshake(); err == nil {
+			t.Fatal("Handshake при немедленном закрытии: err = nil; want EOF-ошибку")
+		}
+	})
+	t.Run("объявлен кадр 0xFFFF", func(t *testing.T) {
+		srv, err := StartScenarioServer()
+		mustFlow(t, err, "StartScenarioServer")
+		defer srv.Close()
+		// зашифрованный мусорный кадр максимальной длины: тело 65533 Б
+		huge := make([]byte, 65533)
+		for i := range huge {
+			huge[i] = byte(i)
+		}
+		go func() {
+			_ = srv.RunLoginScript(LoginScript{Steps: []LoginStep{{Expect: opAuthGameGuard, Reply: huge}}})
+		}()
+		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 2 * time.Second, Traffic: &syncBuffer{}})
+		mustFlow(t, err, "DialLogin")
+		defer lc.Close()
+		if err := lc.Handshake(); err == nil {
+			t.Fatal("Handshake с мусорным кадром 64КБ: err = nil; want ошибку расшифровки")
+		}
+	})
+}
+
+// Дренаж: кадры, отправленные сервером до закрытия, логируются все —
+// Run не теряет хвост потока.
+func TestRunDrainsFrames(t *testing.T) {
+	srv, err := StartScenarioServer()
+	mustFlow(t, err, "StartScenarioServer")
+	defer srv.Close()
+	go func() { _ = srv.RunLoginScript(GoldenLoginScript(srv)) }()
+	pushes := GameScript{Steps: []GameStep{
+		{Expect: opProtocolVersion, Reply: mustGSFixture("KEY_PACKET")},
+		{Expect: opAuthLogin, Reply: mustGSFixture("CHAR_SELECT_INFO")},
+		{Expect: opCharacterSelect, Reply: mustGSFixture("CHAR_SELECTED")},
+		// пять пушей и закрытие: Run обязан залогировать каждый
+		{Expect: ExpectNone, Reply: []byte{0x1C, 0x01}},
+		{Expect: ExpectNone, Reply: []byte{0x1C, 0x02}},
+		{Expect: ExpectNone, Reply: []byte{0x1C, 0x03}},
+		{Expect: ExpectNone, Reply: []byte{0x1C, 0x04}},
+		{Expect: ExpectNone, Reply: []byte{0x1C, 0x05}},
+	}}
+	go func() { _ = srv.RunGameScript(pushes) }()
+
+	out := &syncBuffer{}
+	ctx := context.Background()
+	lc, err := DialLogin(ctx, srv.LoginAddr(), Options{Traffic: out})
+	mustFlow(t, err, "DialLogin")
+	mustFlow(t, lc.Handshake(), "Handshake")
+	mustFlow(t, lc.Login(ScenarioUser, ScenarioPass), "Login")
+	if _, _, err := lc.ServerList(); err != nil {
+		t.Fatalf("ServerList: %v", err)
+	}
+	ep, err := lc.SelectServer(1)
+	mustFlow(t, err, "SelectServer")
+	mustFlow(t, lc.Close(), "Close")
+	gc, err := DialGame(ctx, ep.Addr, Options{Traffic: out})
+	mustFlow(t, err, "DialGame")
+	mustFlow(t, gc.Handshake(), "GameHandshake")
+	if _, err := gc.Auth(ep, ScenarioUser); err != nil {
+		t.Fatalf("Auth: %v", err)
+	}
+	mustFlow(t, gc.SelectChar(0), "SelectChar")
+	if err := gc.Run(ctx); err != nil {
+		t.Fatalf("Run: %v (закрытие сервером — чистый nil)", err)
+	}
+	for i := 1; i <= 5; i++ {
+		want := fmt.Sprintf("hex=1c0%d", i)
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("кадр 1c0%d потерян дренажом", i)
+		}
+	}
+}
+
+// Recover-пачка: мутации байтов golden-потока — клиент не паникует ни на
+// одной (детерминированный seed).
+func TestMutationPack(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("паника на мутации потока: %v", r)
+		}
+	}()
+	rng := rand.New(rand.NewSource(42))
+	for i := 0; i < 50; i++ {
+		srv, err := StartScenarioServer()
+		mustFlow(t, err, "StartScenarioServer")
+		// мутация случайного байта каждого golden-ответа LS-ноги
+		mut := LoginScript{CheckAuth: i%2 == 0, Steps: []LoginStep{
+			{Expect: opAuthGameGuard, Reply: mutateWire(rng, mustLSFixture("GG_AUTH"))},
+			{Expect: opRequestAuthLogin, Reply: mutateWire(rng, mustLSFixture("LOGIN_OK"))},
+			{Expect: opRequestServerList, Reply: mutateWire(rng, mustLSFixture("SERVER_LIST"))},
+		}}
+		go func(sc LoginScript) { _ = srv.RunLoginScript(sc) }(mut)
+		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 500 * time.Millisecond})
+		if err != nil {
+			srv.Close()
+			continue
+		}
+		_ = lc.Handshake()
+		_ = lc.Login(ScenarioUser, ScenarioPass)
+		_, _, _ = lc.ServerList()
+		_ = lc.Close()
+		srv.Close()
+	}
+}
+
+// mutateWire инвертирует случайный байт wire-ответа (мутация потока).
+func mutateWire(rng *rand.Rand, w []byte) []byte {
+	out := append([]byte(nil), w...)
+	if len(out) > 0 {
+		out[rng.Intn(len(out))] ^= 0x5A
+	}
+	return out
+}
+
 // Команда после Close без запуска Run — ошибка, не висение.
 func TestCommandAfterClose(t *testing.T) {
 	srv, _ := startGolden(t)
@@ -456,7 +622,7 @@ func TestCmdScenario(t *testing.T) {
 	// cmd-сценарий — без стационарных пушей: Logout сразу после входа
 	// (гонка «команда против кадра в полёте» не детерминизируется извне бинарника)
 	full := GoldenGameScript()
-	game := GameScript{Steps: append(full.Steps[:3:3], full.Steps[5])}
+	game := GameScript{Steps: append(full.Steps[:3:3], full.Steps[len(full.Steps)-1])}
 	go func() { _ = srv.RunGameScript(game) }()
 
 	cmd := exec.Command(bin, "-addr", srv.LoginAddr(), "-account", ScenarioUser, "-server", "1", "-char", "0")

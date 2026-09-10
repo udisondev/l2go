@@ -13,6 +13,7 @@
 ← CHAR_SELECT_INFO count=2 [0]={name="Warrior" id=268478617 level=10 class=0 base=0 sex=0 race=0 hp=42.5/85.5 mp=39.25/78.5 sp=100 exp=123456789 karma=0} [1]={name="Маг" id=268478618 level=1 class=10 base=10 sex=1 race=2 hp=25.5/51 mp=100.125/100.5 sp=32767 exp=9876543210 karma=0}
 → CHARACTER_SELECT slot=0
 ← CHAR_SELECTED name="Warrior" id=268478617 title="Novice" level=10 class=0 x=-84000 y=247000 z=-3700 hp=42.5 mp=39.25 sp=100 exp=123456789 karma=0 pk=0 gameTime=905
+← ??(0x??) hex=
 ← SUNRISE hex=1c0102
 ← ??(0xBA) hex=baab01
 → LOGOUT

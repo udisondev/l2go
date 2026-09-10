@@ -6,27 +6,31 @@ import "testing"
 // против таблиц каталога (мапы строятся из тех же таблиц).
 func TestPacketNames(t *testing.T) {
 	tests := []struct {
-		name  string
-		op    byte
-		want  string
-		wantO bool
+		name string
+		gs   bool
+		op   byte
+		want string
+		ok   bool
 	}{
-		{"LS INIT", 0x00, "INIT", true},
-		{"LS GG_AUTH", 0x0B, "GG_AUTH", true},
-		{"LS нет REQUEST_SERVER_LIST", 0x05, "", false},
-		{"GS KEY_PACKET", 0x00, "KEY_PACKET", true},
-		{"GS ATTACK", 0x05, "ATTACK", true},
-		{"GS SUNRISE", 0x1C, "SUNRISE", true},
-		{"GS нет 0xBA", 0xBA, "", false},
+		{"LS INIT", false, 0x00, "INIT", true},
+		{"LS GG_AUTH", false, 0x0B, "GG_AUTH", true},
+		{"LS нет REQUEST_SERVER_LIST", false, 0x05, "", false},
+		{"GS KEY_PACKET", true, 0x00, "KEY_PACKET", true},
+		{"GS ATTACK", true, 0x05, "ATTACK", true},
+		{"GS SUNRISE", true, 0x1C, "SUNRISE", true},
+		{"GS нет 0xBA", true, 0xBA, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := LoginServerPacketName(tt.op)
-			if tt.name[:2] == "GS" {
+			var got string
+			var ok bool
+			if tt.gs {
 				got, ok = GameServerPacketName(tt.op)
+			} else {
+				got, ok = LoginServerPacketName(tt.op)
 			}
-			if ok != tt.wantO || got != tt.want {
-				t.Errorf("имя = %q, %v; want %q, %v", got, ok, tt.want, tt.wantO)
+			if ok != tt.ok || got != tt.want {
+				t.Errorf("имя = %q, %v; want %q, %v", got, ok, tt.want, tt.ok)
 			}
 		})
 	}

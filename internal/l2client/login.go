@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
@@ -22,18 +23,20 @@ import (
 	"github.com/udisondev/l2go/internal/protocol"
 )
 
-// Опкоды пакетов логин-флоу (значения — из каталога P1.3; локальные имена
-// клиента, экспорта опкодов из protocol нет).
+// Опкоды пакетов логин-флоу (значения — из каталога опкодов пакета protocol;
+// локальные имена клиента, экспорта опкодов из protocol нет).
 const (
 	opRequestAuthLogin   = 0x00 // REQUEST_AUTH_LOGIN, C→LS
 	opRequestServerLogin = 0x02 // REQUEST_SERVER_LOGIN, C→LS
 	opRequestServerList  = 0x05 // REQUEST_SERVER_LIST, C→LS
 	opAuthGameGuard      = 0x07 // AUTH_GAME_GUARD, C→LS
 
-	opLoginFail = 0x01 // LOGIN_FAIL, LS→C
-	opLoginOk   = 0x03 // LOGIN_OK, LS→C
-	opPlayFail  = 0x06 // PLAY_FAIL, LS→C
-	opPlayOk    = 0x07 // PLAY_OK, LS→C
+	opAccountKicked = 0x02 // ACCOUNT_KICKED, LS→C
+	opLoginFail     = 0x01 // LOGIN_FAIL, LS→C
+	opLoginOk       = 0x03 // LOGIN_OK, LS→C
+	opServerList    = 0x04 // SERVER_LIST, LS→C
+	opPlayFail      = 0x06 // PLAY_FAIL, LS→C
+	opPlayOk        = 0x07 // PLAY_OK, LS→C
 )
 
 // rsaExponent — публичная экспонента RSA login-протокола L2 (канон).
@@ -83,9 +86,20 @@ func DialLogin(ctx context.Context, addr string, opts Options) (*LoginClient, er
 	d := net.Dialer{Timeout: opts.timeout()}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("%w к %s: %v", errDial, addr, err)
+		return nil, fmt.Errorf("%w к %s: %w", errDial, addr, err)
 	}
+	setNoDelay(conn)
 	return &LoginClient{conn: conn, crypt: crypto.NewLoginCrypt(), opts: opts}, nil
+}
+
+// setNoDelay выставляет TCP_NODELAY (явно, по букве задачи; Go-рантайм
+// включает его по умолчанию).
+func setNoDelay(conn net.Conn) {
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		if err := tcp.SetNoDelay(true); err != nil {
+			slog.Debug("TCP_NODELAY", "err", err)
+		}
+	}
 }
 
 // Close закрывает соединение логина.
@@ -111,16 +125,16 @@ func readFrame(conn net.Conn, timeout time.Duration) ([]byte, error) {
 	return body, nil
 }
 
-// writePlainFrame пишет запись [длина][тело] без шифрования (открытые стадии
-// game-хендшейка).
-func writePlainFrame(conn net.Conn, timeout time.Duration, payload []byte) error {
+// writeRecord пишет запись провода [uint16 LE длина всей записи][кадр] —
+// единственное место префикса длины.
+func writeRecord(conn net.Conn, timeout time.Duration, frame []byte) error {
 	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 		return fmt.Errorf("дедлайн записи: %w", err)
 	}
-	buf := make([]byte, 2+len(payload))
+	buf := make([]byte, 2+len(frame))
 	buf[0] = byte(len(buf))
 	buf[1] = byte(len(buf) >> 8)
-	copy(buf[2:], payload)
+	copy(buf[2:], frame)
 	if _, err := conn.Write(buf); err != nil {
 		return wrapNet("запись кадра", err)
 	}
@@ -224,7 +238,15 @@ func (lc *LoginClient) Login(user, pass string) error {
 		if !ok {
 			return fmt.Errorf("стадия LoginFail: обрезанное тело (%d Б)", len(reply))
 		}
+		lc.logRecv("LOGIN_FAIL", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
 		return fmt.Errorf("логин отклонён: reason=0x%02X", v.Reason())
+	case opAccountKicked:
+		v, ok := protocol.NewAccountKickedView(reply)
+		if !ok {
+			return fmt.Errorf("стадия AccountKicked: обрезанное тело (%d Б)", len(reply))
+		}
+		lc.logRecv("ACCOUNT_KICKED", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		return fmt.Errorf("аккаунт исключён: reason=0x%02X", v.Reason())
 	default:
 		return fmt.Errorf("неожиданный ответ логина: опкод 0x%02X", reply[0])
 	}
@@ -244,6 +266,18 @@ func (lc *LoginClient) ServerList() ([]protocol.ServerListEntry, []protocol.Serv
 	reply, err := lc.readDec()
 	if err != nil {
 		return nil, nil, fmt.Errorf("стадия ServerList: %w", err)
+	}
+	if len(reply) == 0 {
+		return nil, nil, fmt.Errorf("стадия ServerList: пустой ответ")
+	}
+	if reply[0] != opServerList {
+		if reply[0] == opLoginFail {
+			if v, ok := protocol.NewLoginFailView(reply); ok {
+				lc.logRecv("LOGIN_FAIL", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+				return nil, nil, fmt.Errorf("список серверов отклонён: reason=0x%02X", v.Reason())
+			}
+		}
+		return nil, nil, fmt.Errorf("неожиданный ответ списка серверов: опкод 0x%02X", reply[0])
 	}
 	v, ok := protocol.NewServerListView(reply)
 	if !ok {
@@ -301,19 +335,24 @@ func (lc *LoginClient) SelectServer(id byte) (GameEndpoint, error) {
 		if !ok {
 			return GameEndpoint{}, fmt.Errorf("стадия PlayFail: обрезанное тело (%d Б)", len(reply))
 		}
+		lc.logRecv("PLAY_FAIL", Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
 		return GameEndpoint{}, fmt.Errorf("выбор сервера отклонён: reason=0x%02X", v.Reason())
 	default:
 		return GameEndpoint{}, fmt.Errorf("неожиданный ответ выбора сервера: опкод 0x%02X", reply[0])
 	}
 	for _, s := range lc.servers {
 		if s.ID == id {
-			return GameEndpoint{
+			ep := GameEndpoint{
 				Addr:     fmt.Sprintf("%d.%d.%d.%d:%d", s.IP[0], s.IP[1], s.IP[2], s.IP[3], s.Port),
 				PlayOk1:  lc.playOk1,
 				PlayOk2:  lc.playOk2,
 				LoginOk1: lc.loginOk1,
 				LoginOk2: lc.loginOk2,
-			}, nil
+			}
+			// адрес game-ноги не входит в трафик-лог (детерминизм golden) —
+			// наблюдаемость через slog
+			slog.Debug("выбран game-сервер", "id", id, "addr", ep.Addr)
+			return ep, nil
 		}
 	}
 	return GameEndpoint{}, fmt.Errorf("выбранный сервер %d отсутствует в списке", id)
@@ -338,16 +377,7 @@ func (lc *LoginClient) writeEnc(payload []byte) error {
 	if err != nil {
 		return err
 	}
-	b := buf[:2+n]
-	b[0] = byte(len(b))
-	b[1] = byte(len(b) >> 8)
-	if err := lc.conn.SetWriteDeadline(time.Now().Add(lc.opts.timeout())); err != nil {
-		return fmt.Errorf("дедлайн записи: %w", err)
-	}
-	if _, err := lc.conn.Write(b); err != nil {
-		return wrapNet("запись кадра", err)
-	}
-	return nil
+	return writeRecord(lc.conn, lc.opts.timeout(), buf[2:2+n])
 }
 
 func (lc *LoginClient) logRecv(name string, fields ...Field) {
@@ -363,7 +393,7 @@ func (lc *LoginClient) logSend(name string, fields ...Field) {
 }
 
 // serverListFields — поля ServerList: записи без ip/port (детерминизм golden
-// при эфемерном порте GS-ноги сценария; адрес виден в ключах сессии).
+// при эфемерном порте GS-ноги сценария; адрес — slog Debug стадии выбора).
 func serverListFields(v protocol.ServerListView) []Field {
 	fields := []Field{
 		{K: "count", V: num(int64(v.Count()))},

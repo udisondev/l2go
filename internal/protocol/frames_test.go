@@ -79,7 +79,9 @@ func TestNextFrameZeroAllocs(t *testing.T) {
 }
 
 func BenchmarkNextFrame(b *testing.B) {
+	// поток golden-подобных кадров: полный кадр на всю длину буфера
 	buf := make([]byte, 8192)
+	buf[0], buf[1] = 0x00, 0x20 // длина записи 8192
 	b.SetBytes(int64(len(buf)))
 	b.ReportAllocs()
 	for b.Loop() {
