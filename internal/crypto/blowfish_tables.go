@@ -1,8 +1,10 @@
 // Таблицы Blowfish — константы алгоритма (P-массив и S-боксы из цифр числа
-// пи). Перенесены из golang.org/x/crypto/blowfish (BSD-3, The Go Authors) —
-// порт C-реализации Брюса Шнайера; идентичны таблицам Java L2J
-// BlowfishEngine. Байтовая совместимость с эталоном зафиксирована
-// golden-векторами тестов пакета.
+// пи). Перенесены из golang.org/x/crypto/blowfish (Copyright 2010 The Go
+// Authors. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.) — порт
+// C-реализации Брюса Шнайера; идентичны таблицам Java L2J BlowfishEngine.
+// Байтовая совместимость с эталоном зафиксирована golden-векторами тестов
+// пакета.
 package crypto
 
 var s0 = [256]uint32{

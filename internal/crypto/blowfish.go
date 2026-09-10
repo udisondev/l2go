@@ -22,11 +22,13 @@ var staticLoginKey = []byte{
 
 // bfCipher — Blowfish ECB с LE-упаковкой блоков: L2J BlowfishEngine читает
 // полублоки little-endian. Ядро алгоритма и ключевой график — порт
-// golang.org/x/crypto/blowfish (BSD-3, The Go Authors; порт C-реализации
-// Брюса Шнайера), таблицы — в blowfish_tables.go. Отличие порта: данные
-// упаковываются LE, поэтому своп-обёртка вокруг BE-ядра не нужна; слова ключа
-// ключевой график читает big-endian (как ядро-источник) — это побайтово
-// совпадает с эталонным interlude (x/crypto + свопы данных) и живым трафиком.
+// golang.org/x/crypto/blowfish (Copyright 2010 The Go Authors. All rights
+// reserved. Use of this source code is governed by a BSD-style license that
+// can be found in the LICENSE file.), таблицы — в blowfish_tables.go.
+// Отличие порта: данные упаковываются LE, поэтому своп-обёртка вокруг BE-ядра
+// не нужна; слова ключа ключевой график читает big-endian (как ядро-источник)
+// — это побайтово совпадает с эталонным interlude (x/crypto + свопы данных) и
+// живым трафиком.
 type bfCipher struct {
 	p              [18]uint32
 	s0, s1, s2, s3 [256]uint32
