@@ -135,13 +135,18 @@ func ReadS(src []byte, off int) (string, int, bool) {
 	if off < 0 || off >= len(src) {
 		return "", 0, false
 	}
-	units := make([]uint16, 0, 16)
+	// первый проход — до терминатора: точный размер буфера юнитов без
+	// промежуточных ростов слайса
+	units := 0
 	for i := off; i+1 < len(src); i += 2 {
-		u := binary.LittleEndian.Uint16(src[i:])
-		if u == 0 {
-			return string(utf16.Decode(units)), i + 2 - off, true
+		if binary.LittleEndian.Uint16(src[i:]) == 0 {
+			buf := make([]uint16, units)
+			for j := range buf {
+				buf[j] = binary.LittleEndian.Uint16(src[off+j*2:])
+			}
+			return string(utf16.Decode(buf)), i + 2 - off, true
 		}
-		units = append(units, u)
+		units++
 	}
 	return "", 0, false
 }

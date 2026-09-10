@@ -74,7 +74,7 @@ func TestCatalogValueRange(t *testing.T) {
 func TestConstantsMatchCatalog(t *testing.T) {
 	consts := []struct {
 		name  string
-		value gameServerOp
+		value byte
 		cat   string
 	}{
 		{"ATTACK", attack, "GameServer→C"},

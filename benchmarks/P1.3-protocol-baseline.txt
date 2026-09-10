@@ -1,75 +1,95 @@
-# P1.3 internal/protocol — baseline (рев. 1)
+# P1.3 internal/protocol — baseline (рев. 2 — дофикс S8: ReadS точный буфер юнитов (3 аллок вместо 5 на длинной), AttackView прямые геттеры, добавлено семейство WriteS-only (F-перф П3))
 # Окружение: AMD Ryzen 9 PRO 8945HS, Go go1.27.1, linux/amd64, GOMAXPROCS=16
 # Методика: go test -run '^$' -bench . -benchtime=100ms -count=10 ./internal/protocol/ | benchstat
 # Послабление против docs/perf.md §0 (benchtime 100ms < 1s и усреднение вместо регресс-сравнения): прецеденты F28/P1.1, F9/P1.2 — baseline фиксирует медианы для будущих сверок, регресс-бюджеты — по нагрузочной базе фазы 4+.
-# Семейства соответствуют бенч-плану рев. 2 (решение 10): WriteAttack, AttackView, WriteReadD, WriteReadS×2, LenS.
-# Аллокации WriteReadS: материализация string в ReadS (1-5 аллок) — осознанно: диспетчерный не-тиковый путь (F23/P1.3); WriteS — 0 аллок.
+# Семейства: бенч-план рев. 2 (решение 10) + WriteS-short/long (S8, перф П3 — клеймо «WriteS 0 аллок» заперто и бенчем, и TestWriteSZeroAllocs).
+# Аллокации: WriteS/LenS/WriteAttack/AttackView/WriteReadD — 0; ReadS материализует string (диспетчерный не-тиковый путь, F23/P1.3): 1 аллок ≤16 юнитов, 3 на длинной; WriteS двойной проход (LenS в guard) — осознанно (точная диагностика паники), пересмотр по профилю фазы 3 (реестр S8, перф П1).
 
-pkg: github.com/udisondev/l2go/internal/protocol
-cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
-BenchmarkWriteAttack-16        	42999486	         2.422 ns/op	16514.40 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	47095762	         2.512 ns/op	15926.45 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	48743404	         2.451 ns/op	16317.41 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	43546957	         2.512 ns/op	15922.41 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	48569526	         2.614 ns/op	15304.76 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	44753792	         2.530 ns/op	15813.00 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	42527583	         2.478 ns/op	16143.42 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	45841611	         2.488 ns/op	16075.69 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	50163889	         2.445 ns/op	16360.99 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteAttack-16        	49364829	         2.434 ns/op	16431.83 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	128882638	         0.9257 ns/op	43210.95 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	131647024	         0.9097 ns/op	43971.24 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	130852570	         0.9082 ns/op	44042.51 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	133210095	         0.8978 ns/op	44551.83 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	136296274	         0.8812 ns/op	45394.66 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	136182902	         0.9002 ns/op	44434.89 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	132637856	         0.8998 ns/op	44456.17 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	136420464	         0.8803 ns/op	45439.24 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	135812923	         0.8824 ns/op	45329.19 MB/s	       0 B/op	       0 allocs/op
-BenchmarkAttackView-16         	131379702	         0.9055 ns/op	44175.29 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	112875896	         1.066 ns/op	3752.08 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	111630318	         1.073 ns/op	3726.55 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	112187203	         1.060 ns/op	3774.39 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	108509233	         1.103 ns/op	3626.31 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	100000000	         1.084 ns/op	3691.65 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	115069630	         1.042 ns/op	3838.70 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	112766679	         1.075 ns/op	3720.33 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	100000000	         1.058 ns/op	3781.75 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	100000000	         1.044 ns/op	3830.71 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadD-16         	115588440	         1.045 ns/op	3828.71 MB/s	       0 B/op	       0 allocs/op
-BenchmarkWriteReadSShort-16    	 1000000	       117.8 ns/op	 220.76 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	 1004895	       118.0 ns/op	 220.38 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	 1014778	       118.1 ns/op	 220.23 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	 1017897	       116.0 ns/op	 224.14 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	 1000000	       117.4 ns/op	 221.39 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	 1002294	       117.4 ns/op	 221.49 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	 1000000	       116.9 ns/op	 222.49 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	 1000000	       115.2 ns/op	 225.78 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	  947690	       115.2 ns/op	 225.79 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSShort-16    	 1057593	       114.8 ns/op	 226.47 MB/s	      32 B/op	       1 allocs/op
-BenchmarkWriteReadSLong-16     	  136720	       923.4 ns/op	 171.11 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  114490	       975.4 ns/op	 161.98 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  138332	       897.8 ns/op	 175.99 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  103092	       970.0 ns/op	 162.88 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  127357	       888.1 ns/op	 177.91 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  124405	       929.0 ns/op	 170.08 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  106150	       954.0 ns/op	 165.62 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  119984	       971.0 ns/op	 162.72 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  135031	       968.7 ns/op	 163.11 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkWriteReadSLong-16     	  129790	       904.2 ns/op	 174.74 MB/s	    1120 B/op	       5 allocs/op
-BenchmarkLenS-16               	 6421135	        18.89 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 6145934	        18.50 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 6050539	        18.75 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 6469940	        18.30 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 6113872	        18.61 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 5927360	        18.69 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 6592540	        18.25 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 6514964	        18.25 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 5983974	        18.81 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLenS-16               	 6496095	        18.51 ns/op	       0 B/op	       0 allocs/op
-
-# BenchmarkWriteAttack: медиана 2.48 нс/оп, 0 аллок/оп (n=10)
-# BenchmarkAttackView: медиана 0.90 нс/оп, 0 аллок/оп (n=10)
+BenchmarkWriteAttack-16        	50146952	         2.388 ns/op	16747.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	46279441	         2.385 ns/op	16772.53 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	48368450	         2.468 ns/op	16204.69 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	47249914	         2.498 ns/op	16011.50 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	42515635	         2.401 ns/op	16657.47 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	50333986	         2.400 ns/op	16666.92 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	50344777	         2.394 ns/op	16706.91 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	50609378	         2.406 ns/op	16624.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	49333886	         2.429 ns/op	16468.37 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteAttack-16        	50087209	         2.396 ns/op	16691.74 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	136131400	         0.8795 ns/op	45480.15 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	137653374	         0.8720 ns/op	45870.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	135099942	         0.8841 ns/op	45242.98 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	138459740	         0.8688 ns/op	46041.27 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	138053718	         0.8684 ns/op	46059.70 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	138928863	         0.8644 ns/op	46272.35 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	133621524	         0.9041 ns/op	44242.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	132874572	         0.8881 ns/op	45038.65 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	136875654	         0.8767 ns/op	45626.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAttackView-16         	138056803	         0.8700 ns/op	45976.10 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	115550988	         1.040 ns/op	3844.61 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	110261109	         1.067 ns/op	3749.84 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	115312555	         1.048 ns/op	3815.17 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	110163171	         1.062 ns/op	3765.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	112888940	         1.059 ns/op	3778.34 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	103304818	         1.145 ns/op	3494.31 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	115261192	         1.039 ns/op	3851.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	112072021	         1.059 ns/op	3777.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	109288418	         1.080 ns/op	3704.92 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadD-16         	100000000	         1.065 ns/op	3754.43 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteReadSShort-16    	  860272	       122.2 ns/op	 212.83 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	  978736	       125.9 ns/op	 206.52 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	 1000000	       125.9 ns/op	 206.56 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	  958822	       122.9 ns/op	 211.55 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	 1014765	       119.1 ns/op	 218.30 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	 1000000	       114.5 ns/op	 227.08 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	 1000000	       116.5 ns/op	 223.13 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	 1000000	       118.3 ns/op	 219.86 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	  943521	       123.1 ns/op	 211.19 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSShort-16    	  885307	       120.4 ns/op	 216.03 MB/s	      32 B/op	       1 allocs/op
+BenchmarkWriteReadSLong-16     	  138703	       898.2 ns/op	 175.91 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  117279	       912.7 ns/op	 173.11 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  139909	       877.0 ns/op	 180.15 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  150570	       823.7 ns/op	 191.81 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  124082	       901.4 ns/op	 175.29 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  120009	       836.0 ns/op	 189.00 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  135200	       868.0 ns/op	 182.02 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  123399	       875.1 ns/op	 180.55 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  128958	       876.7 ns/op	 180.22 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteReadSLong-16     	  137037	       851.7 ns/op	 185.51 MB/s	     832 B/op	       3 allocs/op
+BenchmarkWriteSShort-16        	 2657059	        46.31 ns/op	 561.40 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2500586	        47.34 ns/op	 549.16 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2346420	        48.58 ns/op	 535.19 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2275183	        49.44 ns/op	 525.85 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2568158	        46.48 ns/op	 559.34 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2456488	        47.08 ns/op	 552.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2470399	        47.27 ns/op	 550.02 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2598267	        46.19 ns/op	 562.89 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2565141	        45.87 ns/op	 566.88 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSShort-16        	 2594402	        46.47 ns/op	 559.44 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  375015	       270.3 ns/op	 584.52 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  415564	       268.2 ns/op	 589.02 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  446576	       272.5 ns/op	 579.89 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  405397	       267.4 ns/op	 590.98 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  415080	       262.8 ns/op	 601.33 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  451776	       261.5 ns/op	 604.23 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  408826	       260.6 ns/op	 606.29 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  460401	       265.5 ns/op	 595.18 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  456136	       265.2 ns/op	 595.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteSLong-16         	  453826	       264.1 ns/op	 598.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 6070404	        18.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 6228811	        18.64 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 6484622	        18.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 6404792	        18.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 6380211	        18.64 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 6459163	        18.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 5401425	        19.66 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 5159680	        19.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 6328820	        19.54 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLenS-16               	 5899070	        18.87 ns/op	       0 B/op	       0 allocs/op
+# BenchmarkWriteAttack: медиана 2.40 нс/оп, 0 аллок/оп (n=10)
+# BenchmarkAttackView: медиана 0.87 нс/оп, 0 аллок/оп (n=10)
 # BenchmarkWriteReadD: медиана 1.06 нс/оп, 0 аллок/оп (n=10)
-# BenchmarkWriteReadSShort: медиана 117.15 нс/оп, 1 аллок/оп (n=10)
-# BenchmarkWriteReadSLong: медиана 941.50 нс/оп, 5 аллок/оп (n=10)
+# BenchmarkWriteReadSShort: медиана 121.30 нс/оп, 1 аллок/оп (n=10)
+# BenchmarkWriteReadSLong: медиана 875.90 нс/оп, 3 аллок/оп (n=10)
+# BenchmarkWriteSShort: медиана 46.78 нс/оп, 0 аллок/оп (n=10)
+# BenchmarkWriteSLong: медиана 265.35 нс/оп, 0 аллок/оп (n=10)
+# BenchmarkLenS: медиана 18.79 нс/оп, 0 аллок/оп (n=10)

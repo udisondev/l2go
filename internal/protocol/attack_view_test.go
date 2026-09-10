@@ -43,7 +43,8 @@ func TestNewAttackView(t *testing.T) {
 	}
 }
 
-// Длинный пакет (extraHits > 0) принимается; ExtraHits читается.
+// Длинный пакет (extraHits > 0) принимается; ExtraHits читается, координаты
+// цели читаются от хвоста (после доп-ударов) — не смещаются.
 func TestAttackViewExtraHits(t *testing.T) {
 	// первый hit + один extra {targetID, damage, flags}
 	extra := append([]byte{},
@@ -61,13 +62,15 @@ func TestAttackViewExtraHits(t *testing.T) {
 	if v.ExtraHits() != 1 {
 		t.Errorf("ExtraHits = %d; want 1", v.ExtraHits())
 	}
+	if v.TargetX() != 40 || v.TargetY() != 50 || v.TargetZ() != 60 {
+		t.Errorf("tgtXYZ при 1 доп-ударе = %d/%d/%d; want 40/50/60 (от хвоста)",
+			v.TargetX(), v.TargetY(), v.TargetZ())
+	}
 }
 
 // Нулевое значение представления недействительно — конструктор обязателен.
 func TestAttackViewZeroInvalid(t *testing.T) {
-	var v AttackView
 	if _, ok := NewAttackView(nil); ok {
 		t.Error("NewAttackView(nil): ok=true")
 	}
-	_ = v // доступ к полям нулевого представления запрещён контрактом
 }

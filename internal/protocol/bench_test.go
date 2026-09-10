@@ -62,6 +62,26 @@ func BenchmarkWriteReadSLong(b *testing.B) {
 	}
 }
 
+func BenchmarkWriteSShort(b *testing.B) {
+	s := "ИмяПерсонажа"
+	buf := make([]byte, LenS(s))
+	b.SetBytes(int64(len(buf)))
+	b.ReportAllocs()
+	for b.Loop() {
+		WriteS(buf, s)
+	}
+}
+
+func BenchmarkWriteSLong(b *testing.B) {
+	s := "ИмяПерсонажа с длинным титулом и клановой приставкой — строка реального пакета"
+	buf := make([]byte, LenS(s))
+	b.SetBytes(int64(len(buf)))
+	b.ReportAllocs()
+	for b.Loop() {
+		WriteS(buf, s)
+	}
+}
+
 func BenchmarkLenS(b *testing.B) {
 	s := "ИмяПерсонажа"
 	b.ReportAllocs()

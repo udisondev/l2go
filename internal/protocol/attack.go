@@ -6,11 +6,10 @@
 
 package protocol
 
-// gameServerOp — опкод направления GameServer→C.
-type gameServerOp byte
+import "fmt"
 
 // attack — опкод пакета Attack (каталог GameServer→C).
-const attack gameServerOp = 0x05
+const attack = 0x05
 
 // Флаги удара пакета Attack.
 const (
@@ -37,7 +36,7 @@ func WriteAttack(dst []byte, attackerObjID int32, hit AttackHit,
 	atkX, atkY, atkZ, tgtX, tgtY, tgtZ int32) int {
 
 	if len(dst) < AttackSize {
-		panic("protocol: WriteAttack: dst короче AttackSize=40")
+		panic(fmt.Sprintf("protocol: WriteAttack: dst длиной %d байт < AttackSize=%d", len(dst), AttackSize))
 	}
 	dst[0] = byte(attack)
 	WriteD(dst[1:], attackerObjID)

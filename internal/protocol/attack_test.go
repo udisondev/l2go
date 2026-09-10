@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/udisondev/l2go/internal/protocol/fixture"
@@ -31,8 +32,8 @@ func TestWriteAttackGolden(t *testing.T) {
 	if dst[0] != byte(attack) {
 		t.Errorf("опкод = 0x%02X; want 0x%02X", dst[0], byte(attack))
 	}
-	if hexStr(dst[1:]) != hexStr(f.Payload) {
-		t.Errorf("payload = %s; want (fixture) %s", hexStr(dst[1:]), hexStr(f.Payload))
+	if hex.EncodeToString(dst[1:]) != hex.EncodeToString(f.Payload) {
+		t.Errorf("payload = %s; want (fixture) %s", hex.EncodeToString(dst[1:]), hex.EncodeToString(f.Payload))
 	}
 }
 

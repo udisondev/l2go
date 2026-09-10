@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
@@ -27,7 +28,7 @@ func TestWriteFixedPrimitives(t *testing.T) {
 	for _, c := range cases {
 		var dst [8]byte
 		c.write(dst[:])
-		if got := hexStr(dst[:c.size]); got != c.want {
+		if got := hex.EncodeToString(dst[:c.size]); got != c.want {
 			t.Errorf("%s = %s; want %s", c.name, got, c.want)
 		}
 	}
@@ -89,6 +90,17 @@ func TestLenSMatchesWriteS(t *testing.T) {
 	}
 }
 
+// Писатель строк — 0 аллокаций (клеймо шапки baseline заперто воротами).
+func TestWriteSZeroAllocs(t *testing.T) {
+	for _, s := range []string{"ИмяПерсонажа", strings.Repeat("титул", 30) + "😀"} {
+		buf := make([]byte, LenS(s))
+		allocs := testing.AllocsPerRun(100, func() { WriteS(buf, s) })
+		if allocs != 0 {
+			t.Errorf("WriteS(%d рун): %v аллокаций; want 0", len(s), allocs)
+		}
+	}
+}
+
 // --- Раундтрипы фиксированных примитивов. ---
 
 func TestRoundtripFixed(t *testing.T) {
@@ -98,7 +110,7 @@ func TestRoundtripFixed(t *testing.T) {
 		WriteD(buf[:], v)
 		got, ok := ReadD(buf[:], 0)
 		if !ok || got != v {
-			t.Errorf("ReadD(WriteD(%d)) = %d, %v", v, got, ok)
+			t.Errorf("ReadD(WriteD(%d)) = %d, %v; want %d, true", v, got, ok, v)
 		}
 	}
 	hvals := []int16{0, -1, math.MinInt16, math.MaxInt16}
@@ -106,7 +118,7 @@ func TestRoundtripFixed(t *testing.T) {
 		WriteH(buf[:], v)
 		got, ok := ReadH(buf[:], 0)
 		if !ok || got != v {
-			t.Errorf("ReadH(WriteH(%d)) = %d, %v", v, got, ok)
+			t.Errorf("ReadH(WriteH(%d)) = %d, %v; want %d, true", v, got, ok, v)
 		}
 	}
 	qvals := []int64{0, -1, math.MinInt64, math.MaxInt64}
@@ -114,7 +126,7 @@ func TestRoundtripFixed(t *testing.T) {
 		WriteQ(buf[:], v)
 		got, ok := ReadQ(buf[:], 0)
 		if !ok || got != v {
-			t.Errorf("ReadQ(WriteQ(%d)) = %d, %v", v, got, ok)
+			t.Errorf("ReadQ(WriteQ(%d)) = %d, %v; want %d, true", v, got, ok, v)
 		}
 	}
 	// float — по битам, включая NaN/Inf/-0.
@@ -190,8 +202,8 @@ func TestWriteSMatchesUTF16Encode(t *testing.T) {
 
 		got := make([]byte, LenS(s))
 		WriteS(got, s)
-		if hexStr(got) != hexStr(want) {
-			t.Errorf("WriteS(%q) = %s; оракул utf16.Encode %s", s, hexStr(got), hexStr(want))
+		if hex.EncodeToString(got) != hex.EncodeToString(want) {
+			t.Errorf("WriteS(%q) = %s; оракул utf16.Encode %s", s, hex.EncodeToString(got), hex.EncodeToString(want))
 		}
 	}
 }
@@ -247,6 +259,18 @@ func TestReadSNoTerminator(t *testing.T) {
 	}
 }
 
+// Сырые непарные суррогаты в буфере декодируются в U+FFFD (ветвь utf16.Decode,
+// недостижимая через WriteS — Go-строка суррогатов не содержит).
+func TestReadSLoneSurrogates(t *testing.T) {
+	for _, u := range []uint16{0xD800, 0xDBFF, 0xDC00, 0xDFFF} {
+		src := []byte{'a', 0, byte(u), byte(u >> 8), 0, 0}
+		s, n, ok := ReadS(src, 0)
+		if !ok || n != 6 || s != "a\uFFFD" {
+			t.Errorf("ReadS суррогат %04X = %q, %d, %v; want \"a\\uFFFD\", 6, true", u, s, n, ok)
+		}
+	}
+}
+
 func TestReadSEvilOffsets(t *testing.T) {
 	src := []byte{'a', 0}
 	if _, _, ok := ReadS(src, -1); ok {
@@ -258,15 +282,6 @@ func TestReadSEvilOffsets(t *testing.T) {
 	if _, _, ok := ReadS(src, math.MaxInt); ok {
 		t.Error("ReadS off=MaxInt: ok=true")
 	}
-}
-
-func hexStr(b []byte) string {
-	const digits = "0123456789abcdef"
-	out := make([]byte, 0, len(b)*2)
-	for _, x := range b {
-		out = append(out, digits[x>>4], digits[x&0xf])
-	}
-	return string(out)
 }
 
 func ExampleWriteS() {

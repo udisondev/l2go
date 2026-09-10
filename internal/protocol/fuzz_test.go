@@ -1,41 +1,90 @@
 package protocol
 
 import (
+	"encoding/hex"
 	"math"
 	"testing"
 )
 
-// FuzzRoundtripFixedD — раундтрип D на любом буфере и офсете.
-func FuzzRoundtripFixedD(f *testing.F) {
-	f.Add([]byte{0xef, 0xbe, 0xad, 0xde}, 0)
-	f.Add([]byte{1, 2, 3, 4, 5}, 1)
-	f.Add([]byte{}, 0)
-	f.Fuzz(func(t *testing.T, b []byte, off int) {
-		if off < 0 || off > len(b)-4 || len(b) < 4 {
+// roundtrip — параметризация fuzz-раундтрипа фиксированных примитивов.
+type roundtrip struct {
+	name  string
+	size  int
+	write func(dst []byte, v uint64)
+	read  func(src []byte, off int) (uint64, bool)
+}
+
+var roundtrips = []roundtrip{
+	{"D", 4,
+		func(dst []byte, v uint64) { WriteD(dst, int32(v)) },
+		func(src []byte, off int) (uint64, bool) {
+			v, ok := ReadD(src, off)
+			return uint64(uint32(v)), ok
+		}},
+	{"H", 2,
+		func(dst []byte, v uint64) { WriteH(dst, int16(v)) },
+		func(src []byte, off int) (uint64, bool) {
+			v, ok := ReadH(src, off)
+			return uint64(uint16(v)), ok
+		}},
+	{"Q", 8,
+		func(dst []byte, v uint64) { WriteQ(dst, int64(v)) },
+		func(src []byte, off int) (uint64, bool) {
+			v, ok := ReadQ(src, off)
+			return uint64(v), ok
+		}},
+	{"F", 8,
+		func(dst []byte, v uint64) { WriteF(dst, math.Float64frombits(v)) },
+		func(src []byte, off int) (uint64, bool) {
+			v, ok := ReadF(src, off)
+			return math.Float64bits(v), ok
+		}},
+}
+
+// FuzzRoundtripFixed — раундтрип каждого фиксированного примитива
+// (write→read == значение по битам); селектор примитива — fuzz-аргумент.
+func FuzzRoundtripFixed(f *testing.F) {
+	f.Add([]byte{0xef, 0xbe, 0xad, 0xde}, 0, 0)
+	f.Add([]byte{1, 2, 3, 4, 5, 6, 7, 8}, 1, 3)
+	f.Add([]byte{0, 0, 0xf8, 0x7f}, 0, 3)
+	f.Fuzz(func(t *testing.T, b []byte, off int, which int) {
+		idx := which % len(roundtrips)
+		if idx < 0 {
+			idx += len(roundtrips)
+		}
+		rt := roundtrips[idx]
+		if off < 0 || off > len(b)-rt.size || len(b) < rt.size {
 			return // вне контракта — злые офсеты покрыты таблицей
 		}
-		var buf [4]byte
-		v := int32(leU32(b[off:]))
-		WriteD(buf[:], v)
-		if buf != [4]byte(b[off:off+4]) {
-			t.Fatalf("WriteD(%d) = %x; вход %x", v, buf, b[off:off+4])
+		var buf [8]byte
+		v := uint64(0)
+		for i := 0; i < rt.size; i++ {
+			v |= uint64(b[off+i]) << (8 * i) // LE: бит-образ входных байтов
 		}
-		got, ok := ReadD(buf[:], 0)
+		rt.write(buf[:], v)
+		if hex.EncodeToString(buf[:rt.size]) != hex.EncodeToString(b[off:off+rt.size]) {
+			t.Fatalf("Write%s: записано %x; вход %x", rt.name, buf[:rt.size], b[off:off+rt.size])
+		}
+		got, ok := rt.read(buf[:], 0)
 		if !ok || got != v {
-			t.Fatalf("ReadD(WriteD(%d)) = %d, %v", v, got, ok)
+			t.Fatalf("Read%s(Write%s(%x)) = %x, %v", rt.name, rt.name, v, got, ok)
 		}
 	})
 }
 
-// FuzzRoundtripS — раундтрип строки: равенство при валидном UTF-8 без U+0000,
-// канонизация в U+FFFD/обрезка на терминаторе — на прочих входах.
+// FuzzRoundtripS — раундтрип строки против оракула канонизации: ожидание —
+// string([]rune(s)), где декодер UTF-8 заменяет невалидные байты на U+FFFD
+// (utf16-цикл кодирования-декодирования вокруг рунного образа идемпотентен);
+// вложенный NUL обрезается терминатором.
 func FuzzRoundtripS(f *testing.F) {
 	f.Add("La2")
 	f.Add("ИмяПерсонажа")
 	f.Add("\xff")
 	f.Add("a\x00b")
 	f.Add("😀")
+	f.Add("�") // валидный литеральный U+FFFD — не «невалидный вход»
 	f.Fuzz(func(t *testing.T, s string) {
+		want := string([]rune(s)) // оракул канонизации
 		buf := make([]byte, LenS(s))
 		n := WriteS(buf, s)
 		if n != LenS(s) {
@@ -46,18 +95,15 @@ func FuzzRoundtripS(f *testing.F) {
 			t.Fatalf("ReadS(%q): ok=false", s)
 		}
 		if containsNUL(s) {
-			// NUL — терминатор: WriteS пишет поле целиком, ReadS останавливается
+			// NUL — терминатор: поле пишется целиком, чтение останавливается
 			// на первом NUL; равенство n==rn не требуется.
 			return
 		}
 		if rn != n {
 			t.Fatalf("ReadS(%q): n=%d; want %d", s, rn, n)
 		}
-		if validUTF8(s) && got != s {
-			t.Fatalf("валидная строка %q прошла как %q", s, got)
-		}
-		if !validUTF8(s) && got == s {
-			t.Fatalf("невалидный вход %q прошёл без канонизации", s)
+		if got != want {
+			t.Fatalf("ReadS(WriteS(%q)) = %q; оракул канонизации %q", s, got, want)
 		}
 	})
 }
@@ -76,10 +122,6 @@ func FuzzReadOffsets(f *testing.F) {
 	})
 }
 
-func leU32(b []byte) uint32 {
-	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
-}
-
 func containsNUL(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] == 0 {
@@ -87,15 +129,4 @@ func containsNUL(s string) bool {
 		}
 	}
 	return false
-}
-
-func validUTF8(s string) bool {
-	for _, r := range s {
-		if r == 0xFFFD {
-			// RuneError может быть и валидным символом U+FFFD; для фазз-цели
-			// считаем вход невалидным — консервативно.
-			return false
-		}
-	}
-	return true
 }

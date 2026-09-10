@@ -20,8 +20,8 @@ func TestLoadAttack(t *testing.T) {
 	if f.Dir != GameServer || f.Op != 0x05 || f.Sub != 0 {
 		t.Errorf("фикстура = %s op=0x%02X sub=0x%02X; want game-server 0x05 0x00", f.Dir, f.Op, f.Sub)
 	}
-	if f.Name != "ATTACK" || f.Origin != "generated" {
-		t.Errorf("name/origin = %s/%s; want ATTACK/generated", f.Name, f.Origin)
+	if f.Name != "ATTACK" || f.Origin != OriginGenerated {
+		t.Errorf("name/origin = %s/%s; want ATTACK/%s", f.Name, f.Origin, OriginGenerated)
 	}
 	if len(f.Payload) != 39 {
 		t.Errorf("payload %d байт; want 39 (40 с опкодом)", len(f.Payload))
@@ -54,6 +54,13 @@ func TestLoadErrors(t *testing.T) {
 			},
 			"payload",
 		},
+		{
+			"null-JSON",
+			func(t *testing.T) string {
+				return writeTemp(t, "nulljson.json", "null")
+			},
+			"null-JSON",
+		},
 	}
 	for _, c := range cases {
 		name := c.setup(t)
@@ -62,8 +69,17 @@ func TestLoadErrors(t *testing.T) {
 			t.Errorf("%s: ошибки нет", c.name)
 			continue
 		}
-		if !strings.Contains(err.Error(), c.want) && !strings.Contains(err.Error(), name) {
-			t.Errorf("%s: ошибка %q без контекста %q/%q", c.name, err, c.want, name)
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: ошибка %q без подстроки %q", c.name, err, c.want)
+		}
+	}
+}
+
+// Имя заперто в testdata: абсолютные пути и обход «..» — ошибка.
+func TestLoadRejectsEscape(t *testing.T) {
+	for _, name := range []string{"../escape", "a/../../escape", "/etc/passwd"} {
+		if _, err := Load(name); err == nil {
+			t.Errorf("Load(%q): ошибки нет — побег за testdata", name)
 		}
 	}
 }

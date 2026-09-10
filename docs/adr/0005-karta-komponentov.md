@@ -50,8 +50,8 @@ slog, простота, гайды стиля и производительно�
 | `internal/data` | — |
 | `internal/geo` | — |
 | `internal/transport` | — |
-| `internal/protocol` | protocol/fixture |
 | `internal/protocol/fixture` | — |
+| `internal/protocol` | protocol/fixture |
 | `internal/conn` | protocol, crypto |
 | `internal/gateway` | conn, protocol, transport |
 | `internal/replica` | transport |

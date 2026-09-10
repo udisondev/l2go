@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // Direction — направление пакета.
@@ -43,8 +44,12 @@ type Fixture struct {
 }
 
 // Load читает testdata/<name>.json. Путь анкеруется по исходнику пакета:
-// потребители исполняются из разных рабочих каталогов.
+// потребители исполняются из разных рабочих каталогов. Имя заперто в
+// testdata: абсолютные пути и обход «..» — ошибка.
 func Load(name string) ([]Fixture, error) {
+	if filepath.IsAbs(name) || strings.Contains(name, "..") {
+		return nil, fmt.Errorf("fixture: имя %q вне testdata", name)
+	}
 	_, file, _, _ := runtime.Caller(0)
 	path := filepath.Join(filepath.Dir(file), "testdata", name+".json")
 
@@ -62,6 +67,12 @@ func Load(name string) ([]Fixture, error) {
 	}
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, fmt.Errorf("fixture: разбор %s: %w", path, err)
+	}
+	if rows == nil {
+		return nil, fmt.Errorf("fixture: %s: пустой файл или null-JSON", path)
+	}
+	if rows == nil {
+		return nil, fmt.Errorf("fixture: %s: пустой файл или null-JSON", path)
 	}
 	out := make([]Fixture, 0, len(rows))
 	for _, r := range rows {
