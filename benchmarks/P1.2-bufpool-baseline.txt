@@ -1,0 +1,179 @@
+# Baseline P1.2 pkg/bufpool (benchstat-совместимо: -count=10, -benchtime=100ms)
+# Окружение: AMD Ryzen 9 PRO 8945HS (16 потоков), linux/amd64, go1.27.1
+# Семейства по плану рев. 3: GetPut×6, GetPutParallel×6, ColdGet×2, AllocMake×2, GetPutMixed×1 = 17.
+# Предсказание (S6): @128 параллельно ≈10 нс/оп — атомики агрегатных счётчиков
+# доминируют над чистым пулом; это цена статистики спеки, не регрессия бокса
+# (бокс устранён pointer-shaped хранением: серийный GetPut = 0 allocs/op).
+# Послабление против perf.md §0 — осознанное (прецедент F28/P1.1); тюнинг — по perf.md.
+goos: linux
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkGetPut/128B-16       	10059531	        11.06 ns/op	11570.96 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	10176148	        11.27 ns/op	11356.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	10597844	        11.33 ns/op	11300.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	 9016432	        11.14 ns/op	11494.98 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	10394272	        11.34 ns/op	11289.80 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	10112229	        11.17 ns/op	11463.52 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	10913517	        10.92 ns/op	11725.04 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	10600498	        10.78 ns/op	11868.55 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	10515373	        10.96 ns/op	11678.23 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/128B-16       	10749730	        11.02 ns/op	11613.60 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 9229178	        12.37 ns/op	20687.73 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 8477812	        12.14 ns/op	21094.52 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 9611248	        12.25 ns/op	20897.46 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 9673237	        12.39 ns/op	20667.74 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 9252268	        12.42 ns/op	20605.27 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 8850997	        12.50 ns/op	20487.94 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 8748037	        12.53 ns/op	20433.17 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 9433177	        12.03 ns/op	21282.64 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 9261698	        12.21 ns/op	20973.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/256B-16       	 9136837	        11.86 ns/op	21587.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 8312349	        12.90 ns/op	39680.10 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 7897224	        13.69 ns/op	37401.60 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 9135124	        13.21 ns/op	38766.08 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 8365640	        12.84 ns/op	39870.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 8660702	        12.88 ns/op	39751.59 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 9526860	        12.63 ns/op	40537.66 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 8616243	        13.44 ns/op	38092.54 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 9023320	        12.74 ns/op	40185.94 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 9243344	        12.58 ns/op	40711.62 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/512B-16       	 9531219	        12.63 ns/op	40543.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6987492	        16.85 ns/op	60772.85 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6959952	        17.26 ns/op	59333.43 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6679872	        17.08 ns/op	59968.11 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 7117078	        16.71 ns/op	61282.95 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6755947	        17.43 ns/op	58749.88 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6284893	        17.12 ns/op	59830.41 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6813889	        16.80 ns/op	60951.30 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6254544	        18.84 ns/op	54341.73 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6636444	        17.39 ns/op	58880.82 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/1024B-16      	 6838959	        17.26 ns/op	59344.94 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4827351	        24.54 ns/op	83443.11 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4681180	        24.67 ns/op	83028.97 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 3919398	        26.12 ns/op	78394.62 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4888111	        24.34 ns/op	84139.22 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4630416	        24.88 ns/op	82304.19 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4816531	        24.40 ns/op	83928.53 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4891477	        24.58 ns/op	83306.38 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4898937	        24.26 ns/op	84419.11 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4858749	        25.17 ns/op	81364.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/2048B-16      	 4845508	        25.61 ns/op	79959.40 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3180133	        37.42 ns/op	109473.19 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3146643	        37.94 ns/op	107952.69 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3102226	        37.85 ns/op	108206.51 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3135234	        38.06 ns/op	107609.92 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3164680	        37.86 ns/op	108195.37 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3144742	        38.72 ns/op	105782.11 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3040088	        38.03 ns/op	107715.96 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 2981962	        38.70 ns/op	105852.50 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3161103	        38.11 ns/op	107488.00 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPut/4096B-16      	 3033754	        38.50 ns/op	106376.60 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 5995623	        19.89 ns/op	6434.44 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 6288056	        19.76 ns/op	6479.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 5967116	        18.99 ns/op	6740.75 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 6232988	        20.09 ns/op	6370.10 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 5987788	        19.41 ns/op	6595.12 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 5975373	        19.86 ns/op	6445.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 5440958	        19.93 ns/op	6422.96 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 6279986	        19.63 ns/op	6520.32 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 6103328	        19.67 ns/op	6507.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/128B-16         	 6065350	        19.82 ns/op	6459.41 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6095929	        19.88 ns/op	12880.48 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6053365	        19.90 ns/op	12863.56 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6147541	        19.83 ns/op	12909.65 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6346731	        19.85 ns/op	12895.32 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6018462	        19.73 ns/op	12975.07 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6244776	        19.76 ns/op	12954.20 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 5905224	        19.89 ns/op	12870.43 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6120025	        19.76 ns/op	12953.01 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6061262	        19.96 ns/op	12828.08 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/256B-16         	 6117064	        19.89 ns/op	12868.80 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6128746	        19.32 ns/op	26503.02 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6389349	        18.97 ns/op	26984.59 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6163352	        19.45 ns/op	26318.05 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6166591	        19.17 ns/op	26708.59 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6385266	        19.20 ns/op	26663.33 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6332242	        19.27 ns/op	26563.12 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6436995	        18.88 ns/op	27123.21 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6320748	        19.06 ns/op	26858.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6206810	        19.03 ns/op	26906.72 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/512B-16         	 6580737	        19.42 ns/op	26362.31 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 5821506	        18.98 ns/op	53950.44 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 6274468	        20.54 ns/op	49846.94 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 6053974	        18.53 ns/op	55255.12 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 6178012	        19.47 ns/op	52597.28 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 6189592	        19.22 ns/op	53273.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 6185629	        19.53 ns/op	52422.00 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 6226136	        19.77 ns/op	51785.46 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 5856717	        19.69 ns/op	52019.20 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 6069183	        19.60 ns/op	52241.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/1024B-16        	 6154689	        19.96 ns/op	51290.71 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 5870020	        19.56 ns/op	104726.28 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 6187501	        19.96 ns/op	102613.65 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 5985978	        19.73 ns/op	103821.23 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 6378499	        19.63 ns/op	104341.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 5601894	        19.84 ns/op	103245.92 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 6156445	        19.64 ns/op	104294.49 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 6185696	        20.04 ns/op	102213.37 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 6369327	        19.90 ns/op	102893.69 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 6299840	        19.95 ns/op	102644.99 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/2048B-16        	 6255182	        19.66 ns/op	104177.58 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6077310	        29.94 ns/op	136784.51 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6207363	        30.58 ns/op	133934.61 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6259154	        30.67 ns/op	133566.47 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6052020	        30.04 ns/op	136358.70 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6223537	        30.36 ns/op	134928.62 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6557247	        29.54 ns/op	138658.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6142342	        30.14 ns/op	135877.45 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6124293	        30.56 ns/op	134050.62 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6291744	        30.14 ns/op	135919.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGetPutParallel/4096B-16        	 6178483	        30.60 ns/op	133873.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkColdGet/128B-16                	 1828495	        65.43 ns/op	1956.35 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1773796	        68.00 ns/op	1882.45 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1697109	        69.37 ns/op	1845.15 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1729399	        69.21 ns/op	1849.52 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1755192	        68.86 ns/op	1858.76 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1861887	        66.47 ns/op	1925.56 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1802226	        65.96 ns/op	1940.43 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1774832	        65.76 ns/op	1946.41 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1817677	        66.47 ns/op	1925.70 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/128B-16                	 1747798	        67.87 ns/op	1886.01 MB/s	     128 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  205077	       593.4 ns/op	6902.96 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  178382	       636.2 ns/op	6438.13 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  168668	       681.8 ns/op	6007.49 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  203382	       590.1 ns/op	6941.37 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  171694	       599.3 ns/op	6834.88 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  208188	       593.7 ns/op	6898.72 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  171936	       625.2 ns/op	6551.33 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  197967	       601.6 ns/op	6808.21 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  206386	       611.1 ns/op	6702.92 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkColdGet/4096B-16               	  203892	       599.3 ns/op	6834.53 MB/s	    4099 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4013154	        28.16 ns/op	4546.21 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4287284	        27.40 ns/op	4671.66 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4430770	        27.85 ns/op	4596.78 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4608876	        25.93 ns/op	4936.76 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4583013	        26.55 ns/op	4820.50 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4513234	        25.31 ns/op	5056.46 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4187078	        26.53 ns/op	4824.19 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 5182250	        26.49 ns/op	4832.86 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4267621	        28.12 ns/op	4552.18 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/128B-16              	 4601146	        26.43 ns/op	4842.47 MB/s	     128 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  308989	       479.3 ns/op	8545.86 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  215349	       471.7 ns/op	8684.40 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  259752	       460.3 ns/op	8898.95 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  219068	       456.7 ns/op	8968.44 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  276916	       454.5 ns/op	9011.28 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  311247	       468.9 ns/op	8735.56 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  211290	       505.2 ns/op	8107.10 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  200330	       558.2 ns/op	7337.52 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  238358	       502.6 ns/op	8149.92 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkAllocMake/4096B-16             	  263437	       477.7 ns/op	8574.16 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkGetPutMixed-16                 	 5805675	        21.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 5676342	        20.20 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 6067065	        21.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 5597239	        20.48 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 5977171	        23.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 5653018	        20.85 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 5747833	        20.99 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 5665369	        20.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 5695947	        21.88 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGetPutMixed-16                 	 5738505	        20.34 ns/op	       0 B/op	       0 allocs/op

@@ -14,7 +14,7 @@ func TestGetBoundaries(t *testing.T) {
 	p := &Pool{}
 	for _, tt := range []struct {
 		size         int
-		wantCap      int  // 0 — не из бакета (overflow)
+		wantCap      int // 0 — не из бакета (overflow)
 		wantOverflow bool
 	}{
 		{1, 128, false}, {128, 128, false}, {129, 256, false},
@@ -164,8 +164,8 @@ func TestStressOwnership(t *testing.T) {
 			for i := 0; i < cycles; i++ {
 				size := 1 + (w*cycles+i)%5000 // все границы + overflow
 				b := p.Get(size)
-				for j, v := range b[:cap(b)] {
-					if v != 0 {
+				for j := range b[:cap(b)] {
+					if b[:cap(b)][j] != 0 {
 						panic(fmt.Sprintf("ненулевой байт %d при выдаче (size=%d)", j, size))
 					}
 				}
@@ -180,9 +180,10 @@ func TestStressOwnership(t *testing.T) {
 				wasOverflow := size > 4096
 				p.Put(b)
 				expGets.Add(1)
-				expPuts.Add(1)
 				if wasOverflow {
 					expOver.Add(1)
+				} else {
+					expPuts.Add(1) // overflow-буферы Put отбрасывает: ёмкость не из сетки бакетов
 				}
 			}
 		}(w)
@@ -197,10 +198,14 @@ func TestStressOwnership(t *testing.T) {
 
 func TestStressHandoff(t *testing.T) {
 	// Кросс-горутинная форма контракта владения: производитель Get+fill+send,
-	// потребитель verify+Put — единственный владелец в каждый момент.
+	// потребитель verify+Put — единственный владелец в каждый момент. Пары
+	// связаны личными каналами: паттерн производителя знает только его потребитель.
 	p := &Pool{}
 	const pairs = 8
-	ch := make(chan []byte, pairs)
+	chs := make([]chan []byte, pairs)
+	for i := range chs {
+		chs[i] = make(chan []byte, 1)
+	}
 	var wg sync.WaitGroup
 	for i := 0; i < pairs; i++ {
 		wg.Add(2)
@@ -211,14 +216,14 @@ func TestStressHandoff(t *testing.T) {
 				for j := range b {
 					b[j] = byte(i + 1)
 				}
-				ch <- b // владение уходит потребителю
+				chs[i] <- b // владение уходит потребителю
 			}
+			close(chs[i])
 		}(i)
 		go func(i int) { // потребитель
 			defer wg.Done()
-			for cycle := 0; cycle < 500; cycle++ {
-				b := <-ch
-				for j, v := range b {
+			for b := range chs[i] {
+				for _, v := range b {
 					if v != byte(i+1) {
 						panic("паттерн нарушен при хэндоффе")
 					}
@@ -228,5 +233,4 @@ func TestStressHandoff(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	close(ch)
 }
