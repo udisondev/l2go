@@ -2,7 +2,9 @@
 // KeyPacket → AuthLogin → CharSelectionInfo → CharacterSelect → CharSelected)
 // и стационарная фаза с горутиной чтения и командами каналом. Общей мутации
 // нет: ReadPump передаёт сырые кадры (собственный буфер на кадр), расшифровка,
-// диспетчеризация и трафик-лог — только в цикле Run.
+// диспетчеризация и трафик-лог — только в цикле Run. Порядок хендшейка —
+// канон L2J Mobius master CT_0_Interlude (43ac8878); порт семантики —
+// udisondev/interlude@34fe4c8 pkg/l2client/game.go.
 
 package l2client
 
@@ -250,12 +252,12 @@ func (gc *GameClient) Run(ctx context.Context) error {
 	}
 }
 
-// pumpOutcome — исход завершения ReadPump: EOF, пустой канал и закрытие по
-// done — чистое завершение (ReadPump в done-плече может не отправить ошибку).
+// pumpOutcome — исход завершения ReadPump: EOF, nil (done-плечо) и закрытие
+// соединения по инициативе клиента — чистое завершение.
 func pumpOutcome(pumpErr <-chan error) error {
 	select {
 	case err := <-pumpErr:
-		if errors.Is(err, io.EOF) {
+		if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 			return nil
 		}
 		return fmt.Errorf("чтение game-канала: %w", err)

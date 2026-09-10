@@ -469,6 +469,21 @@ func TestEvilInputsExtra(t *testing.T) {
 			t.Fatal("Handshake при немедленном закрытии: err = nil; want EOF-ошибку")
 		}
 	})
+	t.Run("обрезанный KeyPacket", func(t *testing.T) {
+		srv, err := StartScenarioServer()
+		mustFlow(t, err, "StartScenarioServer")
+		defer srv.Close()
+		game := GameScript{Steps: []GameStep{
+			{Expect: opProtocolVersion, Reply: []byte{0x00, 0x01, 0xAA, 0xBB}},
+		}}
+		go func() { _ = srv.RunLoginScript(GoldenLoginScript(srv)) }()
+		go func() { _ = srv.RunGameScript(game) }()
+		if err := runFlowTo(t, srv, context.Background(), Options{Timeout: 2 * time.Second}, "GameHandshake"); err == nil {
+			t.Fatal("Handshake с обрезанным KeyPacket: err = nil; want ошибку стадии")
+		} else if !strings.Contains(err.Error(), "KeyPacket") {
+			t.Errorf("err = %v; want подстроку KeyPacket", err)
+		}
+	})
 	t.Run("объявлен кадр 0xFFFF", func(t *testing.T) {
 		srv, err := StartScenarioServer()
 		mustFlow(t, err, "StartScenarioServer")
