@@ -374,21 +374,26 @@ func TestHandshakeViewsNoPanic(t *testing.T) {
 			}
 		}
 		if v, ok := NewCharSelectedView(b); ok {
-			_, _, _, _ = v.Name(), v.Title(), v.Level(), v.Exp()
+			_, _ = v.Name()
+			_, _ = v.Title()
+			_, _ = v.Level()
+			_, _ = v.Exp()
 		}
 		if v, ok := NewAuthLoginView(b); ok {
-			_, _, _, _, _ = v.Account(), v.PlayKey2(), v.PlayKey1(), v.LoginKey1(), v.LoginKey2()
+			_, _ = v.Account()
+			_, _ = v.PlayKey2()
+			_, _ = v.PlayKey1()
+			_, _ = v.LoginKey1()
+			_, _ = v.LoginKey2()
 		}
-		if _, ok := NewProtocolVersionView(b); ok {
-		}
-		if _, ok := NewCharacterSelectView(b); ok {
-		}
+		_, _ = NewProtocolVersionView(b)
+		_, _ = NewCharacterSelectView(b)
 	}
 }
 
 // Фиксированные писатели хендшейка — 0 аллокаций.
 func TestHandshakeWritersZeroAllocs(t *testing.T) {
-	dst := make([]byte, 512)
+	dst := make([]byte, 1024)
 	chars := []CharSelectionEntry{tChar1, tChar2}
 	allocs := testing.AllocsPerRun(100, func() {
 		_ = WriteKeyPacket(dst, 1, tKeyPacketKey, true, 1)

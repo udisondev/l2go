@@ -191,9 +191,9 @@ func TestWriteRequestAuthLoginPlainGolden(t *testing.T) {
 func TestWriteRequestAuthLoginPlainErrors(t *testing.T) {
 	dst := make([]byte, AuthLoginPlainSize)
 	tests := []struct {
-		name           string
-		user, pass     string
-		wantErr        bool
+		name       string
+		user, pass string
+		wantErr    bool
 	}{
 		{"user 14 символов", "12345678901234", "secret", false},
 		{"user 15 символов", "123456789012345", "secret", true},
@@ -448,9 +448,9 @@ func TestRequestAuthLoginViewShortBlock(t *testing.T) {
 func TestLoginViewsNoPanic(t *testing.T) {
 	fixes := loginFixtures(t)
 	good := map[string][]byte{
-		"INIT":                wire(fixes["INIT"]),
-		"SERVER_LIST":         wire(fixes["SERVER_LIST"]),
-		"REQUEST_AUTH_LOGIN":  wire(fixes["REQUEST_AUTH_LOGIN"]),
+		"INIT":                     wire(fixes["INIT"]),
+		"SERVER_LIST":              wire(fixes["SERVER_LIST"]),
+		"REQUEST_AUTH_LOGIN":       wire(fixes["REQUEST_AUTH_LOGIN"]),
 		"REQUEST_AUTH_LOGIN_PLAIN": fixes["REQUEST_AUTH_LOGIN_PLAIN"].Payload,
 	}
 	evils := [][]byte{
@@ -483,10 +483,8 @@ func TestLoginViewsNoPanic(t *testing.T) {
 		if v, ok := NewAuthLoginPlainView(b); ok {
 			_, _ = v.User(), v.Password()
 		}
-		if _, ok := NewLoginOkView(b); ok {
-		}
-		if _, ok := NewGGAuthView(b); ok {
-		}
+		_, _ = NewLoginOkView(b)
+		_, _ = NewGGAuthView(b)
 	}
 }
 
