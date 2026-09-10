@@ -14,7 +14,7 @@ allowed() {
 		internal/version|internal/crypto|internal/transport|internal/data|internal/geo) echo "" ;;
 		pkg/bufpool) echo "" ;;
 		internal/protocol) echo "internal/protocol/fixture" ;;
-	internal/protocol/fixture) echo "" ;;
+		internal/protocol/fixture) echo "" ;;
 		internal/conn) echo "internal/protocol internal/crypto" ;;
 		internal/gateway) echo "internal/conn internal/protocol internal/transport" ;;
 		internal/replica) echo "internal/transport" ;;

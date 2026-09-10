@@ -71,9 +71,6 @@ func Load(name string) ([]Fixture, error) {
 	if rows == nil {
 		return nil, fmt.Errorf("fixture: %s: пустой файл или null-JSON", path)
 	}
-	if rows == nil {
-		return nil, fmt.Errorf("fixture: %s: пустой файл или null-JSON", path)
-	}
 	out := make([]Fixture, 0, len(rows))
 	for _, r := range rows {
 		payload, err := hex.DecodeString(r.Payload)

@@ -82,6 +82,18 @@ func TestLoadRejectsEscape(t *testing.T) {
 			t.Errorf("Load(%q): ошибки нет — побег за testdata", name)
 		}
 	}
+	// Контрфактика guard: файл реально существует вне testdata — без guard
+	// Load его бы прочитал; ошибка обязана прийти именно от запирания имени.
+	pkgDir := filepath.Dir(testdataDir(t))
+	escape := filepath.Join(pkgDir, "escape-probe.json")
+	if err := os.WriteFile(escape, []byte(`[{"dir":"game-server","op":1,"name":"X","payload":"","origin":"generated"}]`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(escape) })
+	_, err := Load("../escape-probe")
+	if err == nil || !strings.Contains(err.Error(), "вне testdata") {
+		t.Errorf("Load(\"../escape-probe\") при существующем файле = %v; want ошибка «вне testdata»", err)
+	}
 }
 
 func writeTemp(t *testing.T, file, content string) string {
