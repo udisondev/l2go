@@ -78,6 +78,26 @@ func TestConstantsMatchCatalog(t *testing.T) {
 		cat   string
 	}{
 		{"ATTACK", attack, "GameServer→C"},
+		{"INIT", loginInit, "LoginServer→C"},
+		{"LOGIN_OK", loginOk, "LoginServer→C"},
+		{"LOGIN_FAIL", loginFail, "LoginServer→C"},
+		{"ACCOUNT_KICKED", accountKicked, "LoginServer→C"},
+		{"SERVER_LIST", serverList, "LoginServer→C"},
+		{"PLAY_OK", playOk, "LoginServer→C"},
+		{"PLAY_FAIL", playFail, "LoginServer→C"},
+		{"GG_AUTH", ggAuth, "LoginServer→C"},
+		{"REQUEST_AUTH_LOGIN", requestAuthLogin, "C→LoginServer"},
+		{"REQUEST_SERVER_LIST", requestServerList, "C→LoginServer"},
+		{"REQUEST_SERVER_LOGIN", requestServerLogin, "C→LoginServer"},
+		{"AUTH_GAME_GUARD", authGameGuard, "C→LoginServer"},
+		{"PROTOCOL_VERSION", protocolVersion, "C→GameServer"},
+		{"AUTH_LOGIN", authLogin, "C→GameServer"},
+		{"LOGOUT", logout, "C→GameServer"},
+		{"CHARACTER_SELECT", characterSelect, "C→GameServer"},
+		{"KEY_PACKET", keyPacket, "GameServer→C"},
+		{"CHAR_SELECT_INFO", charSelectInfo, "GameServer→C"},
+		{"LOGIN_FAIL", gsLoginFail, "GameServer→C"},
+		{"CHAR_SELECTED", charSelected, "GameServer→C"},
 	}
 	for _, c := range consts {
 		found := false
