@@ -5,6 +5,7 @@ package bufpool
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -113,22 +114,14 @@ func TestPanicContract(t *testing.T) {
 				if r == nil {
 					t.Fatalf("Get(%d): ожидалась паника", size)
 				}
-				if msg := fmt.Sprint(r); msg == "" || !contains(msg, "size") {
-					t.Fatalf("Get(%d): паника без диагностики: %v", size, r)
+				msg := fmt.Sprint(r)
+				if !strings.Contains(msg, "size") || !strings.Contains(msg, fmt.Sprint(size)) {
+					t.Fatalf("Get(%d): паника без значения size: %v", size, r)
 				}
 			}()
 			p.Get(size)
 		}()
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 func TestDoublePutAlias(t *testing.T) {
@@ -164,16 +157,17 @@ func TestStressOwnership(t *testing.T) {
 			for i := 0; i < cycles; i++ {
 				size := 1 + (w*cycles+i)%5000 // все границы + overflow
 				b := p.Get(size)
-				for j := range b[:cap(b)] {
-					if b[:cap(b)][j] != 0 {
+				c := b[:cap(b)]
+				for j := range c {
+					if c[j] != 0 {
 						panic(fmt.Sprintf("ненулевой байт %d при выдаче (size=%d)", j, size))
 					}
 				}
 				for j := range b {
-					b[j] = byte(w + 1)
+					b[j] = byte(1 + w%255)
 				}
 				for j, v := range b {
-					if v != byte(w+1) {
+					if v != byte(1+w%255) {
 						panic(fmt.Sprintf("паттерн нарушен: байт %d = %#x", j, v))
 					}
 				}
@@ -201,7 +195,7 @@ func TestStressHandoff(t *testing.T) {
 	// потребитель verify+Put — единственный владелец в каждый момент. Пары
 	// связаны личными каналами: паттерн производителя знает только его потребитель.
 	p := &Pool{}
-	const pairs = 8
+	pairs := max(2, runtime.GOMAXPROCS(0)/2) // полный GOMAXPROCS: пары производитель+потребитель
 	chs := make([]chan []byte, pairs)
 	for i := range chs {
 		chs[i] = make(chan []byte, 1)
@@ -214,7 +208,7 @@ func TestStressHandoff(t *testing.T) {
 			for cycle := 0; cycle < 500; cycle++ {
 				b := p.Get(1 + (i*500+cycle)%3000)
 				for j := range b {
-					b[j] = byte(i + 1)
+					b[j] = byte(1 + i%255)
 				}
 				chs[i] <- b // владение уходит потребителю
 			}
@@ -224,7 +218,7 @@ func TestStressHandoff(t *testing.T) {
 			defer wg.Done()
 			for b := range chs[i] {
 				for _, v := range b {
-					if v != byte(i+1) {
+					if v != byte(1+i%255) {
 						panic("паттерн нарушен при хэндоффе")
 					}
 				}
@@ -233,4 +227,9 @@ func TestStressHandoff(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	// Покомпонентная сходимость: все размеры ≤ 3000 — бакетные, overflow нет.
+	s := p.Stats()
+	if s.Gets != int64(pairs*500) || s.Puts != int64(pairs*500) || s.Overflows != 0 {
+		t.Fatalf("хэндофф-сходимость: got %+v, хочу %d/%d/0", s, pairs*500, pairs*500)
+	}
 }

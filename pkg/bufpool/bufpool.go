@@ -39,6 +39,20 @@ import (
 	"sync/atomic"
 )
 
+// Сетка бакетов — именованные константы: единый источник правды для Get, Put
+// и тестов. Массив-справочник с функциями поиска не заводится: длина типов
+// *[N]byte не выводима из массива (в Go нет дженериков по длине массива), он
+// стал бы четвёртой репликацией; рассинхрон лесенок Get/Put ловится
+// покомпонентной сходимостью стресс-теста.
+const (
+	bucket128  = 128
+	bucket256  = 256
+	bucket512  = 512
+	bucket1024 = 1024
+	bucket2048 = 2048
+	bucket4096 = 4096
+)
+
 // Pool — бакетный пул байтовых буферов. Нулевое значение работоспособно;
 // копировать после первого использования нельзя.
 type Pool struct {
@@ -72,66 +86,48 @@ func (p *Pool) Get(size int) []byte {
 	}
 	p.gets.Add(1)
 	switch {
-	case size <= 128:
-		var a *[128]byte
+	case size <= bucket128:
 		if v := p.p128.Get(); v != nil {
-			a = v.(*[128]byte)
-		} else {
-			a = new([128]byte)
+			b := v.(*[bucket128]byte)[:size]
+			clear(b[:bucket128]) // reuse-буфер обязан быть нулевым по всему cap
+			return b
 		}
-		b := a[:size]
-		clear(b[:cap(b)])
-		return b
-	case size <= 256:
-		var a *[256]byte
+		return new([bucket128]byte)[:size] // fresh-массив уже нулевой
+	case size <= bucket256:
 		if v := p.p256.Get(); v != nil {
-			a = v.(*[256]byte)
-		} else {
-			a = new([256]byte)
+			b := v.(*[bucket256]byte)[:size]
+			clear(b[:bucket256])
+			return b
 		}
-		b := a[:size]
-		clear(b[:cap(b)])
-		return b
-	case size <= 512:
-		var a *[512]byte
+		return new([bucket256]byte)[:size]
+	case size <= bucket512:
 		if v := p.p512.Get(); v != nil {
-			a = v.(*[512]byte)
-		} else {
-			a = new([512]byte)
+			b := v.(*[bucket512]byte)[:size]
+			clear(b[:bucket512])
+			return b
 		}
-		b := a[:size]
-		clear(b[:cap(b)])
-		return b
-	case size <= 1024:
-		var a *[1024]byte
+		return new([bucket512]byte)[:size]
+	case size <= bucket1024:
 		if v := p.p1024.Get(); v != nil {
-			a = v.(*[1024]byte)
-		} else {
-			a = new([1024]byte)
+			b := v.(*[bucket1024]byte)[:size]
+			clear(b[:bucket1024])
+			return b
 		}
-		b := a[:size]
-		clear(b[:cap(b)])
-		return b
-	case size <= 2048:
-		var a *[2048]byte
+		return new([bucket1024]byte)[:size]
+	case size <= bucket2048:
 		if v := p.p2048.Get(); v != nil {
-			a = v.(*[2048]byte)
-		} else {
-			a = new([2048]byte)
+			b := v.(*[bucket2048]byte)[:size]
+			clear(b[:bucket2048])
+			return b
 		}
-		b := a[:size]
-		clear(b[:cap(b)])
-		return b
-	case size <= 4096:
-		var a *[4096]byte
+		return new([bucket2048]byte)[:size]
+	case size <= bucket4096:
 		if v := p.p4096.Get(); v != nil {
-			a = v.(*[4096]byte)
-		} else {
-			a = new([4096]byte)
+			b := v.(*[bucket4096]byte)[:size]
+			clear(b[:bucket4096])
+			return b
 		}
-		b := a[:size]
-		clear(b[:cap(b)])
-		return b
+		return new([bucket4096]byte)[:size]
 	default:
 		p.overflows.Add(1)
 		return make([]byte, size)
@@ -146,18 +142,18 @@ func (p *Pool) Put(b []byte) {
 		return
 	}
 	switch cap(b) {
-	case 128:
-		p.p128.Put((*[128]byte)(b[:128:128]))
-	case 256:
-		p.p256.Put((*[256]byte)(b[:256:256]))
-	case 512:
-		p.p512.Put((*[512]byte)(b[:512:512]))
-	case 1024:
-		p.p1024.Put((*[1024]byte)(b[:1024:1024]))
-	case 2048:
-		p.p2048.Put((*[2048]byte)(b[:2048:2048]))
-	case 4096:
-		p.p4096.Put((*[4096]byte)(b[:4096:4096]))
+	case bucket128:
+		p.p128.Put((*[bucket128]byte)(b[:bucket128:bucket128]))
+	case bucket256:
+		p.p256.Put((*[bucket256]byte)(b[:bucket256:bucket256]))
+	case bucket512:
+		p.p512.Put((*[bucket512]byte)(b[:bucket512:bucket512]))
+	case bucket1024:
+		p.p1024.Put((*[bucket1024]byte)(b[:bucket1024:bucket1024]))
+	case bucket2048:
+		p.p2048.Put((*[bucket2048]byte)(b[:bucket2048:bucket2048]))
+	case bucket4096:
+		p.p4096.Put((*[bucket4096]byte)(b[:bucket4096:bucket4096]))
 	default:
 		return
 	}
