@@ -1,12 +1,14 @@
-// Представления пакетов game-хендшейка (обе стороны). Фиксированные-offsets
-// представления — геттеры без ok (границы гарантирует конструктор);
-// переменно-строчные (AuthLogin, CharSelected) — геттеры с ok: строки ведут
-// переменный хвост, скан терминатора обязан уметь отказывать.
+// Представления пакетов game-хендшейка (обе стороны). Порт семантики
+// udisondev/interlude@34fe4c8 pkg/packet/client (порядок ключей AuthLogin,
+// офсеты), формат — канон Mobius master CT_0_Interlude (43ac8878).
+// Фиксированные-offsets представления — геттеры без ok (границы гарантирует
+// конструктор); переменно-строчные (AuthLogin, CharSelected) — геттеры с ok:
+// строки ведут переменный хвост, скан терминатора обязан уметь отказывать.
 
 package protocol
 
 // ProtocolVersionView — представление пакета ProtocolVersion (C→GS).
-type ProtocolVersionView viewBuf
+type ProtocolVersionView []byte
 
 // NewProtocolVersionView проверяет длину ProtocolVersionSize и возвращает
 // представление.
@@ -18,11 +20,11 @@ func NewProtocolVersionView(b []byte) (ProtocolVersionView, bool) {
 }
 
 // Version возвращает версию протокола клиента.
-func (v ProtocolVersionView) Version() int32 { return viewBuf(v).d(1) }
+func (v ProtocolVersionView) Version() int32 { return leD(v, 1) }
 
 // AuthLoginView — представление пакета AuthLogin (C→GS): аккаунт и четыре
 // ключа сессии после него.
-type AuthLoginView viewBuf
+type AuthLoginView []byte
 
 // NewAuthLoginView проверяет минимальную длину 1 (опкод) и возвращает
 // представление; структурная валидность — на геттерах (ok-семантика).
@@ -39,7 +41,8 @@ func (v AuthLoginView) Account() (string, bool) {
 	return s, ok
 }
 
-// authLoginTail возвращает офсет ключей после аккаунта.
+// authLoginTail возвращает офсет ключей после аккаунта; 16 байт хвоста
+// обязаны умещаться.
 func (v AuthLoginView) authLoginTail() (int, bool) {
 	_, n, ok := ReadS(v, 1)
 	if !ok || 16 > len(v)-(1+n) {
@@ -85,7 +88,7 @@ func (v AuthLoginView) LoginKey2() (int32, bool) {
 }
 
 // LogoutView — представление маркер-пакета Logout (C→GS): полей нет.
-type LogoutView viewBuf
+type LogoutView []byte
 
 // NewLogoutView проверяет наличие опкода и возвращает представление.
 func NewLogoutView(b []byte) (LogoutView, bool) {
@@ -97,7 +100,7 @@ func NewLogoutView(b []byte) (LogoutView, bool) {
 
 // CharacterSelectView — представление пакета CharacterSelect (C→GS); хвост
 // канона (H + 3×D после слота) не читается.
-type CharacterSelectView viewBuf
+type CharacterSelectView []byte
 
 // NewCharacterSelectView проверяет минимальную длину 5 (опкод + слот) и
 // возвращает представление.
@@ -109,10 +112,10 @@ func NewCharacterSelectView(b []byte) (CharacterSelectView, bool) {
 }
 
 // CharSlot возвращает индекс выбранного слота персонажа.
-func (v CharacterSelectView) CharSlot() int32 { return viewBuf(v).d(1) }
+func (v CharacterSelectView) CharSlot() int32 { return leD(v, 1) }
 
 // KeyPacketView — представление пакета KeyPacket (GS→C).
-type KeyPacketView viewBuf
+type KeyPacketView []byte
 
 // NewKeyPacketView проверяет длину KeyPacketSize и возвращает представление.
 func NewKeyPacketView(b []byte) (KeyPacketView, bool) {
@@ -130,13 +133,13 @@ func (v KeyPacketView) Result() byte { return v[1] }
 func (v KeyPacketView) Key() []byte { return v[2:10] }
 
 // Encryption возвращает признак включённого шифрования Blowfish.
-func (v KeyPacketView) Encryption() bool { return viewBuf(v).d(10) != 0 }
+func (v KeyPacketView) Encryption() bool { return leD(v, 10) != 0 }
 
 // ServerID возвращает идентификатор игрового сервера.
-func (v KeyPacketView) ServerID() int32 { return viewBuf(v).d(14) }
+func (v KeyPacketView) ServerID() int32 { return leD(v, 14) }
 
 // GSLoginFailView — представление пакета LoginFail game-стороны (GS→C).
-type GSLoginFailView viewBuf
+type GSLoginFailView []byte
 
 // NewGSLoginFailView проверяет длину GSLoginFailSize и возвращает
 // представление.
@@ -148,12 +151,12 @@ func NewGSLoginFailView(b []byte) (GSLoginFailView, bool) {
 }
 
 // Reason возвращает int32-код причины отказа.
-func (v GSLoginFailView) Reason() GSLoginFailReason { return GSLoginFailReason(viewBuf(v).d(1)) }
+func (v GSLoginFailView) Reason() GSLoginFailReason { return GSLoginFailReason(leD(v, 1)) }
 
 // CharSelectionInfoView — представление пакета CharSelectionInfo (GS→C).
 // Конструктор проверяет только заголовок; записи — навигацией с ok=false на
-// усечении.
-type CharSelectionInfoView viewBuf
+// усечении или выходе за счётчик.
+type CharSelectionInfoView []byte
 
 // NewCharSelectionInfoView проверяет минимальную длину 5 (опкод + счётчик D)
 // и возвращает представление.
@@ -164,20 +167,15 @@ func NewCharSelectionInfoView(b []byte) (CharSelectionInfoView, bool) {
 	return CharSelectionInfoView(b), true
 }
 
-// Count возвращает число персонажей в списке (D заголовка, может быть любым
-// int32 из недоверенных байт — навигация ограничена буфером).
-func (v CharSelectionInfoView) Count() int {
-	n, _ := ReadD(v, 1)
-	return int(n)
-}
+// Count возвращает число персонажей в списке (D заголовка; конструктор
+// гарантирует длину поля, значение может быть любым int32 из недоверенных
+// байт — навигация ограничена им и буфером).
+func (v CharSelectionInfoView) Count() int { return int(leD(v, 1)) }
 
-// charFixedTail — хвост записи после строки логина (до конца записи).
-const charFixedTail = 293
-
-// Char возвращает запись персонажа. ok=false при усечении или незакрытой
-// строке любой из предшествующих записей.
+// Char возвращает запись персонажа. ok=false при выходе индекса за счётчик,
+// усечении или незакрытой строке любой из предшествующих записей.
 func (v CharSelectionInfoView) Char(i int) (CharSelectionEntry, bool) {
-	if i < 0 {
+	if i < 0 || i >= v.Count() {
 		return CharSelectionEntry{}, false
 	}
 	off := 5
@@ -202,13 +200,14 @@ func (v CharSelectionInfoView) skipRecord(off int) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	if charFixedTail > len(v)-(off+n) {
+	if charSelectionTail > len(v)-(off+n) {
 		return 0, false
 	}
-	return off + n + charFixedTail, true
+	return off + n + charSelectionTail, true
 }
 
-// parseRecord разбирает запись по офсету её начала.
+// parseRecord разбирает запись по офсету её начала: строки — сканом с ok,
+// фиксированный хвост — напрямую после однократной проверки границы.
 func (v CharSelectionInfoView) parseRecord(off int) (CharSelectionEntry, bool) {
 	var e CharSelectionEntry
 	name, n, ok := ReadS(v, off)
@@ -217,9 +216,10 @@ func (v CharSelectionInfoView) parseRecord(off int) (CharSelectionEntry, bool) {
 	}
 	e.Name = name
 	off += n
-	if e.CharID, ok = ReadD(v, off); !ok {
+	if 4 > len(v)-off {
 		return e, false
 	}
+	e.CharID = leD(v, off)
 	off += 4
 	login, n, ok := ReadS(v, off)
 	if !ok {
@@ -227,112 +227,41 @@ func (v CharSelectionInfoView) parseRecord(off int) (CharSelectionEntry, bool) {
 	}
 	e.LoginName = login
 	off += n
-	return e, v.parseTail(off, &e)
-}
-
-// parseTail читает фиксированный хвост записи после строки логина.
-func (v CharSelectionInfoView) parseTail(off int, e *CharSelectionEntry) bool {
-	var ok bool
-	// sessionID, clanID, builder, sex, race, baseClassID, gsName, x, y, z
-	for i := 0; i < 10; i++ {
-		x, ok := ReadD(v, off)
-		if !ok {
-			return false
-		}
-		switch i {
-		case 0:
-			e.SessionID = x
-		case 1:
-			e.ClanID = x
-		case 3:
-			e.Sex = x
-		case 4:
-			e.Race = x
-		case 5:
-			e.BaseClassID = x
-		}
-		off += 4
+	if charSelectionTail > len(v)-off {
+		return e, false
 	}
-	f1, ok := ReadF(v, off)
-	if !ok {
-		return false
+	t := off // база фиксированного хвоста — диапазон доказан
+	e.SessionID = leD(v, t)
+	e.ClanID = leD(v, t+4)
+	e.Sex = leD(v, t+12)
+	e.Race = leD(v, t+16)
+	e.BaseClassID = leD(v, t+20)
+	e.CurHP = leF(v, t+40)
+	e.CurMP = leF(v, t+48)
+	e.SP = leD(v, t+56)
+	e.Exp = leQ(v, t+60)
+	e.Level = leD(v, t+68)
+	e.Karma = leD(v, t+72)
+	for j := range e.PaperdollObjectIDs {
+		e.PaperdollObjectIDs[j] = leD(v, t+112+4*j)
 	}
-	e.CurHP = f1
-	off += 8
-	f2, ok := ReadF(v, off)
-	if !ok {
-		return false
+	for j := range e.PaperdollItemIDs {
+		e.PaperdollItemIDs[j] = leD(v, t+180+4*j)
 	}
-	e.CurMP = f2
-	off += 8
-	if e.SP, ok = ReadD(v, off); !ok {
-		return false
-	}
-	off += 4
-	if e.Exp, ok = ReadQ(v, off); !ok {
-		return false
-	}
-	off += 8
-	if e.Level, ok = ReadD(v, off); !ok {
-		return false
-	}
-	off += 4
-	if e.Karma, ok = ReadD(v, off); !ok {
-		return false
-	}
-	off += 4
-	off += 36 // 9 зарезервированных D
-	for i := range e.PaperdollObjectIDs {
-		if e.PaperdollObjectIDs[i], ok = ReadD(v, off); !ok {
-			return false
-		}
-		off += 4
-	}
-	for i := range e.PaperdollItemIDs {
-		if e.PaperdollItemIDs[i], ok = ReadD(v, off); !ok {
-			return false
-		}
-		off += 4
-	}
-	for _, dst := range []*int32{&e.HairStyle, &e.HairColor, &e.Face} {
-		if *dst, ok = ReadD(v, off); !ok {
-			return false
-		}
-		off += 4
-	}
-	f3, ok := ReadF(v, off)
-	if !ok {
-		return false
-	}
-	e.MaxHP = f3
-	off += 8
-	f4, ok := ReadF(v, off)
-	if !ok {
-		return false
-	}
-	e.MaxMP = f4
-	off += 8
-	if e.DeleteTime, ok = ReadD(v, off); !ok {
-		return false
-	}
-	off += 4
-	if e.ClassID, ok = ReadD(v, off); !ok {
-		return false
-	}
-	off += 4 + 4 // ClassID + active
-	if off >= len(v) {
-		return false
-	}
-	e.Enchant = v[off]
-	off++
-	if e.AugmentationID, ok = ReadD(v, off); !ok {
-		return false
-	}
-	return true
+	e.HairStyle = leD(v, t+248)
+	e.HairColor = leD(v, t+252)
+	e.Face = leD(v, t+256)
+	e.MaxHP = leF(v, t+260)
+	e.MaxMP = leF(v, t+268)
+	e.DeleteTime = leD(v, t+276)
+	e.ClassID = leD(v, t+280)
+	e.Enchant = v[t+288]
+	e.AugmentationID = leD(v, t+289)
+	return e, true
 }
 
 // CharSelectedView — представление пакета CharSelected (GS→C).
-type CharSelectedView viewBuf
+type CharSelectedView []byte
 
 // NewCharSelectedView проверяет минимальную длину 1 (опкод) и возвращает
 // представление.

@@ -1,8 +1,10 @@
 // Пакеты логин-флоу Interlude: писатели LoginServer→C и C→LoginServer.
 // Порт udisondev/interlude@34fe4c86 pkg/packet/{server,client}; формат сверен
-// с каноном Mobius master CT_0_Interlude (43ac8878) — расхождения источника
-// перечислены в реестре задачи P1.4. Крипта здесь отсутствует: RSA-блоб и
-// скрэмблированный модуль — непрозрачные байты.
+// с каноном Mobius master CT_0_Interlude (43ac8878). Расхождения источника с
+// каноном закрыты в пользу канона; ключевое здесь: обрезка полей учётных
+// данных — Java trim() (≤ U+0020 с двух концов), а не TrimRight NUL/пробел.
+// Крипта в этом файле отсутствует: RSA-блоб и скрэмблированный модуль —
+// непрозрачные байты.
 
 package protocol
 
@@ -30,23 +32,23 @@ const (
 
 // Фиксированные размеры пакетов (с опкодом).
 const (
-	InitSize               = 170
-	LoginFailSize          = 2
-	AccountKickedSize      = 5
-	LoginOkSize            = 49
-	PlayFailSize           = 2
-	PlayOkSize             = 9
-	GGAuthSize             = 21
-	RequestAuthLoginSize   = 129
-	AuthLoginPlainSize     = 128
-	RequestServerListSize  = 9
-	RequestServerLoginSize = 10
-	AuthGameGuardSize      = 21
+	InitSize                  = 170
+	LoginFailSize             = 2
+	AccountKickedSize         = 5
+	LoginOkSize               = 49
+	PlayFailSize              = 2
+	PlayOkSize                = 9
+	GGAuthSize                = 21
+	RequestAuthLoginSize      = 129
+	RequestAuthLoginPlainSize = 128
+	RequestServerListSize     = 9
+	RequestServerLoginSize    = 10
+	AuthGameGuardSize         = 21
 )
 
 // Офсеты и длины полей plain-блока RequestAuthLogin (128 Б): учётные данные
-// в RSA-зашифрованном блоке. New-method (256 Б, два блока: логин 0x4E/50 +
-// 0x4E/14, пароль 0xDC/16) не типизируется — потребителя в фазе 1 нет.
+// в RSA-зашифрованном блоке. New-method (256 Б, единый массив: логин
+// 0x4E/50 + 0xCE/14, пароль 0xDC/16) не типизируется — потребителя нет.
 const (
 	authLoginUserOffset = 0x5E
 	authLoginUserLen    = 14
@@ -55,8 +57,8 @@ const (
 )
 
 // Форматные константы Init: ревизия протокола логина и константы GameGuard
-// (тип uint32 — две из них старше знакового бита; запись — через
-// WriteD(int32(...)) с сохранением битового образа).
+// (uint32 — 0x97ADB620 вне знакового диапазона; запись — битово точной
+// LittleEndian-записью).
 const (
 	initProtocolRevision        = 0x0000C621
 	ggConst1             uint32 = 0x29DD954E
@@ -65,7 +67,7 @@ const (
 	ggConst4             uint32 = 0x07BDE0F7
 )
 
-// LoginOkUnknown — неизветное поле LoginOk с фиксированным значением канона.
+// loginOkUnknown — неизвестное поле LoginOk с фиксированным значением канона.
 const loginOkUnknown = 0x3EA
 
 // Коды причин отказов LoginFail и PlayFail (LS→C, байт): канон использует
@@ -124,12 +126,13 @@ type PlayFailReason byte
 // KickReason — код причины AccountKicked (LS→C, int32).
 type KickReason int32
 
-// Коды причин AccountKicked (перенос Mobius AccountKickedReason).
+// Коды причин AccountKicked (перенос Mobius AccountKickedReason); префикс
+// семейства отличает их от нетипизированных кодов LoginFail/PlayFail.
 const (
-	ReasonDataStealer       KickReason = 0x01
-	ReasonGenericViolation  KickReason = 0x08
-	Reason7DaysSuspended    KickReason = 0x10
-	ReasonPermanentlyBanned KickReason = 0x20
+	KickDataStealer       KickReason = 0x01
+	KickGenericViolation  KickReason = 0x08
+	Kick7DaysSuspended    KickReason = 0x10
+	KickPermanentlyBanned KickReason = 0x20
 )
 
 // ServerListEntry — запись сервера в первой секции ServerList.
@@ -268,11 +271,16 @@ func ServerListSize(servers []ServerListEntry, chars []ServerChars) int {
 
 // WriteServerList пишет пакет ServerList (LS→C): заголовок (счёт, последний
 // сервер), записи серверов фиксированного шага, разделитель H(0) и секция
-// счётчиков персонажей. Возвращает число записанных байт.
+// счётчиков персонажей. Счётчики провода однобайтовые: списки длиннее 255 —
+// нарушение программного контракта вызывающего. Возвращает число записанных
+// байт.
 func WriteServerList(dst []byte, servers []ServerListEntry, chars []ServerChars, lastServer byte) int {
 	size := ServerListSize(servers, chars)
 	if len(dst) < size {
 		panic(fmt.Sprintf("protocol: WriteServerList: dst длиной %d байт < ServerListSize=%d", len(dst), size))
+	}
+	if len(servers) > 255 || len(chars) > 255 {
+		panic(fmt.Sprintf("protocol: WriteServerList: счётчик секции вне байта: servers=%d, chars=%d", len(servers), len(chars)))
 	}
 	dst[0] = serverList
 	dst[1] = byte(len(servers))
@@ -296,6 +304,9 @@ func WriteServerList(dst []byte, servers []ServerListEntry, chars []ServerChars,
 	dst[off] = byte(len(chars))
 	off++
 	for _, c := range chars {
+		if len(c.DeleteTimes) > 255 {
+			panic(fmt.Sprintf("protocol: WriteServerList: счётчик удалений вне байта: %d", len(c.DeleteTimes)))
+		}
 		dst[off] = c.ServerID
 		dst[off+1] = c.CharCount
 		dst[off+2] = byte(len(c.DeleteTimes))
@@ -323,7 +334,7 @@ func WriteRequestAuthLogin(dst, rsaBlock []byte) int {
 		panic(fmt.Sprintf("protocol: WriteRequestAuthLogin: dst длиной %d байт < RequestAuthLoginSize=%d", len(dst), RequestAuthLoginSize))
 	}
 	if len(rsaBlock) != 128 {
-		panic(fmt.Sprintf("protocol: WriteRequestAuthLogin: RSA-блоб %d байт; want 128 (new-method вне скоупа)", len(rsaBlock)))
+		panic(fmt.Sprintf("protocol: WriteRequestAuthLogin: RSA-блоб %d байт; want 128 (new-method не типизируется)", len(rsaBlock)))
 	}
 	dst[0] = requestAuthLogin
 	copy(dst[1:], rsaBlock)
@@ -335,16 +346,16 @@ func WriteRequestAuthLogin(dst, rsaBlock []byte) int {
 // пароль с 0x6C (16 Б). Переполнение длины — ошибка: учётные данные приходят
 // от пользователя и не являются программной инвариантой вызывающего.
 func WriteRequestAuthLoginPlain(dst []byte, user, pass string) error {
-	if len(dst) < AuthLoginPlainSize {
-		panic(fmt.Sprintf("protocol: WriteRequestAuthLoginPlain: dst длиной %d байт < AuthLoginPlainSize=%d", len(dst), AuthLoginPlainSize))
+	if len(dst) < RequestAuthLoginPlainSize {
+		panic(fmt.Sprintf("protocol: WriteRequestAuthLoginPlain: dst длиной %d байт < RequestAuthLoginPlainSize=%d", len(dst), RequestAuthLoginPlainSize))
 	}
 	if len(user) > authLoginUserLen {
-		return fmt.Errorf("логин %d байт; want ≤ %d", len(user), authLoginUserLen)
+		return fmt.Errorf("protocol: WriteRequestAuthLoginPlain: логин %d байт; want ≤ %d", len(user), authLoginUserLen)
 	}
 	if len(pass) > authLoginPassLen {
-		return fmt.Errorf("пароль %d байт; want ≤ %d", len(pass), authLoginPassLen)
+		return fmt.Errorf("protocol: WriteRequestAuthLoginPlain: пароль %d байт; want ≤ %d", len(pass), authLoginPassLen)
 	}
-	clear(dst[:AuthLoginPlainSize])
+	clear(dst[:RequestAuthLoginPlainSize])
 	copy(dst[authLoginUserOffset:], user)
 	copy(dst[authLoginPassOffset:], pass)
 	return nil

@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/udisondev/l2go/internal/protocol/fixture"
@@ -104,8 +105,9 @@ func TestLoginFixtureMeta(t *testing.T) {
 		{"REQUEST_SERVER_LOGIN", fixture.LoginClient, requestServerLogin},
 		{"AUTH_GAME_GUARD", fixture.LoginClient, authGameGuard},
 	}
+	fixes := loginFixtures(t)
 	for _, w := range want {
-		f, ok := loginFixtures(t)[w.name]
+		f, ok := fixes[w.name]
 		if !ok {
 			t.Errorf("фикстура %s отсутствует в login.json", w.name)
 			continue
@@ -137,7 +139,7 @@ func TestWriteLoginPacketsGolden(t *testing.T) {
 			return WriteLoginFail(dst, ReasonAccountInUse)
 		}},
 		{"ACCOUNT_KICKED", AccountKickedSize, accountKicked, func(dst []byte) int {
-			return WriteAccountKicked(dst, ReasonDataStealer)
+			return WriteAccountKicked(dst, KickDataStealer)
 		}},
 		{"SERVER_LIST", 58, serverList, func(dst []byte) int {
 			return WriteServerList(dst, tServers, tChars, tLastServer)
@@ -179,7 +181,7 @@ func TestWriteLoginPacketsGolden(t *testing.T) {
 // Plain-блок REQUEST_AUTH_LOGIN пишется без опкода: сравнение — payload.
 func TestWriteRequestAuthLoginPlainGolden(t *testing.T) {
 	f := loginFixtures(t)["REQUEST_AUTH_LOGIN_PLAIN"]
-	dst := make([]byte, AuthLoginPlainSize)
+	dst := make([]byte, RequestAuthLoginPlainSize)
 	if err := WriteRequestAuthLoginPlain(dst, "testuser", "secret"); err != nil {
 		t.Fatalf("WriteRequestAuthLoginPlain: %v", err)
 	}
@@ -189,7 +191,7 @@ func TestWriteRequestAuthLoginPlainGolden(t *testing.T) {
 }
 
 func TestWriteRequestAuthLoginPlainErrors(t *testing.T) {
-	dst := make([]byte, AuthLoginPlainSize)
+	dst := make([]byte, RequestAuthLoginPlainSize)
 	tests := []struct {
 		name       string
 		user, pass string
@@ -258,8 +260,8 @@ func TestLoginViewsGolden(t *testing.T) {
 		if !ok {
 			t.Fatal("NewAccountKickedView: ok = false")
 		}
-		if v.Reason() != ReasonDataStealer {
-			t.Errorf("Reason = %#x; want ReasonDataStealer", v.Reason())
+		if v.Reason() != KickDataStealer {
+			t.Errorf("Reason = %#x; want KickDataStealer", v.Reason())
 		}
 	})
 	t.Run("SERVER_LIST", func(t *testing.T) {
@@ -339,9 +341,9 @@ func TestLoginViewsGolden(t *testing.T) {
 		}
 	})
 	t.Run("REQUEST_AUTH_LOGIN_PLAIN", func(t *testing.T) {
-		v, ok := NewAuthLoginPlainView(fixes["REQUEST_AUTH_LOGIN_PLAIN"].Payload)
+		v, ok := NewRequestAuthLoginPlainView(fixes["REQUEST_AUTH_LOGIN_PLAIN"].Payload)
 		if !ok {
-			t.Fatal("NewAuthLoginPlainView: ok = false")
+			t.Fatal("NewRequestAuthLoginPlainView: ok = false")
 		}
 		if v.User() != "testuser" || v.Password() != "secret" {
 			t.Errorf("учётные данные = %q/%q; want testuser/secret", v.User(), v.Password())
@@ -378,12 +380,12 @@ func TestLoginViewsGolden(t *testing.T) {
 
 // Обрезка ≤ U+0020 с двух концов — семантика Java String.trim() канона.
 func TestAuthLoginPlainViewTrim(t *testing.T) {
-	block := make([]byte, AuthLoginPlainSize)
+	block := make([]byte, RequestAuthLoginPlainSize)
 	copy(block[0x5E:], "\tspace user \x00")
 	copy(block[0x6C:], " pass word\t")
-	v, ok := NewAuthLoginPlainView(block)
+	v, ok := NewRequestAuthLoginPlainView(block)
 	if !ok {
-		t.Fatal("NewAuthLoginPlainView: ok = false")
+		t.Fatal("NewRequestAuthLoginPlainView: ok = false")
 	}
 	if v.User() != "space user" {
 		t.Errorf("User = %q; want %q (trim с двух концов)", v.User(), "space user")
@@ -409,7 +411,7 @@ func TestLoginViewsTruncated(t *testing.T) {
 		{"PLAY_FAIL", PlayFailSize, func(b []byte) bool { _, ok := NewPlayFailView(b); return ok }},
 		{"GG_AUTH", GGAuthSize, func(b []byte) bool { _, ok := NewGGAuthView(b); return ok }},
 		{"REQUEST_AUTH_LOGIN", RequestAuthLoginSize, func(b []byte) bool { _, ok := NewRequestAuthLoginView(b); return ok }},
-		{"REQUEST_AUTH_LOGIN_PLAIN", 124, func(b []byte) bool { _, ok := NewAuthLoginPlainView(b); return ok }},
+		{"REQUEST_AUTH_LOGIN_PLAIN", 124, func(b []byte) bool { _, ok := NewRequestAuthLoginPlainView(b); return ok }},
 		{"REQUEST_SERVER_LIST", RequestServerListSize, func(b []byte) bool { _, ok := NewRequestServerListView(b); return ok }},
 		{"REQUEST_SERVER_LOGIN", RequestServerLoginSize, func(b []byte) bool { _, ok := NewRequestServerLoginView(b); return ok }},
 		{"AUTH_GAME_GUARD", 5, func(b []byte) bool { _, ok := NewAuthGameGuardView(b); return ok }},
@@ -419,7 +421,7 @@ func TestLoginViewsTruncated(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			full := make([]byte, tt.min)
 			copy(full, wireFix.Payload) // мусорное заполнение — важна только длина
-			if tt.ctor(full) != true {
+			if !tt.ctor(full) {
 				t.Fatalf("%s: на ровно %d байт ok = false; want true", tt.name, tt.min)
 			}
 			for _, n := range []int{0, tt.min - 1} {
@@ -447,11 +449,11 @@ func TestRequestAuthLoginViewShortBlock(t *testing.T) {
 // Пачка злых входов: конструкторы и геттеры не паникуют на недоверенных байтах.
 func TestLoginViewsNoPanic(t *testing.T) {
 	fixes := loginFixtures(t)
-	good := map[string][]byte{
-		"INIT":                     wire(fixes["INIT"]),
-		"SERVER_LIST":              wire(fixes["SERVER_LIST"]),
-		"REQUEST_AUTH_LOGIN":       wire(fixes["REQUEST_AUTH_LOGIN"]),
-		"REQUEST_AUTH_LOGIN_PLAIN": fixes["REQUEST_AUTH_LOGIN_PLAIN"].Payload,
+	good := [][]byte{
+		wire(fixes["INIT"]),
+		wire(fixes["SERVER_LIST"]),
+		wire(fixes["REQUEST_AUTH_LOGIN"]),
+		fixes["REQUEST_AUTH_LOGIN_PLAIN"].Payload,
 	}
 	evils := [][]byte{
 		nil, {}, {0x00}, {0xFF, 0xFF}, pattern(2, 1), pattern(123, 2), pattern(125, 3),
@@ -464,7 +466,7 @@ func TestLoginViewsNoPanic(t *testing.T) {
 			t.Fatalf("паника на злых входах: %v", r)
 		}
 	}()
-	for _, b := range append(evils, values(good)...) {
+	for _, b := range append(evils, good...) {
 		if v, ok := NewInitView(b); ok {
 			_, _, _, _ = v.SessionID(), v.Revision(), v.Modulus(), v.BlowfishKey()
 		}
@@ -480,20 +482,12 @@ func TestLoginViewsNoPanic(t *testing.T) {
 		if v, ok := NewRequestAuthLoginView(b); ok {
 			_ = v.RSABlock()
 		}
-		if v, ok := NewAuthLoginPlainView(b); ok {
+		if v, ok := NewRequestAuthLoginPlainView(b); ok {
 			_, _ = v.User(), v.Password()
 		}
 		_, _ = NewLoginOkView(b)
 		_, _ = NewGGAuthView(b)
 	}
-}
-
-func values(m map[string][]byte) [][]byte {
-	out := make([][]byte, 0, len(m))
-	for _, v := range m {
-		out = append(out, v)
-	}
-	return out
 }
 
 // Фиксированные писатели — 0 аллокаций (конвенция пути «пакет-писатель»).
@@ -503,7 +497,7 @@ func TestLoginWritersZeroAllocs(t *testing.T) {
 		_ = WriteInit(dst, tSessionID, tModulus, tBFKey)
 		_ = WriteLoginOk(dst, tLoginOk1, tLoginOk2)
 		_ = WriteLoginFail(dst, ReasonAccountInUse)
-		_ = WriteAccountKicked(dst, ReasonDataStealer)
+		_ = WriteAccountKicked(dst, KickDataStealer)
 		_ = WritePlayOk(dst, tPlayOk1, tPlayOk2)
 		_ = WritePlayFail(dst, ReasonSystemErrorLoginLater)
 		_ = WriteGGAuth(dst, tSessionID)
@@ -559,4 +553,105 @@ func ExampleWriteInit() {
 	v, ok := NewInitView(dst[:])
 	fmt.Println(ok, v.SessionID(), v.Revision())
 	// Output: true 305419896 50721
+}
+
+// Грязный dst: зарезервированные поля обязаны затираться (байты 0xFF не
+// должны просачиваться в пакет — пул-буферы переиспользуются грязными).
+func TestLoginWritersDirtyDst(t *testing.T) {
+	type tc struct {
+		name  string
+		size  int
+		write func(dst []byte) int
+	}
+	tests := []tc{
+		{"LoginOk", LoginOkSize, func(dst []byte) int { return WriteLoginOk(dst, 1, 2) }},
+		{"GGAuth", GGAuthSize, func(dst []byte) int { return WriteGGAuth(dst, 3) }},
+		{"AuthGameGuard", AuthGameGuardSize, func(dst []byte) int { return WriteAuthGameGuard(dst, 3) }},
+		{"ServerList", ServerListSize(tServers, tChars), func(dst []byte) int {
+			return WriteServerList(dst, tServers, tChars, tLastServer)
+		}},
+		{"RequestAuthLoginPlain", RequestAuthLoginPlainSize, func(dst []byte) int {
+			if err := WriteRequestAuthLoginPlain(dst, "testuser", "secret"); err != nil {
+				t.Errorf("WriteRequestAuthLoginPlain: %v", err)
+			}
+			return RequestAuthLoginPlainSize
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clean := make([]byte, tt.size)
+			n := tt.write(clean)
+			dirty := make([]byte, tt.size)
+			for i := range dirty {
+				dirty[i] = 0xFF
+			}
+			tt.write(dirty)
+			for i := 0; i < n; i++ {
+				if clean[i] != dirty[i] {
+					t.Fatalf("%s: байт %d: чистый %#x, грязный %#x — затирание резервов сломано",
+						tt.name, i, clean[i], dirty[i])
+				}
+			}
+		})
+	}
+}
+
+// Паник-контракты писателей: короткий dst и неверные длины аргументов-буферов
+// паникуют с диагностикой (класс F6/P1.2 — программный контракт вызывающего).
+func TestLoginWritersPanics(t *testing.T) {
+	dst := make([]byte, 256)
+	big := make([]byte, 16<<10)
+	tests := []struct {
+		name    string
+		call    func()
+		wantMsg string
+	}{
+		{"Init короткий dst", func() { WriteInit(dst[:InitSize-1], 1, tModulus, tBFKey) }, "WriteInit"},
+		{"Init модуль", func() { WriteInit(dst, 1, tModulus[:64], tBFKey) }, "модуль"},
+		{"Init bfKey", func() { WriteInit(dst, 1, tModulus, tBFKey[:8]) }, "Blowfish-ключ"},
+		{"LoginOk короткий dst", func() { WriteLoginOk(dst[:LoginOkSize-1], 1, 2) }, "WriteLoginOk"},
+		{"RequestAuthLogin блоб", func() { WriteRequestAuthLogin(dst, tRSABlk[:100]) }, "RSA-блоб"},
+		{"RequestServerList короткий dst", func() { WriteRequestServerList(dst[:8], 1, 2) }, "WriteRequestServerList"},
+		{"AuthGameGuard короткий dst", func() { WriteAuthGameGuard(dst[:20], 1) }, "WriteAuthGameGuard"},
+		{"ServerList счётчик серверов", func() {
+			WriteServerList(big, make([]ServerListEntry, 256), nil, 0)
+		}, "вне байта"},
+		{"ServerList счётчик удалений", func() {
+			WriteServerList(big, tServers[:1], []ServerChars{{ServerID: 1, DeleteTimes: make([]int32, 256)}}, 0)
+		}, "удалений вне байта"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("паника не поднята; want с подстрокой %q", tt.wantMsg)
+				}
+				if msg, ok := r.(string); !ok || !strings.Contains(msg, tt.wantMsg) {
+					t.Errorf("паника = %v; want подстрока %q", r, tt.wantMsg)
+				}
+			}()
+			tt.call()
+		})
+	}
+}
+
+// Счётчик — ограничитель навигации, а не только буфер: count=1 при двух
+// записях в буфере не отдаёт вторую запись.
+func TestServerListViewCountLimiter(t *testing.T) {
+	full := wire(loginFixtures(t)["SERVER_LIST"]) // count=2, обе записи валидны
+	short := append([]byte(nil), full...)
+	short[1] = 1 // счётчик секции 1 занижен
+	v, ok := NewServerListView(short)
+	if !ok {
+		t.Fatal("NewServerListView: ok = false")
+	}
+	if _, ok := v.Server(1); ok {
+		t.Error("Server(1) при count=1: ok = true; want false (счётчик ограничивает)")
+	}
+	short[1] = 2
+	v2, _ := NewServerListView(short)
+	if _, ok := v2.Server(1); !ok {
+		t.Error("Server(1) при count=2: ok = false; want true")
+	}
 }

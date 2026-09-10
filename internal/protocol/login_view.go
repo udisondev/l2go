@@ -1,19 +1,30 @@
-// Представления пакетов логин-флоу (обе стороны протокола): конструктор
-// проверяет минимальную длину один раз, геттеры читают по офсетам без копий;
-// навигация переменных секций — с ok-семантикой. Нулевое значение
-// недействительно, доступ — только после успешного конструктора.
+// Представления пакетов логин-флоу (обе стороны протокола). Порт семантики
+// udisondev/interlude@34fe4c8 pkg/packet/client (срезы plain-блока), формат —
+// канон Mobius master CT_0_Interlude (43ac8878). Конструктор проверяет
+// минимальную длину один раз, геттеры читают по офсетам без копий; навигация
+// переменных секций — с ok-семантикой. Нулевое значение недействительно,
+// доступ — только после успешного конструктора.
 
 package protocol
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"math"
+)
 
-func (b viewBuf) d(off int) int32 { return int32(binary.LittleEndian.Uint32(b[off:])) }
+// leD, leF, leQ — чтение little-endian по офсету без ok: для
+// фиксированных-offsets геттеров и диапазонов, доказанных однократной
+// проверкой (конструктор или envelope-проверка навигации).
+func leD(b []byte, off int) int32 { return int32(binary.LittleEndian.Uint32(b[off:])) }
 
-// viewBuf — общий тип-надстройка представлений над буфером пакета.
-type viewBuf []byte
+func leF(b []byte, off int) float64 {
+	return math.Float64frombits(binary.LittleEndian.Uint64(b[off:]))
+}
+
+func leQ(b []byte, off int) int64 { return int64(binary.LittleEndian.Uint64(b[off:])) }
 
 // InitView — представление пакета Init (LS→C).
-type InitView viewBuf
+type InitView []byte
 
 // NewInitView проверяет длину InitSize и возвращает представление.
 func NewInitView(b []byte) (InitView, bool) {
@@ -24,10 +35,10 @@ func NewInitView(b []byte) (InitView, bool) {
 }
 
 // SessionID возвращает идентификатор сессии логина.
-func (v InitView) SessionID() int32 { return viewBuf(v).d(1) }
+func (v InitView) SessionID() int32 { return leD(v, 1) }
 
 // Revision возвращает ревизию протокола логина (Interlude: 0x0000C621).
-func (v InitView) Revision() int32 { return viewBuf(v).d(5) }
+func (v InitView) Revision() int32 { return leD(v, 5) }
 
 // Modulus возвращает скрэмблированный RSA-модуль (128 Б, непрозрачные байты).
 func (v InitView) Modulus() []byte { return v[9:137] }
@@ -36,7 +47,7 @@ func (v InitView) Modulus() []byte { return v[9:137] }
 func (v InitView) BlowfishKey() []byte { return v[153:169] }
 
 // LoginOkView — представление пакета LoginOk (LS→C).
-type LoginOkView viewBuf
+type LoginOkView []byte
 
 // NewLoginOkView проверяет длину LoginOkSize и возвращает представление.
 func NewLoginOkView(b []byte) (LoginOkView, bool) {
@@ -47,13 +58,13 @@ func NewLoginOkView(b []byte) (LoginOkView, bool) {
 }
 
 // LoginOkID1 возвращает первую часть ключа сессии логина.
-func (v LoginOkView) LoginOkID1() int32 { return viewBuf(v).d(1) }
+func (v LoginOkView) LoginOkID1() int32 { return leD(v, 1) }
 
 // LoginOkID2 возвращает вторую часть ключа сессии логина.
-func (v LoginOkView) LoginOkID2() int32 { return viewBuf(v).d(5) }
+func (v LoginOkView) LoginOkID2() int32 { return leD(v, 5) }
 
 // LoginFailView — представление пакета LoginFail (LS→C).
-type LoginFailView viewBuf
+type LoginFailView []byte
 
 // NewLoginFailView проверяет длину LoginFailSize и возвращает представление.
 func NewLoginFailView(b []byte) (LoginFailView, bool) {
@@ -67,7 +78,7 @@ func NewLoginFailView(b []byte) (LoginFailView, bool) {
 func (v LoginFailView) Reason() LoginFailReason { return LoginFailReason(v[1]) }
 
 // AccountKickedView — представление пакета AccountKicked (LS→C).
-type AccountKickedView viewBuf
+type AccountKickedView []byte
 
 // NewAccountKickedView проверяет длину AccountKickedSize и возвращает
 // представление.
@@ -79,10 +90,10 @@ func NewAccountKickedView(b []byte) (AccountKickedView, bool) {
 }
 
 // Reason возвращает код причины исключения аккаунта.
-func (v AccountKickedView) Reason() KickReason { return KickReason(viewBuf(v).d(1)) }
+func (v AccountKickedView) Reason() KickReason { return KickReason(leD(v, 1)) }
 
 // PlayOkView — представление пакета PlayOk (LS→C).
-type PlayOkView viewBuf
+type PlayOkView []byte
 
 // NewPlayOkView проверяет длину PlayOkSize и возвращает представление.
 func NewPlayOkView(b []byte) (PlayOkView, bool) {
@@ -93,13 +104,13 @@ func NewPlayOkView(b []byte) (PlayOkView, bool) {
 }
 
 // PlayOkID1 возвращает первую часть ключа игровой сессии.
-func (v PlayOkView) PlayOkID1() int32 { return viewBuf(v).d(1) }
+func (v PlayOkView) PlayOkID1() int32 { return leD(v, 1) }
 
 // PlayOkID2 возвращает вторую часть ключа игровой сессии.
-func (v PlayOkView) PlayOkID2() int32 { return viewBuf(v).d(5) }
+func (v PlayOkView) PlayOkID2() int32 { return leD(v, 5) }
 
 // PlayFailView — представление пакета PlayFail (LS→C).
-type PlayFailView viewBuf
+type PlayFailView []byte
 
 // NewPlayFailView проверяет длину PlayFailSize и возвращает представление.
 func NewPlayFailView(b []byte) (PlayFailView, bool) {
@@ -113,7 +124,7 @@ func NewPlayFailView(b []byte) (PlayFailView, bool) {
 func (v PlayFailView) Reason() PlayFailReason { return PlayFailReason(v[1]) }
 
 // GGAuthView — представление пакета GGAuth (LS→C).
-type GGAuthView viewBuf
+type GGAuthView []byte
 
 // NewGGAuthView проверяет длину GGAuthSize и возвращает представление.
 func NewGGAuthView(b []byte) (GGAuthView, bool) {
@@ -124,12 +135,12 @@ func NewGGAuthView(b []byte) (GGAuthView, bool) {
 }
 
 // Response возвращает код ответа на пробу GameGuard (обычно sessionID).
-func (v GGAuthView) Response() int32 { return viewBuf(v).d(1) }
+func (v GGAuthView) Response() int32 { return leD(v, 1) }
 
 // ServerListView — представление пакета ServerList (LS→C). Конструктор
 // проверяет только заголовок; записи навигационными геттерами с ok=false на
 // усечении (частичный разбор лучше отказа — диспетчер показывает hex-дамп).
-type ServerListView viewBuf
+type ServerListView []byte
 
 // NewServerListView проверяет длину заголовка (3 Б) и возвращает
 // представление.
@@ -156,13 +167,13 @@ func (v ServerListView) Server(i int) (ServerListEntry, bool) {
 	var e ServerListEntry
 	e.ID = v[off]
 	copy(e.IP[:], v[off+1:])
-	e.Port = viewBuf(v).d(off + 5)
+	e.Port = leD(v, off+5)
 	e.AgeLimit = v[off+9]
 	e.PvP = v[off+10] != 0
 	e.CurrentPlayers = int16(binary.LittleEndian.Uint16(v[off+11:]))
 	e.MaxPlayers = int16(binary.LittleEndian.Uint16(v[off+13:]))
 	e.Status = v[off+15]
-	e.ServerType = viewBuf(v).d(off + 16)
+	e.ServerType = leD(v, off+16)
 	e.Brackets = v[off+20] != 0
 	return e, true
 }
@@ -186,7 +197,7 @@ func (v ServerListView) CharsCount() (int, bool) {
 }
 
 // Chars возвращает запись второй секции (serverID, счётчик персонажей,
-// времена удаления). ok=false при усечении.
+// времена удаления). ok=false при выходе за счётчик или усечении.
 func (v ServerListView) Chars(i int) (ServerChars, bool) {
 	off, ok := v.charsOff()
 	if !ok || i < 0 || i >= int(v[off]) {
@@ -211,7 +222,7 @@ func (v ServerListView) Chars(i int) (ServerChars, bool) {
 	if n > 0 {
 		e.DeleteTimes = make([]int32, n)
 		for k := range e.DeleteTimes {
-			e.DeleteTimes[k] = viewBuf(v).d(off + 4*k)
+			e.DeleteTimes[k] = leD(v, off+4*k)
 		}
 	}
 	return e, true
@@ -219,7 +230,7 @@ func (v ServerListView) Chars(i int) (ServerChars, bool) {
 
 // RequestAuthLoginView — представление wire-пакета RequestAuthLogin (C→LS)
 // над [опкод||RSA-блоб]. New-method (256 Б) не типизируется.
-type RequestAuthLoginView viewBuf
+type RequestAuthLoginView []byte
 
 // NewRequestAuthLoginView проверяет минимальную длину 129 (опкод + блок) и
 // возвращает представление.
@@ -234,27 +245,27 @@ func NewRequestAuthLoginView(b []byte) (RequestAuthLoginView, bool) {
 // расшифровка — пакет crypto).
 func (v RequestAuthLoginView) RSABlock() []byte { return v[1:129] }
 
-// AuthLoginPlainView — представление расшифрованного 128-байтового блока
-// учётных данных RequestAuthLogin (блок без опкода).
-type AuthLoginPlainView viewBuf
+// RequestAuthLoginPlainView — представление расшифрованного 128-байтового
+// блока учётных данных RequestAuthLogin (блок без опкода).
+type RequestAuthLoginPlainView []byte
 
-// NewAuthLoginPlainView проверяет минимальную длину 124 (0x6C+16 — поле
-// пароля до конца) и возвращает представление.
-func NewAuthLoginPlainView(block []byte) (AuthLoginPlainView, bool) {
+// NewRequestAuthLoginPlainView проверяет минимальную длину 124 (0x6C+16 —
+// поле пароля до конца) и возвращает представление.
+func NewRequestAuthLoginPlainView(block []byte) (RequestAuthLoginPlainView, bool) {
 	if len(block) < authLoginPassOffset+authLoginPassLen {
 		return nil, false
 	}
-	return AuthLoginPlainView(block), true
+	return RequestAuthLoginPlainView(block), true
 }
 
 // User возвращает логин: поле обрезается от ≤ U+0020 с обоих концов —
 // семантика Java String.trim() канона.
-func (v AuthLoginPlainView) User() string {
+func (v RequestAuthLoginPlainView) User() string {
 	return trimField(v[authLoginUserOffset : authLoginUserOffset+authLoginUserLen])
 }
 
 // Password возвращает пароль с той же обрезкой; пробелы в середине сохраняются.
-func (v AuthLoginPlainView) Password() string {
+func (v RequestAuthLoginPlainView) Password() string {
 	return trimField(v[authLoginPassOffset : authLoginPassOffset+authLoginPassLen])
 }
 
@@ -269,7 +280,7 @@ func trimField(b []byte) string {
 }
 
 // RequestServerListView — представление пакета RequestServerList (C→LS).
-type RequestServerListView viewBuf
+type RequestServerListView []byte
 
 // NewRequestServerListView проверяет длину RequestServerListSize и возвращает
 // представление.
@@ -281,13 +292,13 @@ func NewRequestServerListView(b []byte) (RequestServerListView, bool) {
 }
 
 // LoginOkID1 возвращает первую часть ключа сессии логина.
-func (v RequestServerListView) LoginOkID1() int32 { return viewBuf(v).d(1) }
+func (v RequestServerListView) LoginOkID1() int32 { return leD(v, 1) }
 
 // LoginOkID2 возвращает вторую часть ключа сессии логина.
-func (v RequestServerListView) LoginOkID2() int32 { return viewBuf(v).d(5) }
+func (v RequestServerListView) LoginOkID2() int32 { return leD(v, 5) }
 
 // RequestServerLoginView — представление пакета RequestServerLogin (C→LS).
-type RequestServerLoginView viewBuf
+type RequestServerLoginView []byte
 
 // NewRequestServerLoginView проверяет длину RequestServerLoginSize и
 // возвращает представление.
@@ -299,17 +310,17 @@ func NewRequestServerLoginView(b []byte) (RequestServerLoginView, bool) {
 }
 
 // LoginOkID1 возвращает первую часть ключа сессии логина.
-func (v RequestServerLoginView) LoginOkID1() int32 { return viewBuf(v).d(1) }
+func (v RequestServerLoginView) LoginOkID1() int32 { return leD(v, 1) }
 
 // LoginOkID2 возвращает вторую часть ключа сессии логина.
-func (v RequestServerLoginView) LoginOkID2() int32 { return viewBuf(v).d(5) }
+func (v RequestServerLoginView) LoginOkID2() int32 { return leD(v, 5) }
 
 // ServerID возвращает выбранный сервер.
 func (v RequestServerLoginView) ServerID() byte { return v[9] }
 
 // AuthGameGuardView — представление пробы GameGuard (C→LS); 16 резервных
 // байт после sessionID не читаются.
-type AuthGameGuardView viewBuf
+type AuthGameGuardView []byte
 
 // NewAuthGameGuardView проверяет минимальную длину 5 (опкод + sessionID) и
 // возвращает представление.
@@ -321,4 +332,4 @@ func NewAuthGameGuardView(b []byte) (AuthGameGuardView, bool) {
 }
 
 // SessionID возвращает идентификатор сессии пробы.
-func (v AuthGameGuardView) SessionID() int32 { return viewBuf(v).d(1) }
+func (v AuthGameGuardView) SessionID() int32 { return leD(v, 1) }

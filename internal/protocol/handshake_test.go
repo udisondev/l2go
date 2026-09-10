@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/udisondev/l2go/internal/protocol/fixture"
@@ -77,6 +78,9 @@ func TestHandshakeFixtureMeta(t *testing.T) {
 		if f.Dir != w.dir || f.Op != uint16(w.op) {
 			t.Errorf("фикстура %s: dir/op = %s/0x%02X; want %s/0x%02X", w.name, f.Dir, f.Op, w.dir, w.op)
 		}
+		if f.Origin != fixture.OriginGenerated {
+			t.Errorf("фикстура %s: origin = %q; want generated", w.name, f.Origin)
+		}
 	}
 }
 
@@ -91,7 +95,7 @@ func TestWriteHandshakePacketsGolden(t *testing.T) {
 		{"KEY_PACKET", KeyPacketSize, keyPacket, func(dst []byte) int {
 			return WriteKeyPacket(dst, 1, tKeyPacketKey, true, 1)
 		}},
-		{"GS LOGIN_FAIL", GSLoginFailSize, gsLoginFail, func(dst []byte) int {
+		{"LOGIN_FAIL", GSLoginFailSize, gsLoginFail, func(dst []byte) int {
 			return WriteGSLoginFail(dst, GSReasonPasswordDoesNotMatchThisAccount)
 		}},
 		{"CHAR_SELECT_INFO", 659, charSelectInfo, func(dst []byte) int {
@@ -115,11 +119,7 @@ func TestWriteHandshakePacketsGolden(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fixName := map[string]string{"GS LOGIN_FAIL": "LOGIN_FAIL"}[tt.name]
-			if fixName == "" {
-				fixName = tt.name
-			}
-			f := fixes[fixName]
+			f := fixes[tt.name]
 			if tt.size != 1+len(f.Payload) {
 				t.Fatalf("%s: константа размера %d; фикстура даёт %d", tt.name, tt.size, 1+len(f.Payload))
 			}
@@ -185,27 +185,27 @@ func TestHandshakeViewsGolden(t *testing.T) {
 			got  any
 			want any
 		}{
-			{"Name", must(v.Name())["v"], tCharSelected.Name},
-			{"Title", must(v.Title())["v"], tCharSelected.Title},
-			{"CharID", must(v.CharID())["v"], tCharSelected.CharID},
-			{"SessionID", must(v.SessionID())["v"], tCharSelected.SessionID},
-			{"X", must(v.X())["v"], tCharSelected.X},
-			{"Y", must(v.Y())["v"], tCharSelected.Y},
-			{"Z", must(v.Z())["v"], tCharSelected.Z},
-			{"CurHP", must(v.CurHP())["v"], tCharSelected.CurHP},
-			{"CurMP", must(v.CurMP())["v"], tCharSelected.CurMP},
-			{"SP", must(v.SP())["v"], tCharSelected.SP},
-			{"Exp", must(v.Exp())["v"], tCharSelected.Exp},
-			{"Level", must(v.Level())["v"], tCharSelected.Level},
-			{"Karma", must(v.Karma())["v"], tCharSelected.Karma},
-			{"PkKills", must(v.PkKills())["v"], tCharSelected.PkKills},
-			{"INT", must(v.INT())["v"], tCharSelected.INT},
-			{"STR", must(v.STR())["v"], tCharSelected.STR},
-			{"CON", must(v.CON())["v"], tCharSelected.CON},
-			{"MEN", must(v.MEN())["v"], tCharSelected.MEN},
-			{"DEX", must(v.DEX())["v"], tCharSelected.DEX},
-			{"WIT", must(v.WIT())["v"], tCharSelected.WIT},
-			{"GameTime", must(v.GameTime())["v"], int32(905)},
+			{"Name", must(v.Name()), tCharSelected.Name},
+			{"Title", must(v.Title()), tCharSelected.Title},
+			{"CharID", must(v.CharID()), tCharSelected.CharID},
+			{"SessionID", must(v.SessionID()), tCharSelected.SessionID},
+			{"X", must(v.X()), tCharSelected.X},
+			{"Y", must(v.Y()), tCharSelected.Y},
+			{"Z", must(v.Z()), tCharSelected.Z},
+			{"CurHP", must(v.CurHP()), tCharSelected.CurHP},
+			{"CurMP", must(v.CurMP()), tCharSelected.CurMP},
+			{"SP", must(v.SP()), tCharSelected.SP},
+			{"Exp", must(v.Exp()), tCharSelected.Exp},
+			{"Level", must(v.Level()), tCharSelected.Level},
+			{"Karma", must(v.Karma()), tCharSelected.Karma},
+			{"PkKills", must(v.PkKills()), tCharSelected.PkKills},
+			{"INT", must(v.INT()), tCharSelected.INT},
+			{"STR", must(v.STR()), tCharSelected.STR},
+			{"CON", must(v.CON()), tCharSelected.CON},
+			{"MEN", must(v.MEN()), tCharSelected.MEN},
+			{"DEX", must(v.DEX()), tCharSelected.DEX},
+			{"WIT", must(v.WIT()), tCharSelected.WIT},
+			{"GameTime", must(v.GameTime()), tCharSelected.GameTime},
 		}
 		for _, c := range checks {
 			if c.got != c.want {
@@ -259,13 +259,13 @@ func TestHandshakeViewsGolden(t *testing.T) {
 	})
 }
 
-// must разворачивает (значение, ok) геттера в карту для табличной сверки;
-// ok=false здесь — ошибка теста.
-func must[T any](v T, ok bool) map[string]any {
+// must разворачивает (значение, ok) геттера для табличной сверки; ok=false
+// здесь — ошибка теста.
+func must[T any](v T, ok bool) T {
 	if !ok {
 		panic("getter вернул ok=false над golden-байтами")
 	}
-	return map[string]any{"v": v}
+	return v
 }
 
 // Обрезанные входы и злые счётчики: детерминированный отказ, не паника.
@@ -282,6 +282,7 @@ func TestHandshakeViewsTruncated(t *testing.T) {
 		{"AUTH_LOGIN", 1, func(b []byte) bool { _, ok := NewAuthLoginView(b); return ok }},
 		{"LOGOUT", LogoutSize, func(b []byte) bool { _, ok := NewLogoutView(b); return ok }},
 		{"CHARACTER_SELECT", 5, func(b []byte) bool { _, ok := NewCharacterSelectView(b); return ok }},
+		{"CHAR_SELECTED", 1, func(b []byte) bool { _, ok := NewCharSelectedView(b); return ok }},
 	}
 	fill := pattern(64, 3)
 	for _, tt := range tests {
@@ -404,6 +405,7 @@ func TestHandshakeWritersZeroAllocs(t *testing.T) {
 		_ = WriteCharacterSelect(dst, 1)
 		_ = WriteCharSelectionInfo(dst, chars, 0)
 		_ = WriteCharSelected(dst, tCharSelected)
+		_ = WriteRequestAuthLoginPlain(dst[:RequestAuthLoginPlainSize], "testuser", "secret")
 	})
 	if allocs != 0 {
 		t.Errorf("писатели handshake: %v аллокаций; want 0", allocs)
@@ -439,5 +441,113 @@ func TestHandshakeSizingProperty(t *testing.T) {
 		if got := WriteCharSelectionInfo(dst, chars, 0); got != want {
 			t.Errorf("CharSelectionInfoSize(%d записей) = %d; писатель = %d", len(chars), want, got)
 		}
+	}
+}
+
+// Грязный dst: нулевые блоки записи обязаны затираться (CharSelected — 30+12
+// нулей; CharSelectionInfo — 9 зарезервированных D).
+func TestHandshakeWritersDirtyDst(t *testing.T) {
+	chars := []CharSelectionEntry{tChar1, tChar2}
+	tests := []struct {
+		name  string
+		size  int
+		write func(dst []byte) int
+	}{
+		{"CharSelectionInfo", CharSelectionInfoSize(chars), func(dst []byte) int {
+			return WriteCharSelectionInfo(dst, chars, 0)
+		}},
+		{"CharSelected", CharSelectedSize(tCharSelected), func(dst []byte) int {
+			return WriteCharSelected(dst, tCharSelected)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clean := make([]byte, tt.size)
+			n := tt.write(clean)
+			dirty := make([]byte, tt.size)
+			for i := range dirty {
+				dirty[i] = 0xFF
+			}
+			tt.write(dirty)
+			for i := 0; i < n; i++ {
+				if clean[i] != dirty[i] {
+					t.Fatalf("%s: байт %d: чистый %#x, грязный %#x — затирание резервов сломано",
+						tt.name, i, clean[i], dirty[i])
+				}
+			}
+		})
+	}
+}
+
+// Паник-контракты писателей хендшейка.
+func TestHandshakeWritersPanics(t *testing.T) {
+	dst := make([]byte, 1024)
+	tests := []struct {
+		name    string
+		call    func()
+		wantMsg string
+	}{
+		{"KeyPacket короткий dst", func() { WriteKeyPacket(dst[:KeyPacketSize-1], 1, tKeyPacketKey, true, 1) }, "WriteKeyPacket"},
+		{"KeyPacket ключ", func() { WriteKeyPacket(dst, 1, tKeyPacketKey[:4], true, 1) }, "ключ"},
+		{"ProtocolVersion короткий dst", func() { WriteProtocolVersion(dst[:4], 746) }, "WriteProtocolVersion"},
+		{"CharacterSelect короткий dst", func() { WriteCharacterSelect(dst[:18], 0) }, "WriteCharacterSelect"},
+		{"CharSelectionInfo короткий dst", func() {
+			WriteCharSelectionInfo(dst[:64], []CharSelectionEntry{tChar1}, 0)
+		}, "WriteCharSelectionInfo"},
+		{"CharSelected короткий dst", func() { WriteCharSelected(dst[:64], tCharSelected) }, "WriteCharSelected"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("паника не поднята; want с подстрокой %q", tt.wantMsg)
+				}
+				if msg, ok := r.(string); !ok || !strings.Contains(msg, tt.wantMsg) {
+					t.Errorf("паника = %v; want подстрока %q", r, tt.wantMsg)
+				}
+			}()
+			tt.call()
+		})
+	}
+}
+
+// Счётчик ограничивает навигацию Char: count=1 при двух записях в буфере не
+// отдаёт вторую запись (фантомные записи недоступны).
+func TestCharSelectionInfoViewCountLimiter(t *testing.T) {
+	full := wire(handshakeFixtures(t)["CHAR_SELECT_INFO"]) // count=2, обе записи валидны
+	short := append([]byte(nil), full...)
+	short[1] = 1 // младший байт счётчика D занижен (старшие уже нули)
+	v, ok := NewCharSelectionInfoView(short)
+	if !ok {
+		t.Fatal("NewCharSelectionInfoView: ok = false")
+	}
+	if v.Count() != 1 {
+		t.Fatalf("Count = %d; want 1", v.Count())
+	}
+	if _, ok := v.Char(1); ok {
+		t.Error("Char(1) при count=1: ok = true; want false (счётчик ограничивает)")
+	}
+	if _, ok := v.Char(0); !ok {
+		t.Error("Char(0) при count=1: ok = false; want true")
+	}
+}
+
+// Кап enchant 127 канона фальсифицируется: значение 200 пишется как 127.
+func TestCharSelectionEnchantCap(t *testing.T) {
+	c := tChar1
+	c.Enchant = 200
+	dst := make([]byte, CharSelectionInfoSize([]CharSelectionEntry{c}))
+	n := WriteCharSelectionInfo(dst, []CharSelectionEntry{c}, 0)
+	v, ok := NewCharSelectionInfoView(dst[:n])
+	if !ok {
+		t.Fatal("NewCharSelectionInfoView: ok = false")
+	}
+	got, ok := v.Char(0)
+	if !ok {
+		t.Fatal("Char(0): ok = false")
+	}
+	if got.Enchant != 127 {
+		t.Errorf("Enchant = %d; want 127 (кап канона)", got.Enchant)
 	}
 }

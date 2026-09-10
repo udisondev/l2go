@@ -1,8 +1,10 @@
 // Пакеты game-хендшейка и минимального входа Interlude: писатели GameServer→C
 // и C→GameServer. Порт udisondev/interlude@34fe4c86 pkg/packet/{server,client};
-// формат сверен с каноном Mobius master CT_0_Interlude (43ac8878) — расхождения
-// источника (KeyPacket без хвоста, CharacterSelect без хвоста, CharSelected
-// короче на статовый блок) закрыты по канону, список — в реестре задачи P1.4.
+// формат сверен с каноном Mobius master CT_0_Interlude (43ac8878). Расхождения
+// источника с каноном закрыты в пользу канона: KeyPacket — с хвостом C(1)+D(0)
+// (23 Б, источник обрезал до 18), CharacterSelect — с хвостом H+3×D (19 Б,
+// источник знал только слот), CharSelected — со статовым блоком канона
+// (6 статов, 30 нулей paperdoll, повторный classId; exp — Q, не D).
 
 package protocol
 
@@ -196,12 +198,19 @@ func WriteGSLoginFail(dst []byte, reason GSLoginFailReason) int {
 	return GSLoginFailSize
 }
 
+// charSelectionTail — фиксированный хвост записи персонажа после строки
+// логина (одинаково у писателя и представления).
+const charSelectionTail = 293
+
+// charSelectedTail — фиксированный хвост CharSelected после титула.
+const charSelectedTail = 292
+
 // CharSelectionInfoSize возвращает размер WriteCharSelectionInfo — sizing и
 // запись одним расчётом.
 func CharSelectionInfoSize(chars []CharSelectionEntry) int {
 	size := 5 // опкод + счётчик
 	for _, c := range chars {
-		size += LenS(c.Name) + 4 + LenS(c.LoginName) + 293
+		size += LenS(c.Name) + 4 + LenS(c.LoginName) + charSelectionTail
 	}
 	return size
 }
@@ -218,80 +227,87 @@ func WriteCharSelectionInfo(dst []byte, chars []CharSelectionEntry, activeSlot i
 	WriteD(dst[1:], int32(len(chars)))
 	off := 5
 	for i, c := range chars {
-		off += WriteS(dst[off:], c.Name)
-		WriteD(dst[off:], c.CharID)
-		off += 4
-		off += WriteS(dst[off:], c.LoginName)
-		WriteD(dst[off:], c.SessionID)
-		off += 4
-		WriteD(dst[off:], c.ClanID)
-		off += 4
-		WriteD(dst[off:], 0) // builder level
-		off += 4
-		WriteD(dst[off:], c.Sex)
-		off += 4
-		WriteD(dst[off:], c.Race)
-		off += 4
-		WriteD(dst[off:], c.BaseClassID)
-		off += 4
-		WriteD(dst[off:], 1) // GameServerName
-		off += 4
-		WriteD(dst[off:], 0) // X
-		WriteD(dst[off+4:], 0)
-		WriteD(dst[off+8:], 0)
-		off += 12
-		WriteF(dst[off:], c.CurHP)
-		off += 8
-		WriteF(dst[off:], c.CurMP)
-		off += 8
-		WriteD(dst[off:], c.SP)
-		off += 4
-		WriteQ(dst[off:], c.Exp)
-		off += 8
-		WriteD(dst[off:], c.Level)
-		off += 4
-		WriteD(dst[off:], c.Karma)
-		off += 4
-		clear(dst[off : off+36]) // 9 зарезервированных D
-		off += 36
-		for j, id := range c.PaperdollObjectIDs {
-			WriteD(dst[off+4*j:], id)
-		}
-		off += 68
-		for j, id := range c.PaperdollItemIDs {
-			WriteD(dst[off+4*j:], id)
-		}
-		off += 68
-		WriteD(dst[off:], c.HairStyle)
-		WriteD(dst[off+4:], c.HairColor)
-		WriteD(dst[off+8:], c.Face)
-		off += 12
-		WriteF(dst[off:], c.MaxHP)
-		off += 8
-		WriteF(dst[off:], c.MaxMP)
-		off += 8
-		WriteD(dst[off:], c.DeleteTime)
-		off += 4
-		WriteD(dst[off:], c.ClassID)
-		off += 4
-		if i == activeSlot {
-			WriteD(dst[off:], 1)
-		} else {
-			WriteD(dst[off:], 0)
-		}
-		off += 4
-		dst[off] = min(c.Enchant, 127) // кап канона
-		off++
-		WriteD(dst[off:], c.AugmentationID)
-		off += 4
+		off += writeCharSelectionEntry(dst[off:], c, i == activeSlot)
 	}
+	return off
+}
+
+// writeCharSelectionEntry пишет одну запись списка персонажей и возвращает
+// число записанных байт.
+func writeCharSelectionEntry(dst []byte, c CharSelectionEntry, active bool) int {
+	off := WriteS(dst, c.Name)
+	WriteD(dst[off:], c.CharID)
+	off += 4
+	off += WriteS(dst[off:], c.LoginName)
+	WriteD(dst[off:], c.SessionID)
+	off += 4
+	WriteD(dst[off:], c.ClanID)
+	off += 4
+	WriteD(dst[off:], 0) // builder level
+	off += 4
+	WriteD(dst[off:], c.Sex)
+	off += 4
+	WriteD(dst[off:], c.Race)
+	off += 4
+	WriteD(dst[off:], c.BaseClassID)
+	off += 4
+	WriteD(dst[off:], 1) // GameServerName
+	off += 4
+	WriteD(dst[off:], 0) // X, Y, Z — всегда нули экрана выбора
+	WriteD(dst[off+4:], 0)
+	WriteD(dst[off+8:], 0)
+	off += 12
+	WriteF(dst[off:], c.CurHP)
+	off += 8
+	WriteF(dst[off:], c.CurMP)
+	off += 8
+	WriteD(dst[off:], c.SP)
+	off += 4
+	WriteQ(dst[off:], c.Exp)
+	off += 8
+	WriteD(dst[off:], c.Level)
+	off += 4
+	WriteD(dst[off:], c.Karma)
+	off += 4
+	clear(dst[off : off+36]) // 9 зарезервированных D
+	off += 36
+	for j, id := range c.PaperdollObjectIDs {
+		WriteD(dst[off+4*j:], id)
+	}
+	off += 68
+	for j, id := range c.PaperdollItemIDs {
+		WriteD(dst[off+4*j:], id)
+	}
+	off += 68
+	WriteD(dst[off:], c.HairStyle)
+	WriteD(dst[off+4:], c.HairColor)
+	WriteD(dst[off+8:], c.Face)
+	off += 12
+	WriteF(dst[off:], c.MaxHP)
+	off += 8
+	WriteF(dst[off:], c.MaxMP)
+	off += 8
+	WriteD(dst[off:], c.DeleteTime)
+	off += 4
+	WriteD(dst[off:], c.ClassID)
+	off += 4
+	if active {
+		WriteD(dst[off:], 1)
+	} else {
+		WriteD(dst[off:], 0)
+	}
+	off += 4
+	dst[off] = min(c.Enchant, 127) // кап канона
+	off++
+	WriteD(dst[off:], c.AugmentationID)
+	off += 4
 	return off
 }
 
 // CharSelectedSize возвращает размер WriteCharSelected — sizing и запись
 // одним расчётом.
 func CharSelectedSize(d CharSelectedData) int {
-	return 1 + LenS(d.Name) + 4 + LenS(d.Title) + 292
+	return 1 + LenS(d.Name) + 4 + LenS(d.Title) + charSelectedTail
 }
 
 // WriteCharSelected пишет пакет CharSelected (GS→C) — подтверждение входа:
