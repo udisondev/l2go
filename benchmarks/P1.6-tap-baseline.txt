@@ -1,0 +1,26 @@
+goos: windows
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/tap
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkJournalWrite256-16     	18546079	        75.57 ns/op	3387.37 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	16014241	        79.38 ns/op	3225.13 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	18118156	        79.75 ns/op	3210.03 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	15447303	        76.50 ns/op	3346.50 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	14222845	        81.20 ns/op	3152.57 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	17830635	        82.68 ns/op	3096.39 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	15347593	        78.31 ns/op	3269.15 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	15676110	        78.76 ns/op	3250.38 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	12586108	        83.37 ns/op	3070.82 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite256-16     	16853340	        82.08 ns/op	3118.92 MB/s	     293 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 2868112	       392.8 ns/op	3706.80 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3478918	       368.2 ns/op	3953.97 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3597290	       363.5 ns/op	4005.02 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3455775	       350.2 ns/op	4157.25 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3461037	       378.9 ns/op	3842.91 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3379458	       379.9 ns/op	3832.88 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3367069	       355.3 ns/op	4097.99 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3467679	       359.3 ns/op	4051.91 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3255662	       353.1 ns/op	4123.98 MB/s	    1541 B/op	       2 allocs/op
+BenchmarkJournalWrite1456-16    	 3587926	       385.0 ns/op	3782.00 MB/s	    1541 B/op	       2 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/tap	26.195s

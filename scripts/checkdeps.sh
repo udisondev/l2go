@@ -23,7 +23,8 @@ allowed() {
 		internal/party|internal/chat|internal/clan|internal/market) echo "internal/transport" ;;
 		internal/persist) echo "internal/transport" ;;
 		internal/loginlink|internal/admin) echo "internal/transport" ;;
-		internal/l2client) echo "internal/protocol internal/protocol/fixture internal/crypto" ;;
+		internal/l2client) echo "internal/protocol internal/protocol/fixture internal/crypto internal/tap" ;;
+		internal/tap) echo "internal/protocol internal/protocol/fixture internal/crypto" ;;
 		internal/login) echo "internal/protocol internal/crypto" ;;
 		*) echo "UNLISTED" ;;
 	esac

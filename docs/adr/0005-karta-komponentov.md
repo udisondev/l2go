@@ -62,7 +62,8 @@ slog, простота, гайды стиля и производительно�
 | `internal/clan` | transport |
 | `internal/market` | transport |
 | `internal/persist` | transport |
-| `internal/l2client` | protocol, protocol/fixture, crypto |
+| `internal/l2client` | protocol, protocol/fixture, crypto, tap |
+| `internal/tap` | protocol, protocol/fixture, crypto |
 | `internal/login` | protocol, crypto |
 | `internal/loginlink` | transport |
 | `internal/admin` | transport |
