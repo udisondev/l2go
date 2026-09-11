@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -626,6 +627,9 @@ func TestCmdScenario(t *testing.T) {
 		t.Skip("exec-сборка бинарника — не для -short")
 	}
 	bin := filepath.Join(t.TempDir(), "l2client")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", bin, "github.com/udisondev/l2go/cmd/l2client")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
