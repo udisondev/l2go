@@ -78,6 +78,9 @@ func TestTapHalfClose(t *testing.T) {
 			t.Fatalf("CloseWrite: %v", err)
 		}
 	}
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("дедлайн чтения: %v", err)
+	}
 	got, err := io.ReadAll(conn)
 	if err != nil {
 		t.Fatalf("read: %v", err)

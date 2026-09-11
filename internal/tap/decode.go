@@ -1,7 +1,7 @@
 // Декодер журнала: нарезает потоки соединений на кадры, снимает крипту
 // (login: static-фаза Init → динамический BF; game: канон границы —
 // ProtocolVersion/KeyPacket открытым текстом, дальше GameCrypt) и пишет
-// читаемый лог в формате трафик-лога l2client. Граница game-шифрования —
+// читаемый лог в формате трафик-лога клиента (побайтовый паритет строк —
 // канон; расхождение живого сервера — slog, кадр деградирует в hex-строку.
 // AuthLogin обеих ног в фикстуры не выгружается (учётные данные/ключи сессии).
 
@@ -52,11 +52,13 @@ type connDec struct {
 	game        [2]*crypto.GameCrypt // game: движок на направление (каскады сторон)
 	legs        [2]*legDec           // [DirCtoS], [DirStoC]
 	closed      bool
+	warned      bool      // предупреждение о неклассификации — один раз
 	pendingOrig [2][]byte // оригинал rewrite, ждёт пару-data
 	fixts       []fixture.Fixture
 }
 
-// Decode прогоняет журнал через декодер.
+// Decode прогоняет журнал через декодер. Обрыв хвоста журнала (запись
+// посередине) — не фатален: предупреждение и разбор завершённых соединений.
 func Decode(r io.Reader, opts DecodeOptions) error {
 	conns := make(map[uint64]*connDec)
 	order := make([]uint64, 0, 8)
@@ -67,7 +69,11 @@ func Decode(r io.Reader, opts DecodeOptions) error {
 			break
 		}
 		if err != nil {
-			return err
+			if errors.Is(err, errBadHeader) {
+				return err
+			}
+			slog.Warn("tap: журнал оборван, разобраны целые записи", "err", err)
+			break
 		}
 		switch rec.Type {
 		case recConnOpen:
@@ -83,9 +89,7 @@ func Decode(r io.Reader, opts DecodeOptions) error {
 			}
 			leg := c.legs[dirIndex(rec.Dir)]
 			leg.buf = append(leg.buf, rec.Bytes...)
-			orig := c.pendingOrig[dirIndex(rec.Dir)]
-			c.pendingOrig[dirIndex(rec.Dir)] = nil
-			if err := decodeReady(c, leg, rec.Dir, orig, opts.Log); err != nil {
+			if err := decodeReady(c, leg, rec.Dir, opts.Log); err != nil {
 				return fmt.Errorf("tap: соединение %d: %w", rec.ConnID, err)
 			}
 		case recOriginal:
@@ -132,7 +136,7 @@ func dirIndex(dir byte) int {
 }
 
 // decodeReady обрабатывает все полные кадры, накопленные в ноге.
-func decodeReady(c *connDec, leg *legDec, dir byte, orig []byte, log io.Writer) error {
+func decodeReady(c *connDec, leg *legDec, dir byte, log io.Writer) error {
 	for {
 		body, err := protocol.NextFrame(leg.buf)
 		if errors.Is(err, protocol.ErrFrameIncomplete) {
@@ -144,6 +148,10 @@ func decodeReady(c *connDec, leg *legDec, dir byte, orig []byte, log io.Writer) 
 		frame := make([]byte, len(body))
 		copy(frame, body)
 		leg.buf = leg.buf[len(body)+2:]
+		// оригинал rewrite изымается только с полным кадром
+		idx := dirIndex(dir)
+		orig := c.pendingOrig[idx]
+		c.pendingOrig[idx] = nil
 		if err := decodeFrame(c, leg, dir, frame, orig, log); err != nil {
 			return err
 		}
@@ -152,13 +160,16 @@ func decodeReady(c *connDec, leg *legDec, dir byte, orig []byte, log io.Writer) 
 }
 
 // decodeFrame — классификация (лениво), расшифровка, лог и фикстура одного кадра.
+// Неклассифицированное соединение не теряет кадры: hex-строка в лог.
 func decodeFrame(c *connDec, leg *legDec, dir byte, frame, orig []byte, log io.Writer) error {
 	if c.kind == kindUnknown {
-		if err := classify(c, dir, frame); err != nil {
-			slog.Warn("tap: классификация соединения", "err", err)
+		if err := classify(c, dir, frame); err != nil && !c.warned {
+			slog.Warn("tap: соединение не классифицировано, кадры — hex", "err", err)
+			c.warned = true
 		}
 		if c.kind == kindUnknown {
-			return nil // буферизировать нет смысла: кадр уже в ноге
+			logHexLineFor(c, dir, frame, log)
+			return nil
 		}
 	}
 	switch c.kind {
@@ -221,6 +232,9 @@ func decodeLoginFrame(c *connDec, leg *legDec, dir byte, frame, orig []byte, log
 		logHexLine(log, dir, frame)
 		return nil
 	}
+	// наблюдение канона паддинга: размер провода против ожидания CT0 для
+	// пакетов с известной длиной тела (вердикт по живому корпусу — на прогоне)
+	slog.Debug("tap: login-кадр", "op", fmt.Sprintf("0x%02X", frame[0]), "wire", len(frame))
 	logLoginLine(log, dir, frame)
 	// при сработавшем rewrite фикстура извлекается из оригинала
 	fixSrc := frame
@@ -241,14 +255,18 @@ func decodeLoginFrame(c *connDec, leg *legDec, dir byte, frame, orig []byte, log
 // сторон открытым текстом (ProtocolVersion / KeyPacket), дальше GameCrypt —
 // по движку на направление (каскады сторон сеются одинаково, но каждый
 // движок проходит только свои кадры: расшифровка C→S — зеркало клиентского
-// Encrypt-каскада, S→C — серверного).
+// Encrypt-каскада, S→C — серверного). Расхождение живого сервера с каноном
+// границы — предупреждение и hex-деградация кадра, не abort разбора.
 func decodeGameFrame(c *connDec, leg *legDec, dir byte, frame []byte, log io.Writer) error {
 	both := c.legs[0].frames + c.legs[1].frames
 	if c.game[dirIndex(dir)] == nil {
 		if dir == DirStoC {
 			v, ok := protocol.NewKeyPacketView(frame)
 			if !ok {
-				return fmt.Errorf("keyPacket: обрезанное тело (%d байт)", len(frame))
+				slog.Warn("tap: первый S→C кадр game-ноги не KeyPacket — hex-деградация",
+					"bytes", len(frame))
+				logHexLineFor(c, dir, frame, log)
+				return nil
 			}
 			logKeyPacket(log, v)
 			var wire [8]byte
@@ -263,12 +281,19 @@ func decodeGameFrame(c *connDec, leg *legDec, dir byte, frame []byte, log io.Wri
 		if dir == DirCtoS && both == 0 {
 			v, ok := protocol.NewProtocolVersionView(frame)
 			if !ok {
-				return fmt.Errorf("protocolVersion: обрезанное тело (%d байт)", len(frame))
+				slog.Warn("tap: первый C→S кадр game-ноги не ProtocolVersion — hex-деградация",
+					"bytes", len(frame))
+				logHexLineFor(c, dir, frame, log)
+				return nil
 			}
 			logProtocolVersion(log, v)
 			addFixture(c, dir, frame, fixture.GameClient, fixture.GameServer)
 			return nil
 		}
+		// движок для направления ещё не создан (нет KeyPacket) — деградация
+		slog.Warn("tap: game-кадр до границы шифрования — hex-деградация", "dir", dir)
+		logHexLineFor(c, dir, frame, log)
+		return nil
 	}
 	if err := c.game[dirIndex(dir)].Decrypt(frame); err != nil {
 		slog.Warn("tap: game-кадр не расшифрован", "dir", dir, "err", err)
@@ -346,7 +371,7 @@ func fixturesJSON(c *connDec) []map[string]any {
 	return rows
 }
 
-// --- формат строк лога: побайтово повторяет трафик-лог l2client ---
+// --- формат строк лога: побайтово повторяет трафик-лог клиента (паритет прикрыт интеграционным тестом) ---
 
 type logField struct{ K, V string }
 
@@ -373,6 +398,28 @@ func logLine(w io.Writer, dir byte, name string, fields []logField) {
 
 func logHexLine(w io.Writer, dir byte, frame []byte) {
 	logLine(w, dir, unknownLineName(dir, frame), []logField{{K: "hex", V: hexBytes(frame)}})
+}
+
+// logHexLineFor — hex-деградация с именем по каталогу класса соединения:
+// login-кадры не получают игровые имена по случайному совпадению опкода.
+func logHexLineFor(c *connDec, dir byte, frame []byte, w io.Writer) {
+	name := "??(0x??)"
+	if len(frame) > 0 {
+		if c.kind == kindLogin {
+			var ok bool
+			if dir == DirStoC {
+				name, ok = protocol.LoginServerPacketName(frame[0])
+			} else {
+				name, ok = protocol.LoginClientPacketName(frame[0])
+			}
+			if !ok {
+				name = fmt.Sprintf("??(0x%02X)", frame[0])
+			}
+		} else {
+			name = unknownLineName(dir, frame)
+		}
+	}
+	logLine(w, dir, name, []logField{{K: "hex", V: hexBytes(frame)}})
 }
 
 func unknownLineName(dir byte, body []byte) string {
@@ -526,7 +573,7 @@ func logLoginLine(w io.Writer, dir byte, body []byte) {
 	logLine(w, dir, fallback, []logField{{K: "hex", V: hexBytes(body)}})
 }
 
-// serverListLogFields — поля ServerList без ip/port (паритет с l2client).
+// serverListLogFields — поля ServerList без ip/port (детерминизм лога при подмене адреса rewrite).
 func serverListLogFields(v protocol.ServerListView) []logField {
 	fields := []logField{
 		{K: "count", V: logNum(int64(v.Count()))},
@@ -626,7 +673,7 @@ func logGameLine(w io.Writer, dir byte, body []byte) {
 	logLine(w, dir, unknownLineName(dir, body), []logField{{K: "hex", V: hexBytes(body)}})
 }
 
-// charSelectionLogFields — паритет с l2client.charSelectionFields.
+// charSelectionLogFields — читаемое подмножество полей записи списка персонажей.
 func charSelectionLogFields(v protocol.CharSelectionInfoView) []logField {
 	fields := []logField{{K: "count", V: logNum(int64(v.Count()))}}
 	for i := 0; i < v.Count(); i++ {
@@ -642,7 +689,7 @@ func charSelectionLogFields(v protocol.CharSelectionInfoView) []logField {
 	return fields
 }
 
-// charSelectedLogFields — паритет с l2client.charSelectedFields.
+// charSelectedLogFields — читаемое подмножество полей подтверждения входа.
 func charSelectedLogFields(v protocol.CharSelectedView) []logField {
 	var fields []logField
 	add := func(k string, val any) { fields = append(fields, logField{K: k, V: fmt.Sprintf("%v", val)}) }
@@ -696,8 +743,7 @@ func charSelectedLogFields(v protocol.CharSelectedView) []logField {
 
 func logFlt(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
 
-// logQuote — паритет с l2client.Quote (кавычки, эскейпы, без усечения —
-// значения представлений уже ограничены форматом).
+// logQuote — строковое поле: кавычки, управляющие руны и эскейпы
 func logQuote(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')

@@ -2,13 +2,14 @@
 //
 // Capture: слушает пары listen=upstream и зеркалирует трафик в бинарный журнал.
 //
-//	l2tap -map 127.0.0.1:2106=server:2106 -login-map 127.0.0.1:2106 -map 127.0.0.1:7777=server:7777 -out session.tap
+//	l2tap -login-map 127.0.0.1:2106=server:2106 -map 127.0.0.1:7777=server:7777 -out session.tap
 //
 // Decode: журнал → читаемый лог и/или фикстуры.
 //
 //	l2tap -decode session.tap -out-log traffic.txt -out-fixtures fixtures.json
 //
-// Журнал содержит чувствительные данные сессии — хранить как секрет.
+// Журнал и читаемый лог содержат чувствительные данные сессии (чат, имена,
+// ключи сессии, шифротекст учётных данных) — хранить как секрет.
 package main
 
 import (
@@ -24,37 +25,28 @@ import (
 	"github.com/udisondev/l2go/internal/tap"
 )
 
-// maps — повторяемый флаг -map/-login-map (login-нога помечается для rewrite).
-type maps []tap.Map
+// maps — повторяемый флаг пар listen=upstream; login-пара помечается для
+// rewrite-ветки (подмена адреса ServerList).
+type maps struct {
+	rows  []tap.Map
+	login bool
+}
 
-func (m *maps) String() string { return fmt.Sprint(*m) }
+func (m *maps) String() string { return fmt.Sprint(m.rows) }
 
 func (m *maps) Set(v string) error {
 	listen, upstream, ok := strings.Cut(v, "=")
 	if !ok || listen == "" || upstream == "" {
 		return fmt.Errorf("пара %q: нужен вид listen=upstream", v)
 	}
-	*m = append(*m, tap.Map{Listen: listen, Upstream: upstream})
-	return nil
-}
-
-type loginMaps []tap.Map
-
-func (m *loginMaps) String() string { return fmt.Sprint(*m) }
-
-func (m *loginMaps) Set(v string) error {
-	listen, upstream, ok := strings.Cut(v, "=")
-	if !ok || listen == "" || upstream == "" {
-		return fmt.Errorf("пара %q: нужен вид listen=upstream", v)
-	}
-	*m = append(*m, tap.Map{Listen: listen, Upstream: upstream, Login: true})
+	m.rows = append(m.rows, tap.Map{Listen: listen, Upstream: upstream, Login: m.login})
 	return nil
 }
 
 func main() {
 	var (
 		capture  maps
-		logins   loginMaps
+		logins   = maps{login: true}
 		out      = flag.String("out", "", "файл журнала capture (обязателен для capture)")
 		rewrite  = flag.Bool("rewrite", true, "подмена адреса ServerList на слушателя game-ноги")
 		decode   = flag.String("decode", "", "файл журнала для разбора вместо capture")
@@ -80,7 +72,7 @@ func main() {
 		return
 	}
 
-	all := append([]tap.Map(logins), capture...)
+	all := append(logins.rows, capture.rows...)
 	if len(all) == 0 {
 		slog.Error("нет пар listen=upstream: -map/-login-map обязательны")
 		os.Exit(2)
@@ -119,7 +111,7 @@ func runDecode(journal, outLog, outFixts string) error {
 		if err != nil {
 			return fmt.Errorf("лог: %w", err)
 		}
-		defer f.Close()
+		defer f.Close() // вывод уже завершён к моменту закрытия
 		logW = f
 	}
 	if outFixts != "" {
@@ -127,7 +119,7 @@ func runDecode(journal, outLog, outFixts string) error {
 		if err != nil {
 			return fmt.Errorf("фикстуры: %w", err)
 		}
-		defer f.Close()
+		defer f.Close() // аналогично логу
 		fixtW = f
 	}
 	if logW == nil && fixtW == nil {

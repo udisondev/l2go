@@ -7,9 +7,11 @@ package l2client
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"net"
-	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -196,5 +198,25 @@ func TestTapFullFlowLogParity(t *testing.T) {
 			t.Fatalf("в фикстурах нет %s: %+v", want, names)
 		}
 	}
-	_ = os.Environ
+
+	// original-канал rewrite: фикстура SERVER_LIST извлечена из оригинала —
+	// порт записи равен порту GS сценария, а не слушателя тапа
+	_, scenarioPortStr, _ := net.SplitHostPort(srv.GameAddr())
+	scenarioPort, _ := strconv.Atoi(scenarioPortStr)
+	sawOriginal := false
+	for _, r := range rows {
+		if r["name"] != "SERVER_LIST" {
+			continue
+		}
+		payload, err := hex.DecodeString(r["payload"].(string))
+		if err != nil || len(payload) < 11 {
+			t.Fatalf("фикстура SERVER_LIST: payload %v (%v)", r["payload"], err)
+		}
+		if got := int32(binary.LittleEndian.Uint32(payload[7:11])); got == int32(scenarioPort) {
+			sawOriginal = true
+		}
+	}
+	if !sawOriginal {
+		t.Fatal("фикстура SERVER_LIST не из оригинала rewrite (порт GS сценария не найден)")
+	}
 }

@@ -63,15 +63,30 @@ func Run(ctx context.Context, opts Options) error {
 		defer mu.Unlock()
 		for _, p := range live {
 			_ = p.client.Close()
-			_ = p.upstream.Close()
+			if p.upstream != nil {
+				_ = p.upstream.Close()
+			}
 		}
 	}
+	// сигнал смерти журнала: capture обязан остановиться, а не долбить
+	// upstream полусессиями (первая ошибка записи — разрыв всего).
+	journalDead := make(chan struct{})
+	var journalOnce sync.Once
+	stopOnJournalErr := func() {
+		journalOnce.Do(func() {
+			slog.Error("tap: журнал недоступен — остановка capture")
+			close(journalDead)
+		})
+	}
 
-	errCh := make(chan error, len(opts.Maps))
+	errCh := make(chan error, len(opts.Maps)+1)
 	var listeners []net.Listener
 	for _, m := range opts.Maps {
 		ln, err := net.Listen("tcp", m.Listen)
 		if err != nil {
+			for _, opened := range listeners {
+				_ = opened.Close()
+			}
 			closeLive()
 			connsWG.Wait()
 			_ = jw.flush()
@@ -103,7 +118,7 @@ func Run(ctx context.Context, opts Options) error {
 				go func(client net.Conn, m Map) {
 					defer connsWG.Done()
 					id := atomic.AddUint64(&connSeq, 1)
-					handleConn(ctx, client, m, opts, jw, id, &mu, &live)
+					handleConn(ctx, client, m, opts, jw, id, &mu, &live, stopOnJournalErr)
 				}(conn, m)
 			}
 		}(ln, m)
@@ -114,6 +129,8 @@ func Run(ctx context.Context, opts Options) error {
 	case <-ctx.Done():
 	case err := <-errCh:
 		runErr = err
+	case <-journalDead:
+		runErr = fmt.Errorf("tap: журнал недоступен — capture остановлен")
 	}
 	for _, ln := range listeners {
 		_ = ln.Close()
@@ -126,28 +143,50 @@ func Run(ctx context.Context, opts Options) error {
 	return runErr
 }
 
-// handleConn — жизненный цикл одного соединения: dial upstream, две ноги
-// зеркалирования, connClose после завершения обеих (data после connClose в
-// журнале исключена: запись — после WaitGroup).
-func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *journalWriter, id uint64, mu *sync.Mutex, live *[]*connPair) {
-	_ = jw.connOpen(id, m.Listen, m.Upstream, time.Now().UnixNano())
-	up, err := net.Dial("tcp", m.Upstream)
-	if err != nil {
-		err = fmt.Errorf("подключение к %s: %w", m.Upstream, err)
-		_ = jw.connClose(id, err)
+// handleConn — жизненный цикл одного соединения: регистрация в live до dial
+// (отмена контекста закрывает соединение в любом окне), dial с контекстом,
+// две ноги зеркалирования, connClose после завершения обеих (data после
+// connClose в журнале исключена: запись — после WaitGroup).
+func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *journalWriter, id uint64, mu *sync.Mutex, live *[]*connPair, stopOnJournalErr func()) {
+	pair := &connPair{client: client}
+	mu.Lock()
+	*live = append(*live, pair)
+	mu.Unlock()
+	unregister := func() {
+		mu.Lock()
+		for i, p := range *live {
+			if p == pair {
+				*live = append((*live)[:i], (*live)[i+1:]...)
+				break
+			}
+		}
+		mu.Unlock()
+	}
+
+	if err := jw.connOpen(id, m.Listen, m.Upstream, time.Now().UnixNano()); err != nil {
+		stopOnJournalErr()
+		unregister()
 		_ = client.Close()
 		return
 	}
-
-	pair := &connPair{client: client, upstream: up}
+	d := net.Dialer{}
+	up, err := d.DialContext(ctx, "tcp", m.Upstream)
+	if err != nil {
+		err = fmt.Errorf("подключение к %s: %w", m.Upstream, err)
+		_ = jw.connClose(id, err)
+		unregister()
+		_ = client.Close()
+		return
+	}
 	mu.Lock()
-	*live = append(*live, pair)
+	pair.upstream = up
 	mu.Unlock()
 
 	var rw *loginRewriter
 	if opts.Rewrite && m.Login {
-		gameIP, gamePort := gameEndpoint(opts)
-		rw = newLoginRewriter(gameIP, gamePort)
+		if gameIP, gamePort, ok := gameEndpoint(opts); ok {
+			rw = newLoginRewriter(gameIP, gamePort)
+		}
 	}
 	legErrs := make(chan error, 2)
 	var legs sync.WaitGroup
@@ -164,19 +203,10 @@ func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *j
 	err1, err2 := <-legErrs, <-legErrs
 	_ = client.Close()
 	_ = up.Close()
-	mu.Lock()
-	for i, p := range *live {
-		if p == pair {
-			*live = append((*live)[:i], (*live)[i+1:]...)
-			break
-		}
-	}
-	mu.Unlock()
+	unregister()
 	connErr := joinLegErrs(err1, err2)
 	if cerr := jw.connClose(id, connErr); cerr != nil {
-		slog.Error("tap: журнал недоступен, capture остановлен", "connID", id, "err", cerr)
-		_ = client.Close()
-		_ = up.Close()
+		stopOnJournalErr()
 	}
 }
 
@@ -192,32 +222,31 @@ func joinLegErrs(err1, err2 error) error {
 }
 
 // gameEndpoint — адрес первой не-login Map: rewrite подменяет IP и порт
-// ServerList на слушателя game-ноги тапа.
-func gameEndpoint(opts Options) ([4]byte, int32) {
+// ServerList на слушателя game-ноги тапа. Нет game-Map или нераспарсиваемый
+// адрес — ok=false: rewrite отключается с предупреждением (тихая подстановка
+// нерабочего адреса запрещена).
+func gameEndpoint(opts Options) (ip [4]byte, port int32, ok bool) {
 	for _, m := range opts.Maps {
-		if !m.Login {
-			ip, port, err := net.SplitHostPort(m.Listen)
-			if err != nil {
-				break
-			}
-			p, err := strconv.Atoi(port)
-			if err != nil {
-				break
-			}
-			return parseIPv4(ip), int32(p)
+		if m.Login {
+			continue
 		}
+		host, portStr, err := net.SplitHostPort(m.Listen)
+		if err != nil {
+			break
+		}
+		p, err := strconv.Atoi(portStr)
+		if err != nil {
+			break
+		}
+		parsed := net.ParseIP(host)
+		if parsed == nil || parsed.To4() == nil {
+			break
+		}
+		copy(ip[:], parsed.To4())
+		return ip, int32(p), true
 	}
-	return [4]byte{127, 0, 0, 1}, 0
-}
-
-func parseIPv4(host string) [4]byte {
-	ip := net.ParseIP(host)
-	if ip == nil || ip.To4() == nil {
-		return [4]byte{127, 0, 0, 1}
-	}
-	var out [4]byte
-	copy(out[:], ip.To4())
-	return out
+	slog.Warn("tap: адрес game-ноги не определён — rewrite отключён")
+	return [4]byte{127, 0, 0, 1}, 0, false
 }
 
 // pump — одна нога: читает кадры, пишет в журнал и противоположную ногу.
@@ -266,11 +295,15 @@ func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewr
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				// хвост без полного кадра — пройти насквозь без журнала
+				// хвост без полного кадра — пройти насквозь и журналировать
+				// (data = фактически отправленные байты, включая бескарровый хвост)
 				if len(buf) > 0 {
 					slog.Warn("tap: хвост потока без полного кадра", "bytes", len(buf))
 					if _, werr := wr.Write(buf); werr != nil {
 						return fmt.Errorf("запись хвоста: %w", werr)
+					}
+					if jerr := jw.data(recData, id, dir, time.Now().UnixNano(), buf); jerr != nil {
+						return jerr
 					}
 					buf = nil
 				}

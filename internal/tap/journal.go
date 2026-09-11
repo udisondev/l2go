@@ -11,6 +11,7 @@ package tap
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -140,6 +141,9 @@ type Record struct {
 	Err              string
 }
 
+// errBadHeader — чужой заголовок журнала (не наш файл вовсе).
+var errBadHeader = errors.New("чужой заголовок")
+
 // journalReader — последовательное чтение журнала с валидацией формата.
 type journalReader struct {
 	r       *bufio.Reader
@@ -158,7 +162,7 @@ func (j *journalReader) Next() (Record, error) {
 			return Record{}, fmt.Errorf("tap: чтение заголовка журнала: %w", err)
 		}
 		if string(magic) != journalMagic {
-			return Record{}, fmt.Errorf("tap: чужой заголовок журнала %q", magic)
+			return Record{}, fmt.Errorf("tap: чужой заголовок журнала %q: %w", magic, errBadHeader)
 		}
 		j.started = true
 	}
