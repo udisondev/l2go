@@ -401,23 +401,24 @@ func logHexLine(w io.Writer, dir byte, frame []byte) {
 }
 
 // logHexLineFor — hex-деградация с именем по каталогу класса соединения:
-// login-кадры не получают игровые имена по случайному совпадению опкода.
+// login-кадры не получают игровые имена по случайному совпадению опкода;
+// класс неизвестен — нейтральное имя, любое каталоговое было бы догадкой.
 func logHexLineFor(c *connDec, dir byte, frame []byte, w io.Writer) {
 	name := "??(0x??)"
-	if len(frame) > 0 {
-		if c.kind == kindLogin {
-			var ok bool
-			if dir == DirStoC {
-				name, ok = protocol.LoginServerPacketName(frame[0])
-			} else {
-				name, ok = protocol.LoginClientPacketName(frame[0])
-			}
-			if !ok {
-				name = fmt.Sprintf("??(0x%02X)", frame[0])
-			}
+	if len(frame) > 0 && c.kind == kindLogin {
+		var ok bool
+		if dir == DirStoC {
+			name, ok = protocol.LoginServerPacketName(frame[0])
 		} else {
-			name = unknownLineName(dir, frame)
+			name, ok = protocol.LoginClientPacketName(frame[0])
 		}
+		if !ok {
+			name = fmt.Sprintf("??(0x%02X)", frame[0])
+		}
+	} else if len(frame) > 0 && c.kind == kindGame {
+		name = unknownLineName(dir, frame)
+	} else if len(frame) > 0 {
+		name = fmt.Sprintf("??(0x%02X)", frame[0])
 	}
 	logLine(w, dir, name, []logField{{K: "hex", V: hexBytes(frame)}})
 }
