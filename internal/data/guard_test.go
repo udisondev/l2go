@@ -1,0 +1,75 @@
+package data
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// repoRoot — корень репозитория относительно каталога пакета.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	return filepath.Clean(filepath.Join(wd, "..", ".."))
+}
+
+// xmlFiles — все .xml рабочего дерева (кроме .git).
+func xmlFiles(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	root := repoRoot(t)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(path), ".xml") {
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			out = append(out, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("обход дерева репо: %v", err)
+	}
+	return out
+}
+
+// TestXMLWhitelist: каждый XML в репозитории перечислен явно — новые xml-файлы
+// попадают сюда сознательной правкой. Дистрибутив датапака (NCsoft-derived) в
+// репо не коммитится; белый список — машинный барьер этому.
+func TestXMLWhitelist(t *testing.T) {
+	allow := map[string]bool{
+		"internal/data/testdata/synth/stats/items/items.xml": true,
+	}
+	for _, f := range xmlFiles(t) {
+		if !allow[f] {
+			t.Errorf("XML вне белого списка: %s", f)
+		}
+	}
+}
+
+// TestNoDistroRangeNames: имена диапазонных файлов дистрибутива запрещены
+// везде, включая белый список.
+func TestNoDistroRangeNames(t *testing.T) {
+	pattern := regexp.MustCompile(`^\d{5}-\d{5}\.xml$`)
+	for _, f := range xmlFiles(t) {
+		if pattern.MatchString(f) {
+			t.Errorf("имя диапазонного файла дистрибутива в репо: %s", f)
+		}
+	}
+}

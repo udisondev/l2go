@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<item id="9001" type="Weapon" name="Тренировочный клинок">
+		<set name="weapon_type" val="SWORD"/>
+		<set name="bodypart" val="rhand"/>
+		<set name="material" val="WOOD"/>
+		<set name="weight" val="100"/>
+		<set name="price" val="10"/>
+		<set name="soulshots" val="1"/>
+		<stats>
+			<stat type="pAtk">8</stat>
+			<stat type="mAtk">6</stat>
+		</stats>
+	</item>
+	<item id="9002" type="Armor" name="Учебная куртка">
+		<set name="bodypart" val="chest"/>
+		<set name="armor_type" val="LIGHT"/>
+		<set name="weight" val="250"/>
+		<set name="crystal_type" val="D"/>
+		<set name="crystal_count" val="15"/>
+	</item>
+	<item id="9003" type="EtcItem" name="Горсть пыли">
+		<set name="is_stackable" val="true"/>
+		<set name="weight" val="2"/>
+		<set name="price" val="3"/>
+		<set name="mystery_flag" val="7"/>
+	</item>
+	<item id="9004" type="EtcItem" name="Ржавая стрела">
+		<set name="bodypart" val="lrhand"/>
+		<set name="is_stackable" val="true"/>
+	</item>
+	<item id="9005" type="Weapon" name="Клинок без значка">
+		<set name="icon" val=""/>
+		<set name="weight" val="100"/>
+		<set name="weight" val="120"/>
+	</item>
+</list>
