@@ -194,7 +194,7 @@ func parseItem(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadC
 		return true
 	}
 	if _, dup := ctx.items[id]; dup {
-		ctx.entry(Entry{Category: "items", File: path, Line: line, ID: id,
+		ctx.entry(Entry{Category: "items", File: path, Line: line, ID: int64(id),
 			Code: CodeDupID, Message: "дубликат ID, побеждает первая запись"})
 		return false
 	}
@@ -212,7 +212,7 @@ func parseItem(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadC
 // пропускается, предмет доразбирается.
 func readItemContent(dec *xml.Decoder, start xml.StartElement, path string, id ItemID, bag map[string]string, ctx *loadCtx) bool {
 	badXML := func(err error) bool {
-		ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: id,
+		ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: int64(id),
 			Code: CodeXML, Message: fmt.Sprintf("разбор XML: %v", err)})
 		return false
 	}
@@ -227,11 +227,11 @@ func readItemContent(dec *xml.Decoder, start xml.StartElement, path string, id I
 		case xml.StartElement:
 			switch {
 			case t.Name.Local == "set" && inStats:
-				ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: id,
+				ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: int64(id),
 					Code: CodeAttr, Message: "set внутри блока stats"})
 				skipElement(dec, t)
 			case t.Name.Local == "set" && wasStats:
-				ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: id,
+				ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: int64(id),
 					Code: CodeAttr, Message: "set после закрытого блока stats"})
 				skipElement(dec, t)
 			case t.Name.Local == "set":
@@ -348,7 +348,7 @@ func buildItem(id ItemID, name, typ string, bag map[string]string, path string, 
 		set: bag,
 	}
 	bad := func(key, val string) {
-		ctx.entry(Entry{Category: "items", File: path, Line: line, ID: id,
+		ctx.entry(Entry{Category: "items", File: path, Line: line, ID: int64(id),
 			Code: CodeNumber, Message: key + "=" + val + " не разбирается как число"})
 	}
 	if v, ok := bag["weight"]; ok {
@@ -382,7 +382,7 @@ func buildItem(id ItemID, name, typ string, bag map[string]string, path string, 
 		case "false":
 			it.Stackable = false
 		default:
-			ctx.entry(Entry{Category: "items", File: path, Line: line, ID: id,
+			ctx.entry(Entry{Category: "items", File: path, Line: line, ID: int64(id),
 				Code: CodeNumber, Message: "is_stackable=" + v + " не разбирается как bool"})
 		}
 	}

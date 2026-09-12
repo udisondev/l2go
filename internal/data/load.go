@@ -16,23 +16,33 @@ type loader struct {
 }
 
 // loaders — все категории; порядок фиксирован и влияет на порядок записей
-// отчёта (манифест от порядка не зависит: сортировка путей).
+// отчёта (манифест от порядка не зависит: сортировка путей). Ссылки между
+// категориями разрешаются после всех загрузчиков — порядок на проверку
+// целостности не влияет.
 var loaders = []loader{
 	{name: "items", run: loadItems},
+	{name: "npcs", run: loadNpcs},
+	{name: "spawns", run: loadSpawns},
 }
 
-// loadCtx накапливает результаты категорий, отчёт и состав манифеста входов.
+// loadCtx накапливает результаты категорий, отчёт, состав манифеста входов
+// и отложенные ссылки.
 type loadCtx struct {
-	rep      *Report
-	fatalErr error
-	items    map[ItemID]Item
-	inputs   map[string][sha256.Size]byte
+	rep         *Report
+	fatalErr    error
+	items       map[ItemID]Item
+	npcs        map[NpcID]Npc
+	territories map[string]Territory
+	spawns      []NpcSpawn
+	inputs      map[string][sha256.Size]byte
+	links       []linkRef
+	keyDict     map[string]string // интернирование путевых ключей raw-bag
 }
 
-// maxItemFile — потолок одного файла категории (максимум датапака ~119 КБ,
+// maxFile — потолок одного файла категории (максимум датапака ~507 КБ,
 // запас больше двух порядков). Читается на байт больше, чтобы превышение
 // потолка отличалось от обрыва XML.
-const maxItemFile = 16 << 20
+const maxFile = 16 << 20
 
 func newLoadCtx() *loadCtx {
 	return &loadCtx{
@@ -42,8 +52,11 @@ func newLoadCtx() *loadCtx {
 			SkippedElements: map[string]int{},
 			SkippedDirs:     map[string]int{},
 		},
-		items:  map[ItemID]Item{},
-		inputs: map[string][sha256.Size]byte{},
+		items:       map[ItemID]Item{},
+		npcs:        map[NpcID]Npc{},
+		territories: map[string]Territory{},
+		inputs:      map[string][sha256.Size]byte{},
+		keyDict:     map[string]string{},
 	}
 }
 
@@ -66,18 +79,28 @@ func (ctx *loadCtx) readFileCapped(fsys fs.FS, path, category string) ([]byte, b
 		return nil, false
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxItemFile+1))
+	data, err := io.ReadAll(io.LimitReader(f, maxFile+1))
 	if err != nil {
 		ctx.fatal(fmt.Errorf("data: чтение %s: %w", path, err))
 		return nil, false
 	}
-	if len(data) > maxItemFile {
+	if len(data) > maxFile {
 		ctx.entry(Entry{Category: category, File: path, Code: CodeLimit,
-			Message: fmt.Sprintf("файл %d байт превышает потолок %d", len(data), maxItemFile)})
+			Message: fmt.Sprintf("файл %d байт превышает потолок %d", len(data), maxFile)})
 		return nil, false
 	}
 	ctx.inputs[path] = sha256.Sum256(data)
 	return data, true
+}
+
+// internKey возвращает единственный экземпляр строки ключа: путевые ключи
+// raw-bag повторяются десятки тысяч раз, словарь загрузки устраняет дубликаты.
+func (ctx *loadCtx) internKey(k string) string {
+	if v, ok := ctx.keyDict[k]; ok {
+		return v
+	}
+	ctx.keyDict[k] = k
+	return k
 }
 
 // manifestOf сворачивает состав входов в один SHA-256: отсортированный список

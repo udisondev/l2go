@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list enabled="false">
+	<spawn name="Off">
+		<npc id="20550" x="1" y="2" z="3" />
+	</spawn>
+</list>

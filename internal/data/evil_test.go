@@ -32,7 +32,7 @@ func TestEvilInputs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fsys := fstest.MapFS{"stats/items/x.xml": &fstest.MapFile{Data: []byte(tt.content)}}
+			fsys := catFS(map[string]*fstest.MapFile{"stats/items/x.xml": {Data: []byte(tt.content)}})
 			_, rep, err := Load(fsys)
 			if err != nil {
 				t.Fatalf("Load вернул фатальную ошибку на данных: %v", err)
@@ -73,15 +73,15 @@ func TestEvilInputs(t *testing.T) {
 
 func TestDupIDFirstWins(t *testing.T) {
 	content := "<list>" + itemBody(9310, "первый") + itemBody(9310, "второй") + "</list>"
-	st, rep, err := Load(fstest.MapFS{"stats/items/x.xml": &fstest.MapFile{Data: []byte(content)}})
+	st, rep, err := Load(catFS(map[string]*fstest.MapFile{"stats/items/x.xml": {Data: []byte(content)}}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if !rep.HasErrors() {
 		t.Fatal("дубликат должен дать ошибку")
 	}
-	if st.Len() != 1 {
-		t.Fatalf("Len = %d; want 1", st.Len())
+	if rep.Items != 1 {
+		t.Fatalf("Items = %d; want 1", rep.Items)
 	}
 	it, _ := st.Item(9310)
 	if it.Name != "первый" {
@@ -91,7 +91,7 @@ func TestDupIDFirstWins(t *testing.T) {
 
 func TestFileOverLimit(t *testing.T) {
 	huge := bytes.Repeat([]byte("<!-- padding -->"), (16<<20)/16+2)
-	fsys := fstest.MapFS{"stats/items/big.xml": &fstest.MapFile{Data: huge}}
+	fsys := catFS(map[string]*fstest.MapFile{"stats/items/big.xml": {Data: huge}})
 	_, rep, err := Load(fsys)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -118,7 +118,7 @@ func TestUnknownValuesAreCounters(t *testing.T) {
 		"<conditions><player level=\"40\"/></conditions>" +
 		"<set/>" +
 		"</item></list>"
-	fsys := fstest.MapFS{"stats/items/x.xml": &fstest.MapFile{Data: []byte(content)}}
+	fsys := catFS(map[string]*fstest.MapFile{"stats/items/x.xml": {Data: []byte(content)}})
 	st, rep, err := Load(fsys)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -156,7 +156,7 @@ func TestUnknownValuesAreCounters(t *testing.T) {
 func TestValFallbackToText(t *testing.T) {
 	content := "<list><item id=\"9500\" type=\"EtcItem\" name=\"Текстовый вес\">" +
 		"<set name=\"weight\">777</set></item></list>"
-	fsys := fstest.MapFS{"stats/items/x.xml": &fstest.MapFile{Data: []byte(content)}}
+	fsys := catFS(map[string]*fstest.MapFile{"stats/items/x.xml": {Data: []byte(content)}})
 	st, rep, err := Load(fsys)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -175,7 +175,7 @@ func TestValFallbackToText(t *testing.T) {
 func TestNestedTextIncluded(t *testing.T) {
 	content := "<list><item id=\"9501\" type=\"EtcItem\" name=\"Вложенный текст\">" +
 		"<set name=\"weight\"><b>1</b>0</set></item></list>"
-	fsys := fstest.MapFS{"stats/items/x.xml": &fstest.MapFile{Data: []byte(content)}}
+	fsys := catFS(map[string]*fstest.MapFile{"stats/items/x.xml": {Data: []byte(content)}})
 	st, _, err := Load(fsys)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -188,7 +188,7 @@ func TestNestedTextIncluded(t *testing.T) {
 func TestStatDupCounter(t *testing.T) {
 	content := "<list><item id=\"9502\" type=\"Weapon\" name=\"Дубль стата\">" +
 		"<stats><stat type=\"pAtk\">8</stat><stat type=\"pAtk\">9</stat></stats></item></list>"
-	fsys := fstest.MapFS{"stats/items/x.xml": &fstest.MapFile{Data: []byte(content)}}
+	fsys := catFS(map[string]*fstest.MapFile{"stats/items/x.xml": {Data: []byte(content)}})
 	st, rep, err := Load(fsys)
 	if err != nil {
 		t.Fatalf("Load: %v", err)

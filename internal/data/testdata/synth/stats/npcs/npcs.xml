@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<npc id="20550" level="27" type="Monster" name="Учебный орк" title="Разбойник">
+		<race>HUMANOID</race>
+		<sex>MALE</sex>
+		<stats str="40" int="21" dex="30" wit="20" con="43" men="10">
+			<vitals hp="613.5" hpRegen="3.5" mp="200.1" mpRegen="1.5" />
+			<attack physical="123.4" magical="55.6" random="30" critical="4" accuracy="4.75" attackSpeed="253" type="SWORD" range="40" distance="80" width="120" />
+			<defence physical="148.7" magical="108.5" />
+			<speed>
+				<walk ground="60" />
+				<run ground="140" />
+			</speed>
+			<hitTime>390</hitTime>
+		</stats>
+		<skillList>
+			<skill id="4045" level="1" /> <!-- Raid Curse -->
+			<skill id="4273" level="3" /> <!-- Resist Daggers -->
+		</skillList>
+		<shots soul="2" spirit="2" />
+		<corpseTime>86400</corpseTime>
+		<exCrtEffect>false</exCrtEffect>
+		<ai aggroRange="500" clanHelpRange="300" isAggressive="true" type="AGGRESSIVE">
+			<clanList>
+				<clan>ORC</clan>
+				<clan>GUARD</clan>
+				<ignoreNpcId>20551</ignoreNpcId>
+			</clanList>
+		</ai>
+		<equipment rhand="127" />
+		<acquire exp="500" sp="40" />
+		<parameters>
+			<param name="MoveAroundSocial" value="80" />
+			<param name="MoveAroundTeritory" value="0" />
+			<minions name="Privates">
+				<npc id="20551" count="2" max="4" respawnTime="120" weightPoint="1" /> <!-- Орк-приспешник -->
+			</minions>
+		</parameters>
+		<dropLists>
+			<drop>
+				<group chance="70">
+					<item id="9001" min="1" max="1" chance="25" /> <!-- Тренировочный клинок -->
+					<item id="9003" min="2" max="4" chance="50" /> <!-- Горсть пыли -->
+				</group>
+				<group chance="0.5">
+					<item id="9002" min="1" max="1" chance="100" /> <!-- Учебная куртка -->
+				</group>
+				<item id="9005" min="1" max="2" chance="8.5" /> <!-- Клинок без значка -->
+			</drop>
+			<spoil>
+				<item id="9004" min="1" max="1" chance="100" /> <!-- Ржавая стрела -->
+			</spoil>
+		</dropLists>
+		<collision>
+			<radius normal="13" grown="15" />
+			<height normal="22.5" grown="25" />
+		</collision>
+	</npc>
+	<npc id="20551" level="25" type="Monster" name="Орк-приспешник">
+		<race>ORC</race>
+		<sex>MALE</sex>
+		<stats str="40">
+			<vitals hp="300.2" hpRegen="3" mp="100" mpRegen="1" />
+		</stats>
+		<ai aggroRange="0" clanHelpRange="0" isAggressive="false" />
+		<dropLists>
+			<drop>
+				<group chance="100">
+					<item id="9003" min="56398" max="11510" chance="100" /> <!-- min&gt;max: счётчик, как в каноне -->
+				</group>
+			</drop>
+		</dropLists>
+		<collision>
+			<radius normal="10" />
+			<height normal="18" />
+		</collision>
+	</npc>
+	<npc id="29019" level="79" type="GrandBoss" name="Учебный босс">
+		<race>DRAGON</race>
+		<dropLists>
+			<drop>
+				<group chance="100">
+					<item id="9001" min="12" max="29" chance="200" /> <!-- «всегда», как Antharas канона -->
+				</group>
+			</drop>
+			<spoil>
+				<item id="9003" min="1" max="1" chance="148.76" />
+			</spoil>
+		</dropLists>
+		<collision>
+			<radius normal="100" />
+			<height normal="200" />
+		</collision>
+	</npc>
+	<npc id="30080" type="Merchant" name="Торговец без уровня" />
+	<npc id="30081" level="40" type="CustomThing" />
+</list>

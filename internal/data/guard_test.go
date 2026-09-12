@@ -57,7 +57,10 @@ func xmlFiles(t *testing.T) []string {
 // репо не коммитится; белый список — машинный барьер этому.
 func TestXMLWhitelist(t *testing.T) {
 	allow := map[string]bool{
-		"internal/data/testdata/synth/stats/items/items.xml": true,
+		"internal/data/testdata/synth/stats/items/items.xml":   true,
+		"internal/data/testdata/synth/stats/npcs/npcs.xml":     true,
+		"internal/data/testdata/synth/spawns/Synth/spawns.xml": true,
+		"internal/data/testdata/synth/spawns/Synth/off.xml":    true,
 	}
 	for _, f := range xmlFiles(t) {
 		if !allow[f] {

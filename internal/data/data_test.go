@@ -8,7 +8,21 @@ import (
 	"testing/fstest"
 )
 
-func loadSynth(t *testing.T) *Static {
+// catFS собирает FS поверх файлов с обязательными каталогами категорий
+// (stats/npcs, spawns — пустые), чтобы MapFS-фикстуры отдельных категорий
+// не падали фатально на чужом отсутствующем каталоге.
+func catFS(files map[string]*fstest.MapFile) fstest.MapFS {
+	out := fstest.MapFS{
+		"stats/npcs/.keep": &fstest.MapFile{},
+		"spawns/.keep":     &fstest.MapFile{},
+	}
+	for k, v := range files {
+		out[k] = v
+	}
+	return out
+}
+
+func loadSynth(t *testing.T) (*Static, *Report) {
 	t.Helper()
 	st, rep, err := Load(os.DirFS("testdata/synth"))
 	if err != nil {
@@ -20,13 +34,13 @@ func loadSynth(t *testing.T) *Static {
 	if rep.HasErrors() {
 		t.Fatalf("ошибки в чистой синтетике: %+v", rep.Errors)
 	}
-	return st
+	return st, rep
 }
 
 func TestLoadGolden(t *testing.T) {
-	st := loadSynth(t)
-	if st.Len() != 5 {
-		t.Errorf("Len = %d; want 5", st.Len())
+	st, rep := loadSynth(t)
+	if rep.Items != 5 {
+		t.Errorf("Items = %d; want 5", rep.Items)
 	}
 	want := map[ItemID]Item{
 		9001: {ID: 9001, Name: "Тренировочный клинок", Type: "Weapon",
@@ -67,7 +81,7 @@ func TestLoadGolden(t *testing.T) {
 }
 
 func TestRawBag(t *testing.T) {
-	st := loadSynth(t)
+	st, _ := loadSynth(t)
 	it, _ := st.Item(9001)
 	for key, want := range map[string]string{
 		"weapon_type": "SWORD", // ключ вне типизированного словаря — в bag как есть
@@ -108,7 +122,7 @@ func TestTrimSemantics(t *testing.T) {
 		"<set name=\"price\">\n\t200\n</set>" +
 		"<stats><stat type=\"pAtk\"> 8 </stat></stats>" +
 		"</item></list>"
-	fsys := fstest.MapFS{"stats/items/x.xml": &fstest.MapFile{Data: []byte(content)}}
+	fsys := catFS(map[string]*fstest.MapFile{"stats/items/x.xml": {Data: []byte(content)}})
 	st, rep, err := Load(fsys)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -126,8 +140,8 @@ func TestTrimSemantics(t *testing.T) {
 }
 
 func TestDumpDeterministic(t *testing.T) {
-	st1 := loadSynth(t)
-	st2 := loadSynth(t)
+	st1, _ := loadSynth(t)
+	st2, _ := loadSynth(t)
 	if st1.Dump() != st2.Dump() {
 		t.Errorf("Dump недетерминирован:\n%s\n---\n%s", st1.Dump(), st2.Dump())
 	}
@@ -139,26 +153,47 @@ func TestDumpDeterministic(t *testing.T) {
 	}
 }
 
-// TestDumpGolden фиксирует форму канонического дампа: смена формата —
-// сознательная правка эталона, тихий дрейф исключён.
-func TestDumpGolden(t *testing.T) {
-	st := loadSynth(t)
+// TestDumpGoldenItems фиксирует форму канонического дампа предметов: смена
+// формата — сознательная правка эталона, тихий дрейф исключён.
+func TestDumpGoldenItems(t *testing.T) {
+	st, _ := loadSynth(t)
+	got := st.Dump()
+	// Вырезаем секцию предметов (до первой строки npc/terr/spawn).
+	end := strings.Index(got, "npc id=")
+	if end < 0 {
+		end = len(got)
+	}
+	items := got[:end]
 	want := `id=9001 name="Тренировочный клинок" type="Weapon" weight=100 price=10 stackable=false crystal_type="NONE" crystal_count=0 material="WOOD" bodypart="rhand" sets=[bodypart=rhand material=WOOD price=10 soulshots=1 stat.mAtk=6 stat.pAtk=8 weapon_type=SWORD weight=100]
 id=9002 name="Учебная куртка" type="Armor" weight=250 price=0 stackable=false crystal_type="D" crystal_count=15 material="STEEL" bodypart="chest" sets=[armor_type=LIGHT bodypart=chest crystal_count=15 crystal_type=D weight=250]
 id=9003 name="Горсть пыли" type="EtcItem" weight=2 price=3 stackable=true crystal_type="NONE" crystal_count=0 material="STEEL" bodypart="none" sets=[is_stackable=true mystery_flag=7 price=3 weight=2]
 id=9004 name="Ржавая стрела" type="EtcItem" weight=0 price=0 stackable=true crystal_type="NONE" crystal_count=0 material="STEEL" bodypart="lrhand" sets=[bodypart=lrhand is_stackable=true]
 id=9005 name="Клинок без значка" type="Weapon" weight=120 price=0 stackable=false crystal_type="NONE" crystal_count=0 material="STEEL" bodypart="none" sets=[weight=120]
 `
-	if got := st.Dump(); got != want {
-		t.Errorf("Dump отличен от эталона:\n---got---\n%s---want---\n%s", got, want)
+	if items != want {
+		t.Errorf("секция предметов отлична от эталона:\n---got---\n%s---want---\n%s", items, want)
+	}
+}
+
+// TestDumpContainsCategories: канонический дамп покрывает все категории —
+// NPC (с дроплистами и миньонами), территории, спавны.
+func TestDumpContainsCategories(t *testing.T) {
+	st, _ := loadSynth(t)
+	dump := st.Dump()
+	for _, want := range []string{
+		"npc id=20550", "minions=[", "drops=[", "terr name=\"synth_territory\"", "spawn npc=",
+	} {
+		if !strings.Contains(dump, want) {
+			t.Errorf("Dump не содержит %q:\n%s", want, dump)
+		}
 	}
 }
 
 func TestManifestDeterministicAndSensitive(t *testing.T) {
-	fsys := fstest.MapFS{
-		"stats/items/a.xml": &fstest.MapFile{Data: []byte(itemXML(9100))},
-		"stats/items/b.xml": &fstest.MapFile{Data: []byte(itemXML(9101))},
-	}
+	fsys := catFS(map[string]*fstest.MapFile{
+		"stats/items/a.xml": {Data: []byte(itemXML(9100))},
+		"stats/items/b.xml": {Data: []byte(itemXML(9101))},
+	})
 	_, r1, err := Load(fsys)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -171,10 +206,10 @@ func TestManifestDeterministicAndSensitive(t *testing.T) {
 		t.Errorf("манифест недетерминирован: %x != %x", r1.Manifest, r2.Manifest)
 	}
 
-	fsysMod := fstest.MapFS{
-		"stats/items/a.xml": &fstest.MapFile{Data: []byte(itemXML(9100))},
-		"stats/items/b.xml": &fstest.MapFile{Data: []byte(itemXML(9102))}, // изменён состав
-	}
+	fsysMod := catFS(map[string]*fstest.MapFile{
+		"stats/items/a.xml": {Data: []byte(itemXML(9100))},
+		"stats/items/b.xml": {Data: []byte(itemXML(9102))}, // изменён состав
+	})
 	_, r3, err := Load(fsysMod)
 	if err != nil {
 		t.Fatalf("Load (изменённый состав): %v", err)
@@ -185,12 +220,12 @@ func TestManifestDeterministicAndSensitive(t *testing.T) {
 }
 
 func TestCustomDirSkipped(t *testing.T) {
-	fsys := fstest.MapFS{
-		"stats/items/a.xml":             &fstest.MapFile{Data: []byte(itemXML(9200))},
-		"stats/items/custom/c.xml":      &fstest.MapFile{Data: []byte(itemXML(9201))},
-		"stats/items/custom/d.xml":      &fstest.MapFile{Data: []byte(itemXML(9202))},
-		"stats/items/documentation.txt": &fstest.MapFile{Data: []byte("справка")},
-	}
+	fsys := catFS(map[string]*fstest.MapFile{
+		"stats/items/a.xml":             {Data: []byte(itemXML(9200))},
+		"stats/items/custom/c.xml":      {Data: []byte(itemXML(9201))},
+		"stats/items/custom/d.xml":      {Data: []byte(itemXML(9202))},
+		"stats/items/documentation.txt": {Data: []byte("справка")},
+	})
 	st, rep, err := Load(fsys)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -201,8 +236,8 @@ func TestCustomDirSkipped(t *testing.T) {
 	if rep.HasErrors() {
 		t.Fatalf("ошибки при пропуске custom: %+v", rep.Errors)
 	}
-	if st.Len() != 1 {
-		t.Errorf("Len = %d; want 1 (только верхний уровень)", st.Len())
+	if rep.Items != 1 {
+		t.Errorf("Items = %d; want 1 (только верхний уровень)", rep.Items)
 	}
 	if got := rep.SkippedDirs["custom"]; got != 2 {
 		t.Errorf("SkippedDirs[custom] = %d; want 2", got)
@@ -211,7 +246,7 @@ func TestCustomDirSkipped(t *testing.T) {
 		t.Errorf("Files = %d; want 1 (documentation.txt не XML, custom не читан)", rep.Files)
 	}
 	// Манифест покрывает только фактически прочитанное: custom не входит.
-	base := fstest.MapFS{"stats/items/a.xml": &fstest.MapFile{Data: []byte(itemXML(9200))}}
+	base := catFS(map[string]*fstest.MapFile{"stats/items/a.xml": {Data: []byte(itemXML(9200))}})
 	_, rb, err := Load(base)
 	if err != nil {
 		t.Fatalf("Load (без custom): %v", err)

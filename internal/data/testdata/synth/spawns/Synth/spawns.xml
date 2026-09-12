@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list enabled="true">
+	<spawn name="SynthPoints">
+		<npc id="30080" x="147456" y="22576" z="-1989" heading="16384" respawnDelay="60" /> <!-- Торговец -->
+		<npc id="20550" x="100" y="200" z="-300" /> <!-- без heading и respawnDelay -->
+	</spawn>
+	<spawn zone="synth_territory">
+		<territory minZ="-3800" maxZ="-3400">
+			<node x="70780" y="125060" />
+			<node x="71852" y="124640" />
+			<node x="72660" y="125432" />
+		</territory>
+		<npc id="20551" count="3" respawnDelay="22" />
+	</spawn>
+	<spawn zone="synth_both">
+		<territory name="ignored" minZ="-100" maxZ="100">
+			<node x="1" y="1" />
+			<node x="2" y="2" />
+			<node x="3" y="3" />
+		</territory>
+		<banned_territory minZ="-50" maxZ="50">
+			<node x="1" y="1" />
+			<node x="2" y="2" />
+		</banned_territory>
+		<npc id="20550" x="50" y="60" z="0" heading="0" count="2" respawnDelay="30" respawnRandom="5" chaseRange="2000" />
+		<npc id="29019" x="10" y="20" z="30" heading="5" respawnDelay="1" periodOfDay="day" />
+	</spawn>
+	<spawn name="FakePlayers">
+		<npc id="80000" x="83485" y="147998" z="-3407" heading="23509" respawnDelay="60" /> <!-- fake player: счётчик, не ошибка -->
+	</spawn>
+</list>
