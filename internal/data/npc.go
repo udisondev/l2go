@@ -86,12 +86,12 @@ const maxBagDepth = 32
 
 // npcTypedBagKeys — bag-ключи, отражаемые в типизированные поля Npc (или
 // поглощаемые ими); прочие ключи считаются неизвестными (широта данных).
-var npcTypedBagKeys = map[string]bool{
-	"npc.id": true, "npc.level": true, "npc.type": true, "npc.name": true,
-	"npc.title":     true,
-	"ai.aggroRange": true, "ai.clanHelpRange": true, "ai.isAggressive": true,
-	"collision.radius.normal": true, "collision.height.normal": true,
-	"minions": true,
+var npcTypedBagKeys = map[string]struct{}{
+	"npc.id": {}, "npc.level": {}, "npc.type": {}, "npc.name": {},
+	"npc.title":     {},
+	"ai.aggroRange": {}, "ai.clanHelpRange": {}, "ai.isAggressive": {},
+	"collision.radius.normal": {}, "collision.height.normal": {},
+	"minions": {},
 }
 
 // bagFrame — элемент стека путей generic-обхода поддерева NPC.
@@ -176,7 +176,7 @@ func parseNpc(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCt
 	}
 	if haveType {
 		n.Type = bag["npc.type"]
-		if !knownNpcTypes[n.Type] {
+		if _, ok := knownNpcTypes[n.Type]; !ok {
 			ctx.rep.UnknownTypes["npc.type."+n.Type]++
 		}
 	} else {
@@ -224,7 +224,7 @@ func parseNpc(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCt
 				// Канон нормализует расу toUpperCase (NpcData, порт).
 				if v := strings.ToUpper(strings.TrimSpace(text)); v != "" {
 					n.Race = v
-					if !knownNpcRaces[v] {
+					if _, ok := knownNpcRaces[v]; !ok {
 						ctx.rep.UnknownTypes[ctx.internKey("npc.race."+v)]++
 					}
 				} else {
@@ -315,12 +315,12 @@ func joinPath(frames []bagFrame, name string) string {
 // словаря типизированных ключей категории), пустые значения — счётчик,
 // дубликаты — счётчик (побеждает последний). Возвращает bag (возможно,
 // свежесозданный).
-func bagSet(ctx *loadCtx, bag map[string]string, qual, key, val string, typ map[string]bool) map[string]string {
+func bagSet(ctx *loadCtx, bag map[string]string, qual, key, val string, typ map[string]struct{}) map[string]string {
 	if bag == nil {
 		bag = map[string]string{}
 	}
 	key = ctx.internKey(key)
-	if typ == nil || !typ[key] {
+	if _, typed := typ[key]; !typed {
 		ctx.rep.UnknownKeys[ctx.internKey(qual+key)]++
 	}
 	val = strings.TrimSpace(val)
@@ -811,30 +811,30 @@ func dropChance(v, what string, dec *xml.Decoder, path string, n *Npc, ctx *load
 }
 
 // knownNpcTypes — известные типы NPC канона; прочие — широта данных (счётчик).
-var knownNpcTypes = map[string]bool{
-	"Adventurer": true, "Artefact": true, "Auctioneer": true, "BabyPet": true,
-	"BroadcastingTower": true, "CastleDoorman": true, "Chest": true,
-	"ClanHallDoorman": true, "ClanHallManager": true, "ControlTower": true,
-	"Doorman": true, "DawnPriest": true, "Defender": true, "DungeonGatekeeper": true,
-	"DuskPriest": true, "EffectPoint": true, "EventMonster": true,
-	"FeedableBeast": true, "FestivalGuide": true, "FestivalMonster": true,
-	"Fisherman": true, "FlameTower": true, "FlyTerrainObject": true,
-	"Folk": true, "FriendlyMob": true, "GrandBoss": true, "Guard": true,
-	"Merchant": true, "Monster": true, "OlympiadManager": true, "Pet": true,
-	"PetManager": true, "RaceManager": true, "RaidBoss": true,
-	"RiftInvader": true, "SchemeBuffer": true, "Servitor": true,
-	"SignsPriest": true, "TamedBeast": true, "Teleporter": true,
-	"Trainer": true, "VillageMasterDElf": true, "VillageMasterDwarf": true,
-	"VillageMasterFighter": true, "VillageMasterMystic": true,
-	"VillageMasterOrc": true, "VillageMasterPriest": true, "Warehouse": true,
+var knownNpcTypes = map[string]struct{}{
+	"Adventurer": {}, "Artefact": {}, "Auctioneer": {}, "BabyPet": {},
+	"BroadcastingTower": {}, "CastleDoorman": {}, "Chest": {},
+	"ClanHallDoorman": {}, "ClanHallManager": {}, "ControlTower": {},
+	"Doorman": {}, "DawnPriest": {}, "Defender": {}, "DungeonGatekeeper": {},
+	"DuskPriest": {}, "EffectPoint": {}, "EventMonster": {},
+	"FeedableBeast": {}, "FestivalGuide": {}, "FestivalMonster": {},
+	"Fisherman": {}, "FlameTower": {}, "FlyTerrainObject": {},
+	"Folk": {}, "FriendlyMob": {}, "GrandBoss": {}, "Guard": {},
+	"Merchant": {}, "Monster": {}, "OlympiadManager": {}, "Pet": {},
+	"PetManager": {}, "RaceManager": {}, "RaidBoss": {},
+	"RiftInvader": {}, "SchemeBuffer": {}, "Servitor": {},
+	"SignsPriest": {}, "TamedBeast": {}, "Teleporter": {},
+	"Trainer": {}, "VillageMasterDElf": {}, "VillageMasterDwarf": {},
+	"VillageMasterFighter": {}, "VillageMasterMystic": {},
+	"VillageMasterOrc": {}, "VillageMasterPriest": {}, "Warehouse": {},
 }
 
 // knownNpcRaces — известные расы канона; прочие — широта данных (счётчик).
-var knownNpcRaces = map[string]bool{
-	"ANIMAL": true, "BEAST": true, "BUG": true, "CASTLE_GUARD": true,
-	"CONSTRUCT": true, "DARK_ELF": true, "DEMONIC": true, "DIVINE": true,
-	"DRAGON": true, "DWARF": true, "ELEMENTAL": true, "ELF": true,
-	"ETC": true, "FAIRY": true, "GIANT": true, "HUMAN": true,
-	"HUMANOID": true, "MERCENARY": true, "ORC": true, "PLANT": true,
-	"SIEGE_WEAPON": true, "UNDEAD": true,
+var knownNpcRaces = map[string]struct{}{
+	"ANIMAL": {}, "BEAST": {}, "BUG": {}, "CASTLE_GUARD": {},
+	"CONSTRUCT": {}, "DARK_ELF": {}, "DEMONIC": {}, "DIVINE": {},
+	"DRAGON": {}, "DWARF": {}, "ELEMENTAL": {}, "ELF": {},
+	"ETC": {}, "FAIRY": {}, "GIANT": {}, "HUMAN": {},
+	"HUMANOID": {}, "MERCENARY": {}, "ORC": {}, "PLANT": {},
+	"SIEGE_WEAPON": {}, "UNDEAD": {},
 }

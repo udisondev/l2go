@@ -56,14 +56,14 @@ func xmlFiles(t *testing.T) []string {
 // попадают сюда сознательной правкой. Дистрибутив датапака (NCsoft-derived) в
 // репо не коммитится; белый список — машинный барьер этому.
 func TestXMLWhitelist(t *testing.T) {
-	allow := map[string]bool{
-		"internal/data/testdata/synth/stats/items/items.xml":   true,
-		"internal/data/testdata/synth/stats/npcs/npcs.xml":     true,
-		"internal/data/testdata/synth/spawns/Synth/spawns.xml": true,
-		"internal/data/testdata/synth/spawns/Synth/off.xml":    true,
+	allow := map[string]struct{}{
+		"internal/data/testdata/synth/stats/items/items.xml":   {},
+		"internal/data/testdata/synth/stats/npcs/npcs.xml":     {},
+		"internal/data/testdata/synth/spawns/Synth/spawns.xml": {},
+		"internal/data/testdata/synth/spawns/Synth/off.xml":    {},
 	}
 	for _, f := range xmlFiles(t) {
-		if !allow[f] {
+		if _, ok := allow[f]; !ok {
 			t.Errorf("XML вне белого списка: %s", f)
 		}
 	}

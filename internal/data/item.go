@@ -54,13 +54,13 @@ const itemsDir = "stats/items"
 const statPrefix = "stat."
 
 // knownItemTypes — известные типы предмета; прочие — широта данных (счётчик).
-var knownItemTypes = map[string]bool{"Weapon": true, "Armor": true, "EtcItem": true}
+var knownItemTypes = map[string]struct{}{"Weapon": {}, "Armor": {}, "EtcItem": {}}
 
 // typedSetKeys — set-ключи, отражаемые в типизированные поля Item; прочие
 // ключи остаются только в raw-bag и считаются неизвестными.
-var typedSetKeys = map[string]bool{
-	"weight": true, "price": true, "is_stackable": true,
-	"crystal_type": true, "crystal_count": true, "material": true, "bodypart": true,
+var typedSetKeys = map[string]struct{}{
+	"weight": {}, "price": {}, "is_stackable": {},
+	"crystal_type": {}, "crystal_count": {}, "material": {}, "bodypart": {},
 }
 
 // loadItems читает категорию предметов: XML верхнего уровня itemsDir;
@@ -98,13 +98,13 @@ func parseItemsFile(path string, data []byte, ctx *loadCtx) {
 func parseItem(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx) bool {
 	line := lineOf(dec)
 	var idRaw, typ, name string
-	seen := map[string]bool{}
+	seen := map[string]struct{}{}
 	for _, a := range start.Attr {
-		if seen[a.Name.Local] {
+		if _, dup := seen[a.Name.Local]; dup {
 			ctx.entry(Entry{Category: "items", File: path, Line: line,
 				Code: CodeAttr, Message: "повтор атрибута " + a.Name.Local})
 		}
-		seen[a.Name.Local] = true
+		seen[a.Name.Local] = struct{}{}
 		switch a.Name.Local {
 		case "id":
 			idRaw = strings.TrimSpace(a.Value)
@@ -137,7 +137,7 @@ func parseItem(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadC
 			Code: CodeDupID, Message: "дубликат ID, побеждает первая запись"})
 		return false
 	}
-	if !knownItemTypes[typ] {
+	if _, ok := knownItemTypes[typ]; !ok {
 		ctx.rep.UnknownTypes[typ]++
 	}
 	ctx.items[id] = buildItem(id, name, typ, bag, path, line, ctx)
@@ -220,7 +220,7 @@ func readSet(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx
 		skipElement(dec, start)
 		return true
 	}
-	if !typedSetKeys[name] {
+	if _, ok := typedSetKeys[name]; !ok {
 		ctx.rep.UnknownKeys[name]++
 	}
 	if !haveVal {

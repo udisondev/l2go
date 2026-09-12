@@ -52,9 +52,9 @@ func TestBrokenLinks(t *testing.T) {
 	if len(links) != 5 {
 		t.Fatalf("битых ссылок %d; want 5: %+v", len(links), links)
 	}
-	seen := map[string]bool{}
+	seen := map[string]struct{}{}
 	for _, e := range links {
-		seen[fmt.Sprintf("%s:%d", e.File, e.Line)] = true
+		seen[fmt.Sprintf("%s:%d", e.File, e.Line)] = struct{}{}
 	}
 	if len(seen) != 5 {
 		t.Errorf("ссылки слиплись в одну запись: %v", seen)
