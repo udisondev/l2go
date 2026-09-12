@@ -38,6 +38,7 @@ fuzz-smoke:
 	$(GO) test -fuzz='^FuzzNextFrame$$' -fuzztime=10s ./internal/protocol/
 	$(GO) test -fuzz='^FuzzLoginDecrypt$$' -fuzztime=10s ./internal/crypto/
 	$(GO) test -fuzz='^FuzzGameDecrypt$$' -fuzztime=10s ./internal/crypto/
+	$(GO) test -fuzz='^FuzzLoadItems$$' -fuzztime=10s ./internal/data/
 
 # Длинный локальный фаззинг: make fuzz-long FUZZTIME=30m (находки — в testdata/fuzz).
 fuzz-long:
@@ -47,3 +48,4 @@ fuzz-long:
 	$(GO) test -fuzz='^FuzzNextFrame$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
 	$(GO) test -fuzz='^FuzzLoginDecrypt$$' -fuzztime=$(FUZZTIME) ./internal/crypto/
 	$(GO) test -fuzz='^FuzzGameDecrypt$$' -fuzztime=$(FUZZTIME) ./internal/crypto/
+	$(GO) test -fuzz='^FuzzLoadItems$$' -fuzztime=$(FUZZTIME) ./internal/data/

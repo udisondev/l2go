@@ -16,7 +16,7 @@ func TestEvilInputs(t *testing.T) {
 		{"обрезанный XML", "<list><item id=\"9001\" type=\"Weapon\" name=\"A\"><set na", CodeXML},
 		{"пустой файл", "", CodeXML},
 		{"чужой корневой элемент", "<items><item id=\"1\" type=\"Weapon\" name=\"A\"/></items>", CodeRoot},
-		{"дубликат ID", itemXML(9300) + itemXML(9300), CodeDupID},
+		{"дубликат ID", "<list>" + itemBody(9300) + itemBody(9300) + "</list>", CodeDupID},
 		{"id за границами int32", itemXMLWithID("2147483648"), CodeNumber},
 		{"id отрицательный", itemXMLWithID("-5"), CodeNumber},
 		{"id ноль", itemXMLWithID("0"), CodeNumber},
@@ -142,4 +142,8 @@ func TestValFallbackToText(t *testing.T) {
 
 func itemXMLWithID(id string) string {
 	return "<list><item id=\"" + id + "\" type=\"EtcItem\" name=\"n\"><set name=\"weight\" val=\"1\"/></item></list>"
+}
+
+func itemBody(id int) string {
+	return "<item id=\"" + itoa(id) + "\" type=\"EtcItem\" name=\"n\"><set name=\"weight\" val=\"1\"/></item>"
 }
