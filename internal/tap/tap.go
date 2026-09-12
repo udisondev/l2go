@@ -24,6 +24,9 @@ type Map struct {
 	Listen   string
 	Upstream string
 	Login    bool
+	// Raw — прозрачная труба без нарезки на кадры (login-нога с не-L2
+	// прологом: сырые рукопожатия античитов совместимы только с ней).
+	Raw bool
 }
 
 // Options — параметры capture-режима.
@@ -193,11 +196,11 @@ func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *j
 	legs.Add(2)
 	go func() {
 		defer legs.Done()
-		legErrs <- pump(up, client, recDirStoC, id, jw, rw)
+		legErrs <- pump(up, client, recDirStoC, id, jw, rw, !m.Raw)
 	}()
 	go func() {
 		defer legs.Done()
-		legErrs <- pump(client, up, recDirCtoS, id, jw, nil)
+		legErrs <- pump(client, up, recDirCtoS, id, jw, nil, !m.Raw)
 	}()
 	legs.Wait()
 	err1, err2 := <-legErrs, <-legErrs
@@ -249,10 +252,16 @@ func gameEndpoint(opts Options) (ip [4]byte, port int32, ok bool) {
 	return [4]byte{127, 0, 0, 1}, 0, false
 }
 
-// pump — одна нога: читает кадры, пишет в журнал и противоположную ногу.
-// EOF — полузакрытие (CloseWrite противоположной ноги), ошибка — разрыв
-// соединения вызывающим (после завершения обеих ног).
-func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewriter) error {
+// pump — одна нога: читает данные, пишет в журнал и противоположную ногу.
+// framed=true: кадровый цикл по [u16 длина][тело] (L2-протокол); framed=false:
+// прозрачная труба — байты пересылаются немедленно (login-нога с не-L2
+// прологом: античиты с сырыми рукопожатиями вида "READY\n" несовместимы с
+// ожиданием полного кадра). EOF — полузакрытие (CloseWrite противоположной
+// ноги), ошибка — разрыв соединения вызывающим (после завершения обеих ног).
+func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewriter, framed bool) error {
+	if !framed {
+		return pumpRaw(rd, wr, dir, id, jw)
+	}
 	var buf []byte
 	tmp := make([]byte, 4096)
 	for {
@@ -307,6 +316,40 @@ func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewr
 					}
 					buf = nil
 				}
+				if cw, ok := wr.(interface{ CloseWrite() error }); ok {
+					if cerr := cw.CloseWrite(); cerr != nil {
+						return fmt.Errorf("полузакрытие: %w", cerr)
+					}
+				}
+				return nil
+			}
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return fmt.Errorf("чтение ноги: %w", err)
+		}
+	}
+}
+
+// pumpRaw — прозрачная труба: каждый прочитанный чанк пересылается сразу и
+// журналируется записью data (без нарезки на кадры; крипто-состояние ноги
+// не отслеживается — разбор делает декодер по журналу).
+func pumpRaw(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter) error {
+	tmp := make([]byte, 4096)
+	for {
+		n, err := rd.Read(tmp)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, tmp[:n])
+			if _, werr := wr.Write(chunk); werr != nil {
+				return fmt.Errorf("запись в ногу: %w", werr)
+			}
+			if jerr := jw.data(recData, id, dir, time.Now().UnixNano(), chunk); jerr != nil {
+				return jerr
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
 				if cw, ok := wr.(interface{ CloseWrite() error }); ok {
 					if cerr := cw.CloseWrite(); cerr != nil {
 						return fmt.Errorf("полузакрытие: %w", cerr)

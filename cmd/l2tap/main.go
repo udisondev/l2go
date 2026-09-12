@@ -53,6 +53,7 @@ func main() {
 		outLog   = flag.String("out-log", "", "файл читаемого лога (decode)")
 		outFixts = flag.String("out-fixtures", "", "файл фикстур JSON (decode)")
 		verbose  = flag.Bool("v", false, "детальный slog")
+		loginRaw = flag.Bool("login-raw", false, "login-нога — прозрачная труба (античиты с сырым рукопожатием)")
 	)
 	flag.Var(&capture, "map", "пара listen=upstream (повторяемый)")
 	flag.Var(&logins, "login-map", "login-пара listen=upstream (rewrite-ветка)")
@@ -73,6 +74,11 @@ func main() {
 	}
 
 	all := append(logins.rows, capture.rows...)
+	if *loginRaw {
+		for i := range logins.rows {
+			logins.rows[i].Raw = true
+		}
+	}
 	if len(all) == 0 {
 		slog.Error("нет пар listen=upstream: -map/-login-map обязательны")
 		os.Exit(2)

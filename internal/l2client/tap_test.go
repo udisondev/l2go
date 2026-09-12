@@ -169,6 +169,7 @@ func TestTapFullFlowLogParity(t *testing.T) {
 		t.Fatal("tap.Run не завершился после отмены")
 	}
 
+	t.Logf("journal=%d байт", journal.Len())
 	var decoded bytes.Buffer
 	var fixts bytes.Buffer
 	if err := tap.Decode(bytes.NewReader(journal.Bytes()), tap.DecodeOptions{Log: &decoded, Fixtures: &fixts}); err != nil {
