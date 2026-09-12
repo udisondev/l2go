@@ -88,6 +88,16 @@ func encodeCellWord(h int, nswe NSWE) uint16 {
 	return uint16(c)<<4 | uint16(nswe)
 }
 
+// fillDefault задаёт пустым ячейкам multilayer-блока единственный слой w
+// (формат требует ≥1 слоя на ячейку; тесты заполняют только зонды).
+func fillDefault(cells *[blockCells][]uint16, w uint16) {
+	for i := range cells {
+		if len(cells[i]) == 0 {
+			cells[i] = []uint16{w}
+		}
+	}
+}
+
 // flatComplexBlock — complex-блок из одного повторённого слова (все ячейки
 // одинаковы).
 func flatComplexBlock(h int, nswe NSWE) [blockCells]uint16 {

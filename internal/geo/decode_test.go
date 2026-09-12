@@ -21,6 +21,7 @@ func buildProbeRegion() (data []byte, flat, negFlat, complexB, ml int) {
 	complexB = b.addComplex(cells)
 
 	var mlCells [blockCells][]uint16
+	fillDefault(&mlCells, encodeCellWord(0, NSWEAll))
 	mlCells[0] = []uint16{
 		encodeCellWord(-160, East), encodeCellWord(0, West), encodeCellWord(160, North),
 	}
@@ -43,7 +44,7 @@ func TestDecodeGoldenProbes(t *testing.T) {
 	if st.blocksComplex != 1 || st.blocksMulti != 1 {
 		t.Errorf("blocksComplex=%d blocksMulti=%d; want 1 и 1", st.blocksComplex, st.blocksMulti)
 	}
-	if got, want := st.layers, 3+2; got != want {
+	if got, want := st.layers, 3+2+(blockCells-2); got != want {
 		t.Errorf("layers = %d; want %d", got, want)
 	}
 	if st.maxLayers != 3 {
@@ -73,7 +74,7 @@ func TestDecodeGoldenProbes(t *testing.T) {
 	var wantZ [blockCells]int
 	wantNSWE[0], wantZ[0] = East, 0
 	wantNSWE[8], wantZ[8] = NSWEAll, 16376
-	wantNSWE[63], wantZ[63] = North | South, -16384
+	wantNSWE[63], wantZ[63] = North|South, -16384
 	wantNSWE[16], wantZ[16] = 0, -8
 	for lx := 0; lx < 8; lx++ {
 		for ly := 0; ly < 8; ly++ {
@@ -97,17 +98,20 @@ func TestDecodeGoldenProbes(t *testing.T) {
 	if z, _ := c.Nearest(100); z != 160 {
 		t.Errorf("ml Nearest(100) = %d; want 160", z)
 	}
-	if z, _ := c.Nearest(-100); z != 0 {
-		t.Errorf("ml Nearest(−100) = %d; want 0", z)
+	if z, _ := c.Nearest(-100); z != -160 {
+		t.Errorf("ml Nearest(−100) = %d; want −160", z)
 	}
-	if got := c.LowerZ(0); got != -160 {
-		t.Errorf("ml LowerZ(0) = %d; want −160", got)
+	if got := c.LowerZ(0); got != 0 {
+		t.Errorf("ml LowerZ(0) = %d; want 0 (точное совпадение — порт канона)", got)
 	}
-	if got := c.HigherZ(0); got != 160 {
-		t.Errorf("ml HigherZ(0) = %d; want 160", got)
+	if got := c.HigherZ(0); got != 0 {
+		t.Errorf("ml HigherZ(0) = %d; want 0 (точное совпадение — порт канона)", got)
 	}
-	if got := c.LowerZ(-160); got != -160 {
-		t.Errorf("ml LowerZ(−160) = %d; want −160 (точное совпадение)", got)
+	if got := c.LowerZ(-100); got != -160 {
+		t.Errorf("ml LowerZ(−100) = %d; want −160", got)
+	}
+	if got := c.HigherZ(100); got != 160 {
+		t.Errorf("ml HigherZ(100) = %d; want 160", got)
 	}
 	if got := c.LowerZ(-500); got != -500 {
 		t.Errorf("ml LowerZ(−500) = %d; want −500 (ниже слоёв нет)", got)
@@ -129,6 +133,7 @@ func TestDecodeLastBlockAndMaxLayers(t *testing.T) {
 	// Последний блок региона и граница 125 слоёв.
 	b := newRegionBuilder()
 	var top [blockCells][]uint16
+	fillDefault(&top, encodeCellWord(0, NSWEAll))
 	layers := make([]uint16, layersMax)
 	for i := range layers {
 		layers[i] = encodeCellWord(-496+8*i, NSWEAll)
@@ -148,7 +153,7 @@ func TestDecodeLastBlockAndMaxLayers(t *testing.T) {
 	if st.maxLayers != layersMax {
 		t.Errorf("maxLayers = %d; want %d", st.maxLayers, layersMax)
 	}
-	if got, want := st.layers, layersMax; got != want {
+	if got, want := st.layers, layersMax+(blockCells-1); got != want {
 		t.Errorf("layers = %d; want %d", got, want)
 	}
 	c := reg.CellAt(cellGeo(0, 31, first, 7, 7))
@@ -164,6 +169,7 @@ func TestDecodeLastBlockAndMaxLayers(t *testing.T) {
 func TestDecodeDupLayerZ(t *testing.T) {
 	b := newRegionBuilder()
 	var cells [blockCells][]uint16
+	fillDefault(&cells, encodeCellWord(0, NSWEAll))
 	cells[0] = []uint16{encodeCellWord(0, East), encodeCellWord(0, West)}
 	cells[8] = []uint16{encodeCellWord(64, North)}
 	b.addMultilayer(cells)
@@ -192,12 +198,12 @@ func TestDecodeEvilInputs(t *testing.T) {
 		block int
 	}{
 		{"пустой файл", nil, CodeTrunc, 0},
-		{"flat обрезан", {blockFlatByte, 1}, CodeTrunc, 0},
+		{"flat обрезан", []byte{blockFlatByte, 1}, CodeTrunc, 0},
 		{"complex обрезан", append([]byte{blockComplexByte}, make([]byte, 127)...), CodeTrunc, 0},
-		{"multilayer обрезан на ячейках", {blockMultiByte, 1, 0, 0x10, 1}, CodeTrunc, 0},
-		{"тип блока 3", {3}, CodeBlockType, 0},
-		{"тип блока 255", {255}, CodeBlockType, 0},
-		{"слоёв 0", {blockMultiByte, 0}, CodeLayers, 0},
+		{"multilayer обрезан на ячейках", []byte{blockMultiByte, 1, 0, 0x10, 1}, CodeTrunc, 0},
+		{"тип блока 3", []byte{3}, CodeBlockType, 0},
+		{"тип блока 255", []byte{255}, CodeBlockType, 0},
+		{"слоёв 0", []byte{blockMultiByte, 0}, CodeLayers, 0},
 		{"слоёв 126", append([]byte{blockMultiByte, 126}, make([]byte, 252)...), CodeLayers, 0},
 		{"лишний хвост", append(append([]byte{}, flat...), 0), CodeTail, regionBlocks - 1},
 	}
@@ -314,12 +320,14 @@ func TestCellAtContract(t *testing.T) {
 func goldenMLRegion() []byte {
 	b := newRegionBuilder()
 	var top [blockCells][]uint16
+	fillDefault(&top, encodeCellWord(0, NSWEAll))
 	layers := make([]uint16, layersMax)
 	for i := range layers {
 		layers[i] = encodeCellWord(-496+8*i, NSWEAll)
 	}
 	top[0] = layers
 	var mixed [blockCells][]uint16
+	fillDefault(&mixed, encodeCellWord(0, NSWEAll))
 	mixed[5] = []uint16{encodeCellWord(-160, East), encodeCellWord(0, West), encodeCellWord(160, North)}
 	mixed[9] = []uint16{encodeCellWord(8, 0), encodeCellWord(8, 0)} // дубль высоты
 	b.addMultilayer(top)

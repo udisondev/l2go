@@ -40,6 +40,9 @@ jobs:
           for t in FuzzLoadItems FuzzLoadNpcSpawns; do
             go test -fuzz="^${t}$" -fuzztime=10s ./internal/data/
           done
+          for t in FuzzDecodeRegion; do
+            go test -fuzz="^${t}$" -fuzztime=10s ./internal/geo/
+          done
 
       # Фаза 4: go test -bench=. -benchmem + benchstat-бюджет p99 тика (red при регрессе)
       # Фаза 4: нагрузочный смоук с ботами (headless-клиенты из фазы 1)

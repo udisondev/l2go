@@ -55,7 +55,7 @@ func buildBenchFixtures() {
 
 	benchMap = &Map{}
 	benchMap.regions[16*RegionsY+10] = mlReg
-	mlInputs = map[string][sha256.Size]byte{"16_10.l2j": sha256.Sum256(mlData)}
+	mlInputs = map[string][sha256.Size]byte{}
 }
 
 func benchReady() {
@@ -164,12 +164,14 @@ func BenchmarkDecodeRegion(b *testing.B) {
 	}
 }
 
-// BenchmarkManifest — цена SHA-256-манифеста по составу (SetBytes — ГБ/с).
+// BenchmarkManifest — цена манифеста: SHA-256 содержимого файла + свёртка
+// состава, как в LoadDir (SetBytes — ГБ/с по байтам файла).
 func BenchmarkManifest(b *testing.B) {
 	benchReady()
 	b.ReportAllocs()
 	b.SetBytes(int64(len(mlData)))
 	for b.Loop() {
+		mlInputs["16_10.l2j"] = sha256.Sum256(mlData)
 		sinkManifest = manifestOf(mlInputs)
 	}
 }

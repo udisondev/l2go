@@ -63,6 +63,52 @@ func TestCheckUsage(t *testing.T) {
 	}
 }
 
+func TestGeoClean(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	// Минимальный валидный регион — 65536 flat-блоков нулевой высоты.
+	if err := os.WriteFile(filepath.Join(dir, "16_10.l2j"), make([]byte, 65536*3), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	out, err := exec.Command(bin, "geo", dir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("geo на чистом регионе: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "регионов: 1") {
+		t.Errorf("вывод без сводки; got:\n%s", out)
+	}
+}
+
+func TestGeoTruncated(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "16_10.l2j"), make([]byte, 1000), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	out, err := exec.Command(bin, "geo", dir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("geo на битом регионе должен вернуть ненулевой код; вывод:\n%s", out)
+	}
+	if !strings.Contains(string(out), "trunc") {
+		t.Errorf("вывод без кода trunc:\n%s", out)
+	}
+}
+
+func TestGeoEmptySet(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	out, err := exec.Command(bin, "geo", dir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("geo без регионов должен вернуть ненулевой код; вывод:\n%s", out)
+	}
+	if !strings.Contains(string(out), "регионы не загружены") {
+		t.Errorf("вывод без предупреждения о пустом наборе:\n%s", out)
+	}
+}
+
 func TestCheckBrokenLink(t *testing.T) {
 	bin := buildBinary(t)
 	root := t.TempDir()

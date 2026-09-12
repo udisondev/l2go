@@ -1,4 +1,5 @@
-// l2data — проверка статики: загрузка датапака с полным отчётом валидации.
+// l2data — проверка статики: загрузка датапака и геодаты с полным отчётом
+// валидации.
 package main
 
 import (
@@ -8,16 +9,29 @@ import (
 	"sort"
 
 	"github.com/udisondev/l2go/internal/data"
+	"github.com/udisondev/l2go/internal/geo"
 )
 
 func main() {
 	flag.Usage = usage
 	flag.Parse()
-	if flag.NArg() != 2 || flag.Arg(0) != "check" {
+	if flag.NArg() != 2 {
 		usage()
 		os.Exit(2)
 	}
-	_, rep, err := data.Load(os.DirFS(flag.Arg(1)))
+	switch flag.Arg(0) {
+	case "check":
+		check(flag.Arg(1))
+	case "geo":
+		checkGeo(flag.Arg(1))
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
+
+func check(root string) {
+	_, rep, err := data.Load(os.DirFS(root))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "l2data: %v\n", err)
 		os.Exit(1)
@@ -28,8 +42,24 @@ func main() {
 	}
 }
 
+func checkGeo(dir string) {
+	_, rep, err := geo.LoadDir(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "l2data: %v\n", err)
+		os.Exit(1)
+	}
+	printGeoReport(rep)
+	if rep.HasErrors() {
+		os.Exit(1)
+	}
+	if rep.Regions == 0 {
+		fmt.Println("регионы не загружены — проверьте каталог и формат (нужен L2J .l2j)")
+		os.Exit(1)
+	}
+}
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "использование: l2data check <корень данных>")
+	fmt.Fprintln(os.Stderr, "использование: l2data check <корень данных> | l2data geo <каталог геодаты>")
 }
 
 func printReport(rep *data.Report) {
@@ -110,4 +140,26 @@ func printCounters(title string, m map[string]int) {
 		fmt.Printf(" %s=%d", k, m[k])
 	}
 	fmt.Println()
+}
+
+func printGeoReport(rep *geo.Report) {
+	fmt.Printf("файлов: %d, регионов: %d (flat %d / complex %d / multilayer %d), слоёв: %d, макс. слоёв в ячейке: %d\n",
+		rep.Files, rep.Regions, rep.BlocksFlat, rep.BlocksComplex, rep.BlocksMultilayer, rep.LayersTotal, rep.MaxLayersPerCell)
+	fmt.Printf("отображено: %d байт, индексов в куче: %d байт, манифест: %x\n",
+		rep.BytesMapped, rep.HeapIndexBytes, rep.Manifest)
+	if rep.DupLayerZ > 0 {
+		fmt.Printf("ячейки со слоями равной высоты: %d\n", rep.DupLayerZ)
+	}
+	if rep.ExtraTiles > 0 {
+		fmt.Printf("файлы вне тайлов канона 16–26×10–25: %d\n", rep.ExtraTiles)
+	}
+	if rep.SkippedDirs > 0 {
+		fmt.Printf("пропущено подкаталогов: %d\n", rep.SkippedDirs)
+	}
+	if rep.IgnoredFiles > 0 {
+		fmt.Printf("игнорировано файлов вне паттерна: %d\n", rep.IgnoredFiles)
+	}
+	for _, e := range rep.Errors {
+		fmt.Printf("ошибка %s %s блок %d офсет %d: %s\n", e.Code, e.File, e.Block, e.Offset, e.Message)
+	}
 }

@@ -18,7 +18,7 @@ func cellLayerHeights(c Cell) []int {
 	case BlockComplex:
 		return []int{cellHeight(leUint16(d[off+1+2*int(c.c):]))}
 	default:
-		start, end := c.mlSpan()
+		start, end := c.mlSpan(int(c.r.blocks[c.b].off))
 		out := make([]int, 0, (end-start)/2)
 		for o := start + 1; o < end; o += 2 {
 			out = append(out, cellHeight(leUint16(d[o:])))

@@ -1,6 +1,7 @@
 package geo
 
 import (
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"testing"
@@ -85,8 +86,8 @@ func TestLoadDirCaseExtensionAlone(t *testing.T) {
 
 func TestLoadDirRangeAndExtraTiles(t *testing.T) {
 	dir := t.TempDir()
-	writeRegion(t, dir, "99_5.l2j", flatZeroRegion())  // вне сетки 32×32
-	writeRegion(t, dir, "5_5.l2j", flatZeroRegion())   // вне тайлов канона, но в сетке
+	writeRegion(t, dir, "99_5.l2j", flatZeroRegion()) // вне сетки 32×32
+	writeRegion(t, dir, "5_5.l2j", flatZeroRegion())  // вне тайлов канона, но в сетке
 	_, rep, err := LoadDir(dir)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
@@ -163,42 +164,47 @@ func TestLoadDirEmptySet(t *testing.T) {
 }
 
 func TestManifestDeterminism(t *testing.T) {
-	dir := t.TempDir()
-	writeRegion(t, dir, "16_10.l2j", flatZeroRegion())
-	writeRegion(t, dir, "17_10.l2j", flatZeroRegion())
-	_, rep1, err := LoadDir(dir)
+	// Файлы под живым отображением не перезаписываются (предусловие
+	// контракта LoadDir) — варианты состава раскладываются по свежим
+	// каталогам.
+	dir1, dir1again, dir2 := t.TempDir(), t.TempDir(), t.TempDir()
+	mutated := flatZeroRegion()
+	mutated[len(mutated)-1] = 7 // высота последнего flat-блока
+	for _, d := range []string{dir1, dir1again} {
+		writeRegion(t, d, "16_10.l2j", flatZeroRegion())
+		writeRegion(t, d, "17_10.l2j", flatZeroRegion())
+	}
+	writeRegion(t, dir2, "16_10.l2j", flatZeroRegion())
+	writeRegion(t, dir2, "17_10.l2j", mutated)
+
+	_, rep1, err := LoadDir(dir1)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
-	_, rep2, err := LoadDir(dir)
+	_, repSame, err := LoadDir(dir1again)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
-	if rep1.Manifest != rep2.Manifest {
-		t.Errorf("манифест недетерминирован: %x ≠ %x", rep1.Manifest, rep2.Manifest)
+	if rep1.Manifest != repSame.Manifest {
+		t.Errorf("манифест недетерминирован: %x ≠ %x", rep1.Manifest, repSame.Manifest)
 	}
-	// Изменение одного байта меняет манифест.
-	writeRegion(t, dir, "17_10.l2j", func() []byte {
-		d := flatZeroRegion()
-		d[len(d)-1] = 7 // высота последнего flat-блока
-		return d
-	}())
-	_, rep3, err := LoadDir(dir)
+	_, repOther, err := LoadDir(dir2)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
-	if rep1.Manifest == rep3.Manifest {
+	if rep1.Manifest == repOther.Manifest {
 		t.Error("изменение байта не изменило манифест")
 	}
-	// Состав манифеста — установленные регионы: битый файл не входит.
-	dir2 := t.TempDir()
-	writeRegion(t, dir2, "16_10.l2j", flatZeroRegion()[:100])
-	_, repBroken, err := LoadDir(dir2)
+
+	// Состав манифеста — установленные регионы: битый файл не входит
+	// (манифест пустого состава — SHA-256 пустого ввода).
+	dirBroken := t.TempDir()
+	writeRegion(t, dirBroken, "16_10.l2j", flatZeroRegion()[:100])
+	_, repBroken, err := LoadDir(dirBroken)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
-	var zero [32]byte
-	if repBroken.Manifest != zero {
-		t.Error("манифест без установленных регионов ≠ нуля")
+	if want := sha256.Sum256(nil); repBroken.Manifest != want {
+		t.Errorf("манифест без установленных регионов = %x; want %x", repBroken.Manifest, want)
 	}
 }
