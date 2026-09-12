@@ -60,3 +60,27 @@ var (
 	sinkNSWE   NSWE
 	sinkType   BlockType
 )
+
+// TestMoveZeroAllocs: движение и LOS — 0 аллокаций (степпер по значению,
+// без замыканий; решение 3 плана P2.4).
+func TestMoveZeroAllocs(t *testing.T) {
+	moveBenchReady()
+	from, to := at(0, 0, 0), at(20, 0, 0)
+	diag := at(20, 20, 0)
+	cases := []struct {
+		name string
+		fn   func()
+	}{
+		{"ValidLocation стена 20", func() { sinkLoc, sinkBool = mbWall.ValidLocation(from, to) }},
+		{"ValidLocation мост ML", func() { sinkLoc, sinkBool = mbBridge.ValidLocation(from, to) }},
+		{"ValidLocation диагональ", func() { sinkLoc, sinkBool = mbFlat.ValidLocation(from, diag) }},
+		{"CanSee открыто 20", func() { sinkBool = mbFlat.CanSee(from, to) }},
+		{"CanSee ML закрытый", func() { sinkBool = mbML.CanSee(from, to) }},
+		{"NearestZ ML", func() { sinkInt = mbML.NearestZ(at(5, 0, 0)) }},
+	}
+	for _, tc := range cases {
+		if n := testing.AllocsPerRun(200, tc.fn); n != 0 {
+			t.Errorf("%s: аллокаций %g; want 0", tc.name, n)
+		}
+	}
+}

@@ -51,7 +51,7 @@ func buildFuzzWorlds() {
 		}),
 		mk(func(w *cellWorld) {
 			w.set(geoX(0), geoY(0), 0, NSWEAll&^South)
-			w.setML(geoX(1), geoY(0), layer(0, NSWEAll), layer(60, NSWEAll))
+			w.setML(geoX(1), geoY(0), layer(0, NSWEAll), layer(64, NSWEAll))
 		}),
 	}
 	// Пустота в сетке: регион (17, 10) отсутствует — покрывает ходы

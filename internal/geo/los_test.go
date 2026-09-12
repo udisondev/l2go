@@ -30,17 +30,19 @@ func TestCanSee(t *testing.T) {
 		{
 			// Граница обзора: рост +48 к лучу виден (<=), +49 скрыт —
 			// высота 48 кратна кванту complex; 49 — flat-блок (int16).
+			// Цель — за блоком на грунте, иначе слой цели разворачивает
+			// луч обменом концов.
 			name:  "рост +48 виден",
 			world: func(w *cellWorld) { w.setFlatBlock(geoX(8), geoY(0), 48) },
 			from:  at(0, 0, 0),
-			to:    at(12, 0, 0),
+			to:    at(16, 0, 0),
 			want:  true,
 		},
 		{
 			name:  "рост +49 скрыт",
 			world: func(w *cellWorld) { w.setFlatBlock(geoX(8), geoY(0), 49) },
 			from:  at(0, 0, 0),
-			to:    at(12, 0, 0),
+			to:    at(16, 0, 0),
 		},
 		{
 			// «С высоты источника»: первые elevatedSeeOverDistance точек
@@ -68,20 +70,21 @@ func TestCanSee(t *testing.T) {
 		{
 			// Диагональная ветка corner-пучка (порт canSeeTarget, ветки
 			// NE/NW/SE/SW): флаг A.South закрыт → eastGeoZ резолвится
-			// через getNextHigherZ угловой ячейки (60 > 48) — перекрытие.
+			// через getNextHigherZ угловой ячейки (слой 56 > 48;
+			// контроль: ближайший слой −8) — перекрытие.
 			name: "corner-луч: перпендикулярный флаг закрыт — скрыто",
 			world: func(w *cellWorld) {
 				w.set(geoX(0), geoY(0), 0, NSWEAll&^South)
-				w.setML(geoX(1), geoY(0), layer(0, NSWEAll), layer(60, NSWEAll))
+				w.setML(geoX(1), geoY(0), layer(-8, NSWEAll), layer(56, NSWEAll))
 			},
 			from: at(0, 0, 0),
 			to:   at(10, 10, 0),
 		},
 		{
-			// Контроль: флаг открыт — eastGeoZ через getNearestZ = 0.
+			// Контроль: флаг открыт — eastGeoZ через getNearestZ (−8).
 			name: "corner-луч: флаг открыт — видно",
 			world: func(w *cellWorld) {
-				w.setML(geoX(1), geoY(0), layer(0, NSWEAll), layer(60, NSWEAll))
+				w.setML(geoX(1), geoY(0), layer(-8, NSWEAll), layer(56, NSWEAll))
 			},
 			from: at(0, 0, 0),
 			to:   at(10, 10, 0),

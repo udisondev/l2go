@@ -90,13 +90,19 @@ func (w *cellWorld) build() []byte {
 		for i := 0; i < blockCells; i++ {
 			gx := w.rx*regionCells + bx*blockSide + i/8
 			gy := w.ry*regionCells + by*blockSide + i%8
-			if word, ok := w.complexes[[2]int{gx, gy}]; ok {
+			word, isComplex := w.complexes[[2]int{gx, gy}]
+			if isComplex {
 				cc[i] = word
 			} else {
 				cc[i] = layer(0, NSWEAll)
 			}
 			if ls, ok := w.mls[[2]int{gx, gy}]; ok {
 				ml[i] = ls
+				useML = true
+			} else if isComplex {
+				// Блок стал multilayer: complex-переопределение
+				// переносится одиночным слоем.
+				ml[i] = []uint16{word}
 				useML = true
 			}
 		}
@@ -141,9 +147,10 @@ func TestValidLocationGeometries(t *testing.T) {
 		factor string // запрещающий фактор блока (свидетельство)
 	}{
 		{
-			name: "плоский мир 3 ячейки",
-			to:   at(3, 0, 0),
-			want: Loc{at(3, 0, 0).X, at(3, 0, 0).Y, 0},
+			name:   "плоский мир 3 ячейки",
+			to:     at(3, 0, 0),
+			want:   Loc{at(3, 0, 0).X, at(3, 0, 0).Y, 0},
+			wantOK: true,
 		},
 		{
 			// Шаг (4,0)→(5,0): East-флаг ячейки (4,0) закрыт —
@@ -189,8 +196,10 @@ func TestValidLocationGeometries(t *testing.T) {
 			// высоту (порт MultilayerBlock.getNearestLayer).
 			name: "мост двухслойный <1000 — проход под мостом",
 			world: func(w *cellWorld) {
-				for ly := 0; ly <= 2; ly++ {
-					w.setML(geoX(5), geoY(ly), layer(0, NSWEAll), layer(200, NSWEAll))
+				for lx := 0; lx <= 10; lx++ {
+					for ly := 0; ly <= 2; ly++ {
+						w.setML(geoX(lx), geoY(ly), layer(0, NSWEAll), layer(200, NSWEAll))
+					}
 				}
 			},
 			from:   at(0, 0, 0),
@@ -201,8 +210,10 @@ func TestValidLocationGeometries(t *testing.T) {
 		{
 			name: "мост двухслойный <1000 — проход по мосту",
 			world: func(w *cellWorld) {
-				for ly := 0; ly <= 2; ly++ {
-					w.setML(geoX(5), geoY(ly), layer(0, NSWEAll), layer(200, NSWEAll))
+				for lx := 0; lx <= 10; lx++ {
+					for ly := 0; ly <= 2; ly++ {
+						w.setML(geoX(lx), geoY(ly), layer(0, NSWEAll), layer(200, NSWEAll))
+					}
 				}
 			},
 			from:   at(0, 0, 200),
@@ -327,8 +338,11 @@ func TestValidLocationNearestZBridgeAssert(t *testing.T) {
 	if got := m.NearestZ(at(6, 0, 0)); got != 0 {
 		t.Errorf("NearestZ(настил 1200, z=0) = %d; want 0 (фантом входного z, правило 1000)", got)
 	}
-	if got := m.NearestZ(at(6, 0, 500)); got != 500 {
-		t.Errorf("NearestZ(настил 1200, z=500) = %d; want 500 (нет нижних слоёв — входной z)", got)
+	if got := m.NearestZ(at(6, 0, 100)); got != 100 {
+		t.Errorf("NearestZ(настил 1200, z=100) = %d; want 100 (правило 1000, нет нижних слоёв)", got)
+	}
+	if got := m.NearestZ(at(6, 0, 500)); got != 1200 {
+		t.Errorf("NearestZ(настил 1200, z=500) = %d; want 1200 (700 ≤ 1000 — правило не работает)", got)
 	}
 }
 
@@ -491,9 +505,12 @@ func TestDomainContractPanics(t *testing.T) {
 	inGrid := at(0, 0, 0)
 
 	evil := []Loc{
-		{X: worldMinX - 1, Y: 0, Z: 0},
+		// Точка за кромкой на целую ячейку: деление с усечением маппит
+		// малые отрицательные дельты в клетку 0 (как в каноне Java) —
+		// вне сетки оказываются точки от границы минус cellSize.
+		{X: worldMinX - cellSize - 1, Y: 0, Z: 0},
 		{X: worldMinX + regionsX*regionCells*cellSize, Y: 0, Z: 0},
-		{X: 0, Y: worldMinY - 1, Z: 0},
+		{X: 0, Y: worldMinY - cellSize - 1, Z: 0},
 		{X: 0, Y: worldMinY + regionsY*regionCells*cellSize, Z: 0},
 		{X: math.MinInt32, Y: math.MinInt32, Z: 0},
 		{X: math.MaxInt32, Y: math.MaxInt32, Z: 0},

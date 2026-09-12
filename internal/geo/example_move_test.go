@@ -2,8 +2,8 @@ package geo
 
 import "fmt"
 
-// ExampleValidLocation — движение к цели за стеной: кламп в центр последней
-// проходимой ячейки (порт GeoEngine.getValidLocation).
+// ExampleMap_ValidLocation — движение к цели за стеной: кламп в центр
+// последней проходимой ячейки (порт GeoEngine.getValidLocation).
 func ExampleMap_ValidLocation() {
 	w := newCellWorld(16, 10)
 	w.set(geoX(4), geoY(0), 0, NSWEAll&^East)
@@ -13,14 +13,14 @@ func ExampleMap_ValidLocation() {
 	// Output: -131000 -262136 0 false
 }
 
-// ExampleCanSee — препятствие выше линии луча перекрывает обзор; с высоты
-// препятствия видно (порт GeoEngine.canSeeTarget).
+// ExampleMap_CanSee — стена выше линии луча перекрывает обзор; бугор в
+// пределах допуска обзора — нет (порт GeoEngine.canSeeTarget).
 func ExampleMap_CanSee() {
-	w := newCellWorld(16, 10)
-	w.set(geoX(0), geoY(0), 200, NSWEAll)
-	w.set(geoX(10), geoY(0), 200, NSWEAll)
-	w.set(geoX(20), geoY(0), 200, NSWEAll)
-	m := worldMap(w)
-	fmt.Println(m.CanSee(at(0, 0, 0), at(20, 0, 0)), m.CanSee(at(0, 0, 200), at(20, 0, 200)))
+	wall := newCellWorld(16, 10)
+	wall.set(geoX(10), geoY(0), 200, NSWEAll)
+	bump := newCellWorld(16, 10)
+	bump.set(geoX(10), geoY(0), 48, NSWEAll)
+	fmt.Println(worldMap(wall).CanSee(at(0, 0, 0), at(20, 0, 0)),
+		worldMap(bump).CanSee(at(0, 0, 0), at(20, 0, 0)))
 	// Output: false true
 }

@@ -40,7 +40,7 @@ jobs:
           for t in FuzzLoadItems FuzzLoadNpcSpawns; do
             go test -fuzz="^${t}$" -fuzztime=10s ./internal/data/
           done
-          for t in FuzzDecodeRegion; do
+          for t in FuzzDecodeRegion FuzzValidLocation; do
             go test -fuzz="^${t}$" -fuzztime=10s ./internal/geo/
           done
 
