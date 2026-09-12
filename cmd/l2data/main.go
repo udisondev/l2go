@@ -53,9 +53,10 @@ func printReport(rep *data.Report) {
 	if rep.UnnamedSets > 0 {
 		fmt.Printf("set без имени: %d\n", rep.UnnamedSets)
 	}
-	if rep.SkippedCustomDir > 0 {
-		fmt.Printf("пропущено файлов custom: %d\n", rep.SkippedCustomDir)
+	if rep.StatNoType > 0 {
+		fmt.Printf("stat без типа: %d\n", rep.StatNoType)
 	}
+	printCounters("пропущено файлов в подкаталогах", rep.SkippedDirs)
 }
 
 func printCounters(title string, m map[string]int) {

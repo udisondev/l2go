@@ -32,6 +32,9 @@ func xmlFiles(t *testing.T) []string {
 			if d.Name() == ".git" {
 				return filepath.SkipDir
 			}
+			if d.Type()&fs.ModeSymlink != 0 {
+				return fs.SkipDir // ссылки-каталоги в дерево не входят
+			}
 			return nil
 		}
 		if strings.EqualFold(filepath.Ext(path), ".xml") {
@@ -63,12 +66,15 @@ func TestXMLWhitelist(t *testing.T) {
 	}
 }
 
+// distroRangePattern — имена диапазонных файлов дистрибутива, сверяются по
+// базовому имени (каталог значения не имеет) и без учёта регистра расширения.
+var distroRangePattern = regexp.MustCompile(`(?i)^\d{5}-\d{5}\.xml$`)
+
 // TestNoDistroRangeNames: имена диапазонных файлов дистрибутива запрещены
 // везде, включая белый список.
 func TestNoDistroRangeNames(t *testing.T) {
-	pattern := regexp.MustCompile(`^\d{5}-\d{5}\.xml$`)
 	for _, f := range xmlFiles(t) {
-		if pattern.MatchString(f) {
+		if distroRangePattern.MatchString(filepath.Base(f)) {
 			t.Errorf("имя диапазонного файла дистрибутива в репо: %s", f)
 		}
 	}

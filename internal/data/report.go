@@ -17,7 +17,7 @@ const (
 	CodeXML    = "xml"    // малформленный или обрезанный XML
 	CodeRoot   = "root"   // чужой корневой элемент
 	CodeDupID  = "dup_id" // дубликат ID предмета
-	CodeAttr   = "attr"   // отсутствует обязательный атрибут item
+	CodeAttr   = "attr"   // обязательный атрибут отсутствует или задан повторно
 	CodeNumber = "number" // число вне домена или неразборчивое значение поля
 	CodeLimit  = "limit"  // файл превышает потолок размера
 )
@@ -30,13 +30,14 @@ type Report struct {
 	Errors   []Entry
 	Manifest [sha256.Size]byte
 
-	UnknownKeys      map[string]int
-	UnknownTypes     map[string]int
-	SkippedElements  map[string]int
-	EmptyValues      int
-	DupKeys          int
-	UnnamedSets      int
-	SkippedCustomDir int
+	UnknownKeys     map[string]int
+	UnknownTypes    map[string]int
+	SkippedElements map[string]int
+	SkippedDirs     map[string]int
+	EmptyValues     int
+	DupKeys         int
+	UnnamedSets     int
+	StatNoType      int
 }
 
 // HasErrors сообщает, есть ли в отчёте ошибки целостности.

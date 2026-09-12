@@ -12,10 +12,21 @@ import (
 	"strings"
 )
 
-// Static — загруженная статика мира. Иммутабельна после загрузки: поля
-// публикуются только для чтения.
+// Static — загруженная статика мира. Иммутабельна после загрузки: доступ к
+// записям — только через методы чтения, мутируемых ссылок наружу не отдаётся.
 type Static struct {
-	Items map[ItemID]Item
+	items map[ItemID]Item
+}
+
+// Item возвращает запись предмета по ID.
+func (s *Static) Item(id ItemID) (Item, bool) {
+	it, ok := s.items[id]
+	return it, ok
+}
+
+// Len возвращает число загруженных записей предметов.
+func (s *Static) Len() int {
+	return len(s.items)
 }
 
 // Load читает статику из fsys и возвращает её вместе с отчётом валидации.
@@ -35,7 +46,7 @@ func Load(fsys fs.FS) (*Static, *Report, error) {
 		return nil, nil, ctx.fatalErr
 	}
 	ctx.rep.Manifest = manifestOf(ctx.inputs)
-	return &Static{Items: ctx.items}, ctx.rep, nil
+	return &Static{items: ctx.items}, ctx.rep, nil
 }
 
 // Dump возвращает канонический текстовый вид статики: записи по возрастанию
@@ -46,14 +57,14 @@ func (s *Static) Dump() string {
 	if s == nil {
 		return ""
 	}
-	ids := make([]int64, 0, len(s.Items))
-	for id := range s.Items {
+	ids := make([]int64, 0, len(s.items))
+	for id := range s.items {
 		ids = append(ids, int64(id))
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	var sb strings.Builder
 	for _, idv := range ids {
-		it := s.Items[ItemID(idv)]
+		it := s.items[ItemID(idv)]
 		fmt.Fprintf(&sb,
 			"id=%d name=%q type=%q weight=%d price=%d stackable=%t crystal_type=%q crystal_count=%d material=%q bodypart=%q",
 			it.ID, it.Name, it.Type, it.Weight, it.Price, it.Stackable,

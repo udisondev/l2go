@@ -13,6 +13,7 @@ func BenchmarkLoadReal(b *testing.B) {
 	if root == "" {
 		b.Skip("L2GO_REAL_DATA не задан")
 	}
+	b.ReportAllocs()
 	for b.Loop() {
 		_, rep, err := Load(os.DirFS(root))
 		if err != nil {

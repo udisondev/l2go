@@ -65,9 +65,9 @@ var typedSetKeys = map[string]bool{
 	"crystal_type": true, "crystal_count": true, "material": true, "bodypart": true,
 }
 
-// loadItems читает категорию предметов: XML верхнего уровня itemsDir,
-// подкаталог custom пропускается со счётчиком (дубли между наборами сделали бы
-// override-семантику канона, противоречащую политике целостности).
+// loadItems читает категорию предметов: XML верхнего уровня itemsDir;
+// подкаталоги (custom с дублями ID и прочие) не читаются, но считаются в
+// отчёт — молчаливая потеря состава невозможна.
 // Семантика разбора и дефолты: L2J_Mobius DocumentItem, DocumentBase.parseBeanSet,
 // ItemTemplate.set (порт, GPLv3).
 func loadItems(fsys fs.FS, ctx *loadCtx) {
@@ -78,9 +78,7 @@ func loadItems(fsys fs.FS, ctx *loadCtx) {
 	}
 	for _, e := range entries {
 		if e.IsDir() {
-			if e.Name() == "custom" {
-				ctx.rep.SkippedCustomDir += countXML(fsys, itemsDir+"/custom")
-			}
+			ctx.rep.SkippedDirs[e.Name()] += countXML(fsys, itemsDir+"/"+e.Name())
 			continue
 		}
 		if !strings.EqualFold(filepath.Ext(e.Name()), ".xml") {
@@ -96,6 +94,8 @@ func loadItems(fsys fs.FS, ctx *loadCtx) {
 	}
 }
 
+// countXML считает XML-файлы каталога. Ошибка чтения даёт 0 сознательно:
+// подкаталог опционален, недоступность видна как ноль пропущенных файлов.
 func countXML(fsys fs.FS, dir string) int {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
@@ -137,7 +137,9 @@ func parseItemsFile(path string, data []byte, ctx *loadCtx) {
 				continue
 			}
 			if t.Name.Local == "item" && depth == 1 {
-				parseItem(dec, t, path, ctx)
+				if parseItem(dec, t, path, ctx) {
+					return // ошибка XML: декодер повторит её, запись уже внесена
+				}
 				continue
 			}
 			ctx.rep.SkippedElements[t.Name.Local]++
@@ -152,10 +154,18 @@ func parseItemsFile(path string, data []byte, ctx *loadCtx) {
 	}
 }
 
-func parseItem(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx) {
+// parseItem разбирает предмет; true — декодер в состоянии ошибки XML, разбор
+// файла пора прекратить (запись отчёта уже внесена).
+func parseItem(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx) bool {
 	line := lineOf(dec)
 	var idRaw, typ, name string
+	seen := map[string]bool{}
 	for _, a := range start.Attr {
+		if seen[a.Name.Local] {
+			ctx.entry(Entry{Category: "items", File: path, Line: line,
+				Code: CodeAttr, Message: "повтор атрибута " + a.Name.Local})
+		}
+		seen[a.Name.Local] = true
 		switch a.Name.Local {
 		case "id":
 			idRaw = strings.TrimSpace(a.Value)
@@ -169,34 +179,37 @@ func parseItem(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadC
 		ctx.entry(Entry{Category: "items", File: path, Line: line,
 			Code: CodeAttr, Message: "нет обязательного атрибута id/type/name"})
 		skipElement(dec, start)
-		return
+		return false
 	}
 	id64, err := strconv.ParseInt(idRaw, 10, 32)
 	if err != nil || id64 <= 0 {
 		ctx.entry(Entry{Category: "items", File: path, Line: line,
 			Code: CodeNumber, Message: "id " + idRaw + " вне домена (int32, положительный)"})
 		skipElement(dec, start)
-		return
+		return false
 	}
 	id := ItemID(id64)
 	bag := map[string]string{}
 	if !readItemContent(dec, start, path, id, bag, ctx) {
-		return
+		return true
 	}
 	if _, dup := ctx.items[id]; dup {
 		ctx.entry(Entry{Category: "items", File: path, Line: line, ID: id,
 			Code: CodeDupID, Message: "дубликат ID, побеждает первая запись"})
-		return
+		return false
 	}
 	if !knownItemTypes[typ] {
 		ctx.rep.UnknownTypes[typ]++
 	}
 	ctx.items[id] = buildItem(id, name, typ, bag, path, line, ctx)
 	ctx.rep.Items++
+	return false
 }
 
 // readItemContent читает содержимое item до закрывающего тега; false — обрыв
-// или ошибка XML (запись уже внесена).
+// или ошибка XML (запись уже внесена). set после закрытого блока stats —
+// структурная битость (канон роняет предмет целиком): запись-ошибка, элемент
+// пропускается, предмет доразбирается.
 func readItemContent(dec *xml.Decoder, start xml.StartElement, path string, id ItemID, bag map[string]string, ctx *loadCtx) bool {
 	badXML := func(err error) bool {
 		ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: id,
@@ -204,6 +217,7 @@ func readItemContent(dec *xml.Decoder, start xml.StartElement, path string, id I
 		return false
 	}
 	inStats := false
+	wasStats := false
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -212,12 +226,21 @@ func readItemContent(dec *xml.Decoder, start xml.StartElement, path string, id I
 		switch t := tok.(type) {
 		case xml.StartElement:
 			switch {
-			case t.Name.Local == "set" && !inStats:
+			case t.Name.Local == "set" && inStats:
+				ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: id,
+					Code: CodeAttr, Message: "set внутри блока stats"})
+				skipElement(dec, t)
+			case t.Name.Local == "set" && wasStats:
+				ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec), ID: id,
+					Code: CodeAttr, Message: "set после закрытого блока stats"})
+				skipElement(dec, t)
+			case t.Name.Local == "set":
 				if !readSet(dec, t, path, ctx, bag) {
 					return false
 				}
-			case t.Name.Local == "stats":
+			case t.Name.Local == "stats" && !wasStats:
 				inStats = true
+				wasStats = true
 			case t.Name.Local == "stat" && inStats:
 				if !readStat(dec, t, path, ctx, bag) {
 					return false
@@ -292,7 +315,7 @@ func readStat(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCt
 		}
 	}
 	if typ == "" {
-		ctx.rep.UnnamedSets++
+		ctx.rep.StatNoType++
 		skipElement(dec, start)
 		return true
 	}
@@ -375,7 +398,8 @@ func buildItem(id ItemID, name, typ string, bag map[string]string, path string, 
 	return it
 }
 
-// readText читает текстовое содержимое элемента до его закрывающего тега.
+// readText читает текстовое содержимое элемента до его закрывающего тега;
+// текст вложенных элементов включается (семантика getTextContent канона).
 func readText(dec *xml.Decoder, el xml.StartElement) (string, error) {
 	var sb strings.Builder
 	for {
@@ -386,8 +410,6 @@ func readText(dec *xml.Decoder, el xml.StartElement) (string, error) {
 		switch t := tok.(type) {
 		case xml.CharData:
 			sb.Write(t)
-		case xml.StartElement:
-			skipElement(dec, t)
 		case xml.EndElement:
 			if t.Name.Local == el.Name.Local {
 				return sb.String(), nil

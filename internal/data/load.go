@@ -18,7 +18,7 @@ type loader struct {
 // loaders — все категории; порядок фиксирован и влияет на порядок записей
 // отчёта (манифест от порядка не зависит: сортировка путей).
 var loaders = []loader{
-	{"items", loadItems},
+	{name: "items", run: loadItems},
 }
 
 // loadCtx накапливает результаты категорий, отчёт и состав манифеста входов.
@@ -40,6 +40,7 @@ func newLoadCtx() *loadCtx {
 			UnknownKeys:     map[string]int{},
 			UnknownTypes:    map[string]int{},
 			SkippedElements: map[string]int{},
+			SkippedDirs:     map[string]int{},
 		},
 		items:  map[ItemID]Item{},
 		inputs: map[string][sha256.Size]byte{},
@@ -70,12 +71,12 @@ func (ctx *loadCtx) readFileCapped(fsys fs.FS, path, category string) ([]byte, b
 		ctx.fatal(fmt.Errorf("data: чтение %s: %w", path, err))
 		return nil, false
 	}
-	ctx.inputs[path] = sha256.Sum256(data)
 	if len(data) > maxItemFile {
 		ctx.entry(Entry{Category: category, File: path, Code: CodeLimit,
 			Message: fmt.Sprintf("файл %d байт превышает потолок %d", len(data), maxItemFile)})
 		return nil, false
 	}
+	ctx.inputs[path] = sha256.Sum256(data)
 	return data, true
 }
 

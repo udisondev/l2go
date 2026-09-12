@@ -2,12 +2,13 @@ package data
 
 import (
 	"os"
+	"reflect"
 	"testing"
 	"testing/fstest"
 )
 
 // FuzzLoadItems: любые байты как файл категории — без паник; Load возвращает
-// отчёт (или фатальную FS-ошибку) и детерминирован по факту наличия ошибок.
+// отчёт (или фатальную FS-ошибку) и детерминирован по всему отчёту.
 func FuzzLoadItems(f *testing.F) {
 	seed, err := os.ReadFile("testdata/synth/stats/items/items.xml")
 	if err != nil {
@@ -31,8 +32,8 @@ func FuzzLoadItems(f *testing.F) {
 		if rep1 == nil || rep2 == nil {
 			t.Fatal("отчёт nil на произвольном входе")
 		}
-		if rep1.HasErrors() != rep2.HasErrors() || rep1.Items != rep2.Items {
-			t.Fatalf("недетерминированный отчёт: %+v vs %+v", rep1, rep2)
+		if !reflect.DeepEqual(rep1, rep2) {
+			t.Fatalf("недетерминированный отчёт:\n%+v\n---\n%+v", rep1, rep2)
 		}
 	})
 }
