@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"io/fs"
 	"math"
 	"strconv"
@@ -109,50 +108,9 @@ func loadNpcs(fsys fs.FS, ctx *loadCtx) {
 	loadFlatCategory(fsys, ctx, npcsDir, "npcs", parseNpcsFile)
 }
 
-// parseNpcsFile разбирает файл категории NPC: корень list, NPC верхнего
-// уровня; true из parseNpc — остановка файла после ошибки XML.
+// parseNpcsFile — NPC через общий каркас parseListFile.
 func parseNpcsFile(path string, data []byte, ctx *loadCtx) {
-	dec := xml.NewDecoder(bytes.NewReader(data))
-	sawRoot := false
-	depth := 0
-	for {
-		tok, err := dec.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			ctx.entry(Entry{Category: "npcs", File: path, Line: lineOf(dec),
-				Code: CodeXML, Message: fmt.Sprintf("разбор XML: %v", err)})
-			return
-		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			if !sawRoot {
-				if t.Name.Local != "list" {
-					ctx.entry(Entry{Category: "npcs", File: path, Line: lineOf(dec),
-						Code: CodeRoot, Message: "корневой элемент " + t.Name.Local + ", нужен list"})
-					return
-				}
-				sawRoot = true
-				depth++
-				continue
-			}
-			if t.Name.Local == "npc" && depth == 1 {
-				if parseNpc(dec, t, path, ctx) {
-					return // ошибка XML: декодер повторит её, запись уже внесена
-				}
-				continue
-			}
-			ctx.rep.SkippedElements[t.Name.Local]++
-			skipElement(dec, t)
-		case xml.EndElement:
-			depth--
-		}
-	}
-	if !sawRoot {
-		ctx.entry(Entry{Category: "npcs", File: path, Line: 1,
-			Code: CodeXML, Message: "пустой файл"})
-	}
+	parseListFile(path, data, "npcs", "npc", parseNpc, ctx)
 }
 
 // parseNpc разбирает NPC верхнего уровня; true — декодер в состоянии ошибки
@@ -352,13 +310,11 @@ func joinPath(frames []bagFrame, name string) string {
 	return sb.String()
 }
 
-// npcBagSet кладёт значение в raw-bag NPC с ключом-путём: интернирование
-// ключа, счётчик неизвестных ключей (за вычетом типизированных), пустые
-// значения — счётчик, дубликаты — счётчик (побеждает последний).
 // bagSet кладёт значение в raw-bag записи с ключом-путём: интернирование
-// ключа, квалифицированный счётчик неизвестных (за вычетом typ — словаря
-// типизированных ключей категории), пустые значения — счётчик, дубликаты —
-// счётчик (побеждает последний). Возвращает bag (возможно, свежесозданный).
+// ключа, квалифицированный счётчик неизвестных (qual+key, за вычетом typ —
+// словаря типизированных ключей категории), пустые значения — счётчик,
+// дубликаты — счётчик (побеждает последний). Возвращает bag (возможно,
+// свежесозданный).
 func bagSet(ctx *loadCtx, bag map[string]string, qual, key, val string, typ map[string]bool) map[string]string {
 	if bag == nil {
 		bag = map[string]string{}

@@ -1,8 +1,10 @@
 package data
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"io/fs"
@@ -152,4 +154,52 @@ func manifestOf(inputs map[string][sha256.Size]byte) [sha256.Size]byte {
 	var out [sha256.Size]byte
 	copy(out[:], h.Sum(nil))
 	return out
+}
+
+// parseListFile — общий каркас файла плоской категории: корень list,
+// элементы верхнего уровня с именем elem разбираются parseElem (true — стоп
+// файла после ошибки XML, запись уже внесена), прочие элементы — счётчик
+// пропуска. Специфика категории — в parseElem.
+func parseListFile(path string, data []byte, cat, elem string, parseElem func(dec *xml.Decoder, t xml.StartElement, path string, ctx *loadCtx) bool, ctx *loadCtx) {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	sawRoot := false
+	depth := 0
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			ctx.entry(Entry{Category: cat, File: path, Line: lineOf(dec),
+				Code: CodeXML, Message: fmt.Sprintf("разбор XML: %v", err)})
+			return
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if !sawRoot {
+				if t.Name.Local != "list" {
+					ctx.entry(Entry{Category: cat, File: path, Line: lineOf(dec),
+						Code: CodeRoot, Message: "корневой элемент " + t.Name.Local + ", нужен list"})
+					return
+				}
+				sawRoot = true
+				depth++
+				continue
+			}
+			if t.Name.Local == elem && depth == 1 {
+				if parseElem(dec, t, path, ctx) {
+					return // ошибка XML: декодер повторит её, запись уже внесена
+				}
+				continue
+			}
+			ctx.rep.SkippedElements[t.Name.Local]++
+			skipElement(dec, t)
+		case xml.EndElement:
+			depth--
+		}
+	}
+	if !sawRoot {
+		ctx.entry(Entry{Category: cat, File: path, Line: 1,
+			Code: CodeXML, Message: "пустой файл"})
+	}
 }

@@ -155,7 +155,9 @@ func parseSpawnFile(path string, data []byte, ctx *loadCtx) {
 				continue
 			}
 			if t.Name.Local == "spawn" && depth == 1 {
-				parseSpawnBlock(dec, t, path, ctx)
+				if parseSpawnBlock(dec, t, path, ctx) {
+					return // ошибка XML: запись уже внесена этим циклом
+				}
 				continue
 			}
 			ctx.rep.SkippedElements[t.Name.Local]++
@@ -171,7 +173,9 @@ func parseSpawnFile(path string, data []byte, ctx *loadCtx) {
 }
 
 // parseSpawnBlock разбирает блок спавна: точечные и территориальные записи.
-func parseSpawnBlock(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx) {
+// true — декодер в состоянии ошибки XML (запись вносит файловый цикл),
+// разбор файла прекращается.
+func parseSpawnBlock(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx) bool {
 	terrName := ""
 	for _, a := range start.Attr {
 		switch a.Name.Local {
@@ -196,7 +200,7 @@ func parseSpawnBlock(dec *xml.Decoder, start xml.StartElement, path string, ctx 
 		if err != nil {
 			ctx.entry(Entry{Category: "spawns", File: path, Line: lineOf(dec),
 				Code: CodeXML, Message: fmt.Sprintf("разбор XML: %v", err)})
-			return
+			return true
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -218,7 +222,7 @@ func parseSpawnBlock(dec *xml.Decoder, start xml.StartElement, path string, ctx 
 			}
 		case xml.EndElement:
 			if t.Name.Local == start.Name.Local {
-				return
+				return false
 			}
 		}
 	}
@@ -267,7 +271,11 @@ func parseTerritory(dec *xml.Decoder, start xml.StartElement, terrName, path str
 		return
 	}
 	t.MinZ, t.MaxZ = int32(minZ), int32(maxZ)
-	t.Nodes = readNodes(dec, start, "территории "+terrName, path, ctx)
+	nodes, ok := readNodes(dec, start, "территории "+terrName, path, ctx)
+	if !ok {
+		return // обрыв XML: ошибка вносится файловым циклом, регистрировать нечего
+	}
+	t.Nodes = nodes
 	// Дубликат имени — ошибка; побеждает первая. Территория без узлов
 	// регистрируется: вырожденность геометрии — валидация P2.5.
 	if _, dup := ctx.territories[t.Name]; dup {
@@ -319,7 +327,11 @@ func parseBanned(dec *xml.Decoder, start xml.StartElement, terrName, path string
 		return
 	}
 	b.MinZ, b.MaxZ = int32(minZ), int32(maxZ)
-	b.Nodes = readNodes(dec, start, "banned_territory", path, ctx)
+	nodes, ok := readNodes(dec, start, "banned_territory", path, ctx)
+	if !ok {
+		return // обрыв XML: ошибка вносится файловым циклом
+	}
+	b.Nodes = nodes
 	if !terOK {
 		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
 			Code: CodeAttr, Message: "banned_territory до определения территории " + terrName})
@@ -331,12 +343,14 @@ func parseBanned(dec *xml.Decoder, start xml.StartElement, terrName, path string
 
 // readNodes разбирает узлы {x, y} территории до её закрывающего тега; узел
 // без x/y — запись-ошибка (узел пропускается), прочие элементы — счётчик.
-func readNodes(dec *xml.Decoder, start xml.StartElement, what, path string, ctx *loadCtx) [][2]int32 {
+// false — обрыв XML: накопленные узлы недостоверны, территория не
+// регистрируется (единственную запись обрыва вносит файловый цикл).
+func readNodes(dec *xml.Decoder, start xml.StartElement, what, path string, ctx *loadCtx) ([][2]int32, bool) {
 	var nodes [][2]int32
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			return nodes
+			return nodes, false
 		}
 		switch tt := tok.(type) {
 		case xml.StartElement:
@@ -367,7 +381,7 @@ func readNodes(dec *xml.Decoder, start xml.StartElement, what, path string, ctx 
 			skipElement(dec, tt)
 		case xml.EndElement:
 			if tt.Name.Local == start.Name.Local {
-				return nodes
+				return nodes, true
 			}
 		}
 	}

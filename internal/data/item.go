@@ -1,10 +1,8 @@
 package data
 
 import (
-	"bytes"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"io/fs"
 	"path/filepath"
 	"strconv"
@@ -90,48 +88,9 @@ func countXML(fsys fs.FS, dir string) int {
 	return n
 }
 
+// parseItemsFile — предметы через общий каркас parseListFile.
 func parseItemsFile(path string, data []byte, ctx *loadCtx) {
-	dec := xml.NewDecoder(bytes.NewReader(data))
-	sawRoot := false
-	depth := 0
-	for {
-		tok, err := dec.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec),
-				Code: CodeXML, Message: fmt.Sprintf("разбор XML: %v", err)})
-			return
-		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			if !sawRoot {
-				if t.Name.Local != "list" {
-					ctx.entry(Entry{Category: "items", File: path, Line: lineOf(dec),
-						Code: CodeRoot, Message: "корневой элемент " + t.Name.Local + ", нужен list"})
-					return
-				}
-				sawRoot = true
-				depth++
-				continue
-			}
-			if t.Name.Local == "item" && depth == 1 {
-				if parseItem(dec, t, path, ctx) {
-					return // ошибка XML: декодер повторит её, запись уже внесена
-				}
-				continue
-			}
-			ctx.rep.SkippedElements[t.Name.Local]++
-			skipElement(dec, t)
-		case xml.EndElement:
-			depth--
-		}
-	}
-	if !sawRoot {
-		ctx.entry(Entry{Category: "items", File: path, Line: 1,
-			Code: CodeXML, Message: "пустой файл"})
-	}
+	parseListFile(path, data, "items", "item", parseItem, ctx)
 }
 
 // parseItem разбирает предмет; true — декодер в состоянии ошибки XML, разбор

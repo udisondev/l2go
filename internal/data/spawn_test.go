@@ -255,3 +255,40 @@ func TestDeepNestingSpawnsNoPanic(t *testing.T) {
 		t.Fatal("Load вернул nil")
 	}
 }
+
+// TestXMLTruncationSingleEntry: обрыв XML внутри блока/территории — ровно
+// одна запись об ошибке (файловый цикл), усечённая территория не
+// регистрируется.
+func TestXMLTruncationSingleEntry(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		truncTerr bool // обрыв произошёл внутри территории
+	}{
+		{"обрыв внутри территории", `<list enabled="true"><spawn zone="z"><territory minZ="0" maxZ="1"><node x="1" y="1"/><node x="2"`, true},
+		{"обрыв внутри блока", `<list enabled="true"><spawn zone="z"><territory minZ="0" maxZ="1"><node x="1" y="1"/></territory><npc id="20550" count="1" resp`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fsys := catFS(map[string]*fstest.MapFile{"spawns/x/x.xml": {Data: []byte(tt.content)}})
+			st, rep, err := Load(fsys)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			count := 0
+			for _, e := range rep.Errors {
+				if e.Code == CodeXML {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Errorf("записей CodeXML = %d; want 1: %+v", count, rep.Errors)
+			}
+			if tt.truncTerr {
+				if _, ok := st.Territory("z"); ok {
+					t.Errorf("усечённая территория зарегистрирована")
+				}
+			}
+		})
+	}
+}
