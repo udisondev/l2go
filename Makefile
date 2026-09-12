@@ -23,6 +23,8 @@ lint:
 checkdeps:
 	bash scripts/checkdeps.sh
 
+FUZZTIME ?= 10m
+
 tidy:
 	$(GO) mod tidy
 
