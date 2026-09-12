@@ -170,19 +170,47 @@ func TestDecodeDupLayerZ(t *testing.T) {
 	b := newRegionBuilder()
 	var cells [blockCells][]uint16
 	fillDefault(&cells, encodeCellWord(0, NSWEAll))
+	// Пара равных высот и тройка равных — обе ячейки считаются по одному разу.
 	cells[0] = []uint16{encodeCellWord(0, East), encodeCellWord(0, West)}
-	cells[8] = []uint16{encodeCellWord(64, North)}
+	cells[8] = []uint16{encodeCellWord(64, North), encodeCellWord(64, South), encodeCellWord(64, West)}
 	b.addMultilayer(cells)
 	reg, st, err := decodeRegion(16, 10, b.build())
 	if err != nil {
 		t.Fatalf("decodeRegion: %v", err)
 	}
-	if st.dupLayerZ != 1 {
-		t.Errorf("dupLayerZ = %d; want 1", st.dupLayerZ)
+	if st.dupLayerZ != 2 {
+		t.Errorf("dupLayerZ = %d; want 2 (ячейки, а не повторные слои)", st.dupLayerZ)
 	}
 	// Дубль высоты не мешает точному совпадению: первый слой побеждает.
 	if z, nswe := reg.CellAt(cellGeo(16, 10, 0, 0, 0)).Nearest(0); z != 0 || nswe != East {
 		t.Errorf("Nearest при дубле = (%d, %v); want (0, East)", z, nswe)
+	}
+}
+
+// TestComplexAllNSWE — все 16 комбинаций NSWE complex-блока читаются
+// битов-в-бит.
+func TestComplexAllNSWE(t *testing.T) {
+	b := newRegionBuilder()
+	var cells [blockCells]uint16
+	for lx := 0; lx < 8; lx++ {
+		for ly := 0; ly < 8; ly++ {
+			i := lx*8 + ly
+			cells[i] = encodeCellWord(8*(i/2), NSWE(i%16))
+		}
+	}
+	blk := b.addComplex(cells)
+	reg, _, err := decodeRegion(16, 10, b.build())
+	if err != nil {
+		t.Fatalf("decodeRegion: %v", err)
+	}
+	for lx := 0; lx < 8; lx++ {
+		for ly := 0; ly < 8; ly++ {
+			i := lx*8 + ly
+			z, nswe := reg.CellAt(cellGeo(16, 10, blk, lx, ly)).Nearest(0)
+			if z != 8*(i/2) || nswe != NSWE(i%16) {
+				t.Errorf("complex(%d,%d) = (%d, %v); want (%d, %v)", lx, ly, z, nswe, 8*(i/2), NSWE(i%16))
+			}
+		}
 	}
 }
 
@@ -192,20 +220,21 @@ func TestDecodeEvilInputs(t *testing.T) {
 		flat = append(flat, blockFlatByte, 0, 0)
 	}
 	cases := []struct {
-		name  string
-		data  []byte
-		code  string
-		block int
+		name   string
+		data   []byte
+		code   string
+		block  int
+		offset int
 	}{
-		{"пустой файл", nil, CodeTrunc, 0},
-		{"flat обрезан", []byte{blockFlatByte, 1}, CodeTrunc, 0},
-		{"complex обрезан", append([]byte{blockComplexByte}, make([]byte, 127)...), CodeTrunc, 0},
-		{"multilayer обрезан на ячейках", []byte{blockMultiByte, 1, 0, 0x10, 1}, CodeTrunc, 0},
-		{"тип блока 3", []byte{3}, CodeBlockType, 0},
-		{"тип блока 255", []byte{255}, CodeBlockType, 0},
-		{"слоёв 0", []byte{blockMultiByte, 0}, CodeLayers, 0},
-		{"слоёв 126", append([]byte{blockMultiByte, 126}, make([]byte, 252)...), CodeLayers, 0},
-		{"лишний хвост", append(append([]byte{}, flat...), 0), CodeTail, regionBlocks - 1},
+		{"пустой файл", nil, CodeTrunc, 0, 0},
+		{"flat обрезан", []byte{blockFlatByte, 1}, CodeTrunc, 0, 0},
+		{"complex обрезан", append([]byte{blockComplexByte}, make([]byte, 127)...), CodeTrunc, 0, 0},
+		{"multilayer обрезан на ячейках", []byte{blockMultiByte, 1, 0, 0x10, 1}, CodeTrunc, 0, 4},
+		{"тип блока 3", []byte{3}, CodeBlockType, 0, 0},
+		{"тип блока 255", []byte{255}, CodeBlockType, 0, 0},
+		{"слоёв 0", []byte{blockMultiByte, 0}, CodeLayers, 0, 1},
+		{"слоёв 126", append([]byte{blockMultiByte, 126}, make([]byte, 252)...), CodeLayers, 0, 1},
+		{"лишний хвост", append(append([]byte{}, flat...), 0), CodeTail, regionBlocks - 1, len(flat)},
 	}
 	for _, tc := range cases {
 		_, _, err := decodeRegion(16, 10, tc.data)
@@ -218,15 +247,16 @@ func TestDecodeEvilInputs(t *testing.T) {
 			t.Errorf("%s: ошибка %T (%v); want *StructError", tc.name, err, err)
 			continue
 		}
-		if se.Code != tc.code || se.Block != tc.block {
-			t.Errorf("%s: код %s блок %d; want %s блок %d", tc.name, se.Code, se.Block, tc.code, tc.block)
+		if se.Code != tc.code || se.Block != tc.block || se.Offset != tc.offset {
+			t.Errorf("%s: код %s блок %d офсет %d; want %s блок %d офсет %d",
+				tc.name, se.Code, se.Block, se.Offset, tc.code, tc.block, tc.offset)
 		}
 		if se.Message == "" {
 			t.Errorf("%s: пустое сообщение", tc.name)
 		}
 	}
 
-	_, _, err := decodeRegion(RegionsX, 10, flat)
+	_, _, err := decodeRegion(regionsX, 10, flat)
 	if err == nil {
 		t.Fatalf("регион вне сетки: ошибки нет; want %s", CodeRange)
 	}
@@ -272,7 +302,7 @@ func TestRegionAtBounds(t *testing.T) {
 		t.Fatalf("decodeRegion: %v", err)
 	}
 	m := &Map{}
-	m.regions[16*RegionsY+10] = reg
+	m.regions[16*regionsY+10] = reg
 	if m.RegionAt(16*regionCells, 10*regionCells) != reg {
 		t.Error("RegionAt на первой ячейке региона = nil")
 	}
@@ -288,7 +318,7 @@ func TestRegionAtBounds(t *testing.T) {
 	if m.RegionAt(-1, 0) != nil {
 		t.Error("RegionAt(−1) ≠ nil")
 	}
-	if m.RegionAt(RegionsX*regionCells, 0) != nil {
+	if m.RegionAt(regionsX*regionCells, 0) != nil {
 		t.Error("RegionAt вне мира ≠ nil")
 	}
 }

@@ -87,7 +87,9 @@ func TestMapFileOffHeap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mapFile: %v", err)
 	}
-	_, st, err := decodeRegion(16, 10, mapped)
+	// Region удерживает байты и индексы живыми до второго замера — иначе
+	// оракул измеряет только мусор (индексы мертвы к моменту GC).
+	regHold, st, err := decodeRegion(16, 10, mapped)
 	if err != nil {
 		t.Fatalf("decodeRegion: %v", err)
 	}
@@ -96,9 +98,10 @@ func TestMapFileOffHeap(t *testing.T) {
 	runtime.GC()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(regHold)
 
 	delta := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-	limit := int64(float64(st.indexBytes)*1.3) + 2<<20
+	limit := int64(st.indexBytes) * 13 / 10
 	if delta > limit {
 		t.Errorf("рост кучи %d байт сверх лимита %d (HeapIndexBytes %d, файл %d байт): байты попали в кучу",
 			delta, limit, st.indexBytes, len(data))

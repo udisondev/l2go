@@ -1,136 +1,140 @@
+# Baseline P2.3 (internal/geo), rev. 2 — после S8-дофиксов (F25/F35).
+# Команда: go test ./internal/geo/ -bench=. -benchmem -run '^$' -count=10
+# Окружение: рабочая машина владельца (Windows 11, Go 1.27); -race не применяется (нет gcc).
+# benchstat-совместимо; послабление против perf.md §0: без пиннинга ядер — локальный датчик регресса, эталон для сравнения берётся тем же способом.
 goos: windows
 goarch: amd64
 pkg: github.com/udisondev/l2go/internal/geo
 cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
-BenchmarkRegionAtInWorld-16        	1000000000	         0.9751 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         1.033 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         0.9825 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         0.9926 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         0.9840 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         0.9790 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         0.9671 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         1.011 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         0.9743 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtInWorld-16        	1000000000	         1.006 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9601 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9718 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9612 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9610 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9601 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9868 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9655 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9592 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         0.9601 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRegionAtOutOfWorld-16     	1000000000	         1.007 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	212879341	         5.740 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	196650903	         5.991 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	211052131	         5.695 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	210758889	         5.662 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	211708540	         5.666 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	212652768	         5.652 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	212970582	         5.684 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	211642263	         5.648 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	211788836	         5.650 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtFlat-16             	211717915	         5.659 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	214213684	         5.593 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	215386144	         5.577 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	215559246	         5.559 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	214421220	         5.580 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	214683492	         5.584 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	215142171	         5.582 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	213697130	         5.654 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	214805043	         5.589 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	214727822	         5.582 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtComplex-16          	215284750	         5.584 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	214213417	         5.653 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	213554442	         5.606 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	214843232	         5.594 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	214591506	         5.586 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	214624360	         5.583 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	214673467	         5.590 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	214053084	         5.606 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	214926039	         5.590 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	214254837	         5.590 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCellAtMultilayer-16       	211364728	         5.635 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	897385466	         1.349 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	895786443	         1.339 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	897729865	         1.347 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	897480770	         1.337 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	897023228	         1.343 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	893921334	         1.340 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	868782682	         1.363 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	903798891	         1.341 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	899513811	         1.338 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeFlat-16          	899540109	         1.382 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	878717247	         1.373 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	855291151	         1.373 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	871436278	         1.375 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	879062274	         1.369 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	876898759	         1.369 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	879147928	         1.368 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	858843981	         1.388 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	875684218	         1.370 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	884244964	         1.370 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeComplex-16       	876058204	         1.408 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	907985504	         1.349 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	867139738	         1.339 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	900800811	         1.342 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	896706843	         1.343 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	883119826	         1.340 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	901544570	         1.335 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	909947085	         1.367 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	905814194	         1.334 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	906388224	         1.334 ns/op	       0 B/op	       0 allocs/op
-BenchmarkBlockTypeMultilayer-16    	904717422	         1.362 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        11.55 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        10.97 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        10.88 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        11.10 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        11.00 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        10.93 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        11.34 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        11.02 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        10.98 ns/op	       0 B/op	       0 allocs/op
-BenchmarkNearestMultilayer-16      	100000000	        11.02 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	100000000	        10.57 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	100000000	        10.40 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	100000000	        10.41 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	100000000	        10.88 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	100000000	        11.99 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	94756790	        11.58 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	100000000	        10.65 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	114371173	        10.55 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	100000000	        10.37 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLowerZMultilayer-16       	100000000	        10.34 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.32 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.35 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.23 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.32 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.59 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.27 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.37 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.26 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.46 ns/op	       0 B/op	       0 allocs/op
-BenchmarkHigherZMultilayer-16      	100000000	        10.30 ns/op	       0 B/op	       0 allocs/op
-BenchmarkDecodeRegion-16           	      22	  50951745 ns/op	 577.52 MB/s	53882026 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      24	  50904583 ns/op	 578.06 MB/s	53882038 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      24	  53298225 ns/op	 552.09 MB/s	53882028 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      24	  50838746 ns/op	 578.80 MB/s	53882028 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      22	  50537673 ns/op	 582.25 MB/s	53882020 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      22	  52578627 ns/op	 559.65 MB/s	53882028 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      24	  51509425 ns/op	 571.27 MB/s	53882024 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      24	  50712821 ns/op	 580.24 MB/s	53882022 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      22	  51676073 ns/op	 569.43 MB/s	53882024 B/op	      45 allocs/op
-BenchmarkDecodeRegion-16           	      20	  51274845 ns/op	 573.88 MB/s	53882024 B/op	      45 allocs/op
-BenchmarkManifest-16               	      62	  18940192 ns/op	1553.61 MB/s	      38 B/op	       1 allocs/op
-BenchmarkManifest-16               	      62	  18905818 ns/op	1556.43 MB/s	      32 B/op	       1 allocs/op
-BenchmarkManifest-16               	      62	  18907353 ns/op	1556.31 MB/s	      32 B/op	       1 allocs/op
-BenchmarkManifest-16               	      62	  18910342 ns/op	1556.06 MB/s	      32 B/op	       1 allocs/op
-BenchmarkManifest-16               	      63	  18883970 ns/op	1558.24 MB/s	      32 B/op	       1 allocs/op
-BenchmarkManifest-16               	      62	  18901153 ns/op	1556.82 MB/s	      32 B/op	       1 allocs/op
-BenchmarkManifest-16               	      62	  18902027 ns/op	1556.75 MB/s	      32 B/op	       1 allocs/op
-BenchmarkManifest-16               	      62	  18886813 ns/op	1558.00 MB/s	      32 B/op	       1 allocs/op
-BenchmarkManifest-16               	      62	  18867152 ns/op	1559.62 MB/s	      32 B/op	       1 allocs/op
-BenchmarkManifest-16               	      63	  18896575 ns/op	1557.20 MB/s	      32 B/op	       1 allocs/op
+BenchmarkRegionAtInWorld-16        	699063196	         1.733 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	695450190	         1.729 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	699416860	         1.726 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	697494772	         1.719 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	700596556	         1.717 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	700437481	         1.721 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	698319552	         1.719 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	695915612	         1.722 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	692095005	         1.723 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtInWorld-16        	698278916	         1.723 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	988008051	         1.239 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	983575921	         1.218 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	977697895	         1.221 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	986581666	         1.238 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	984385189	         1.216 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	933910281	         1.223 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	986760956	         1.222 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	982250728	         1.216 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	985245132	         1.229 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRegionAtOutOfWorld-16     	982944278	         1.216 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	578307121	         2.052 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	597228858	         2.038 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	592711134	         2.037 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	593647965	         2.031 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	588060028	         2.060 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	587178946	         2.047 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	582887019	         2.046 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	570548025	         2.045 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	590395155	         2.031 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtFlat-16             	590490736	         2.069 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	587139300	         2.052 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	596775027	         2.020 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	565166526	         2.045 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	591841465	         2.038 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	589057953	         2.038 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	590169255	         2.040 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	593978247	         2.032 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	593914748	         2.047 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	596402499	         2.031 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtComplex-16          	596130516	         2.021 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	555977170	         2.047 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	596083729	         2.030 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	588095764	         2.047 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	591287088	         2.033 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	589358541	         2.041 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	586323418	         2.043 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	596634681	         2.030 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	592619516	         2.041 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	576173220	         2.030 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCellAtMultilayer-16       	598152008	         2.037 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8532 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8425 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8414 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8431 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8538 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8436 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8403 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8416 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8508 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeFlat-16          	1000000000	         0.8430 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8571 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8586 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8570 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8610 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8700 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8724 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8639 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8650 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8946 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeComplex-16       	1000000000	         0.8760 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8565 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8585 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8575 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8661 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8489 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8483 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8539 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8495 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8449 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBlockTypeMultilayer-16    	1000000000	         0.8488 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	167450380	         7.126 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	167394903	         7.159 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	163447188	         7.283 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	168823314	         7.105 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	165080222	         7.251 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	163830644	         7.274 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	168515728	         7.097 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	167896766	         7.175 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	163663040	         7.343 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNearestMultilayer-16      	165253951	         7.187 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	192747830	         6.137 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	191713441	         6.239 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	185864940	         6.375 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	199827381	         6.087 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	197522474	         6.150 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	199218795	         6.049 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	194542561	         6.181 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	197842004	         6.079 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	197426446	         6.131 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLowerZMultilayer-16       	194807155	         6.108 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	188176287	         6.356 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	186858462	         6.490 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	182959850	         6.528 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	189840195	         6.310 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	187207633	         6.464 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	186859276	         6.381 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	188595621	         6.410 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	186298461	         6.375 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	189207627	         6.365 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHigherZMultilayer-16      	188536449	         6.451 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDecodeRegion-16           	      20	  52793450 ns/op	 557.37 MB/s	53882032 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      22	  52004686 ns/op	 565.83 MB/s	53882267 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      22	  52820791 ns/op	 557.08 MB/s	53882019 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      21	  51887095 ns/op	 567.11 MB/s	53882032 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      22	  52206386 ns/op	 563.64 MB/s	53882030 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      21	  52839952 ns/op	 556.88 MB/s	53882020 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      22	  51981732 ns/op	 566.08 MB/s	53882020 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      22	  52159636 ns/op	 564.15 MB/s	53882034 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      21	  52843919 ns/op	 556.84 MB/s	53882016 B/op	      45 allocs/op
+BenchmarkDecodeRegion-16           	      22	  52327241 ns/op	 562.34 MB/s	53882019 B/op	      45 allocs/op
+BenchmarkManifest-16               	     100	  11847732 ns/op	2483.65 MB/s	      36 B/op	       1 allocs/op
+BenchmarkManifest-16               	     100	  11839104 ns/op	2485.46 MB/s	      32 B/op	       1 allocs/op
+BenchmarkManifest-16               	      92	  11836502 ns/op	2486.01 MB/s	      32 B/op	       1 allocs/op
+BenchmarkManifest-16               	     100	  11817151 ns/op	2490.08 MB/s	      32 B/op	       1 allocs/op
+BenchmarkManifest-16               	     100	  11800038 ns/op	2493.69 MB/s	      32 B/op	       1 allocs/op
+BenchmarkManifest-16               	     100	  11771541 ns/op	2499.73 MB/s	      32 B/op	       1 allocs/op
+BenchmarkManifest-16               	      98	  11788342 ns/op	2496.17 MB/s	      32 B/op	       1 allocs/op
+BenchmarkManifest-16               	      96	  11852971 ns/op	2482.56 MB/s	      32 B/op	       1 allocs/op
+BenchmarkManifest-16               	     100	  11853393 ns/op	2482.47 MB/s	      32 B/op	       1 allocs/op
+BenchmarkManifest-16               	      99	  11884560 ns/op	2475.96 MB/s	      32 B/op	       1 allocs/op
 PASS
-ok  	github.com/udisondev/l2go/internal/geo	148.853s
+ok  	github.com/udisondev/l2go/internal/geo	144.978s

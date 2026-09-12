@@ -4,9 +4,9 @@ package geo
 // Interlude (GPL): GeoEngine.java, IBlock.java, IRegion.java.
 
 const (
-	// RegionsX и RegionsY — сетка регионов мира (GEO_REGIONS_X/Y канона).
-	RegionsX = 32
-	RegionsY = 32
+	// regionsX и regionsY — сетка регионов мира (GEO_REGIONS_X/Y канона).
+	regionsX = 32
+	regionsY = 32
 
 	cellSize    = 16 // сторона ячейки в юнитах (COORDINATE_SCALE)
 	worldMinX   = -655360
@@ -61,9 +61,6 @@ func GeoToWorldX(geoX int) int { return geoX*cellSize + worldMinX + worldCenter 
 
 // GeoToWorldY — то же для оси Y (порт GeoEngine.getWorldY).
 func GeoToWorldY(geoY int) int { return geoY*cellSize + worldMinY + worldCenter }
-
-// leUint16 читает uint16 little-endian (порядок байтов формата .l2j).
-func leUint16(b []byte) uint16 { return uint16(b[0]) | uint16(b[1])<<8 }
 
 // cellHeight — высота из слова complex-ячейки/слоя: биты 4–15 со знаком,
 // шаг 8 юнитов, диапазон −16384..16376 (порт ComplexBlock.getCellHeight).

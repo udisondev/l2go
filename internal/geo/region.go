@@ -1,20 +1,23 @@
 package geo
 
-import "fmt"
+import (
+	"encoding/binary"
+	"fmt"
+)
 
 // Map — геодата мира: регионы без файла — nil. Статика: после загрузки не
 // мутируется, чтение из любой горутины без синхронизации.
 type Map struct {
-	regions [RegionsX * RegionsY]*Region
+	regions [regionsX * regionsY]*Region
 }
 
 // RegionAt возвращает регион глобальных гео-координат или nil, если геодаты
 // нет (в том числе для координат вне мира). Порт GeoEngine.getRegion.
 func (m *Map) RegionAt(geoX, geoY int) *Region {
-	if uint(geoX) >= RegionsX*regionCells || uint(geoY) >= RegionsY*regionCells {
+	if uint(geoX) >= regionsX*regionCells || uint(geoY) >= regionsY*regionCells {
 		return nil
 	}
-	return m.regions[geoX/regionCells*RegionsY+geoY/regionCells]
+	return m.regions[geoX/regionCells*regionsY+geoY/regionCells]
 }
 
 // blockIdx — индексная запись блока: смещение в байтах региона и старт
@@ -43,14 +46,14 @@ func (r *Region) CellAt(geoX, geoY int) Cell {
 	if uint(lx) >= regionCells || uint(ly) >= regionCells {
 		panic(fmt.Sprintf("geo: CellAt(%d, %d) вне региона (%d, %d)", geoX, geoY, r.rx, r.ry))
 	}
-	return Cell{r: r, b: uint16(lx>>3)<<8 | uint16(ly>>3), c: uint8(lx&7)<<3 | uint8(ly&7)}
+	return Cell{r: r, b: uint16(lx>>3)<<8 | uint16(ly>>3), cell: uint8(lx&7)<<3 | uint8(ly&7)}
 }
 
 // Cell — ячейка представления; все методы без аллокаций.
 type Cell struct {
-	r *Region
-	b uint16
-	c uint8
+	r    *Region
+	b    uint16 // индекс блока в регионе
+	cell uint8  // локальный индекс ячейки в блоке, X-мажор
 }
 
 // BlockType возвращает тип блока ячейки.
@@ -110,9 +113,9 @@ func (c Cell) HigherZ(z int) int {
 func (c Cell) soleLayer(off int) (int, NSWE) {
 	d := c.r.data
 	if BlockType(d[off]) == BlockFlat {
-		return int(int16(leUint16(d[off+1:]))), NSWEAll
+		return int(int16(binary.LittleEndian.Uint16(d[off+1:]))), NSWEAll
 	}
-	v := leUint16(d[off+1+2*int(c.c):])
+	v := binary.LittleEndian.Uint16(d[off+1+2*int(c.cell):])
 	return cellHeight(v), cellNSWE(v)
 }
 
@@ -122,7 +125,7 @@ func (c Cell) nearestLayer(off, z int) (int, NSWE) {
 	start, end := c.mlSpan(off)
 	bestZ, bestNSWE, bestDz := 0, NSWE(0), 0
 	for o := start + 1; o < end; o += 2 {
-		v := leUint16(d[o:])
+		v := binary.LittleEndian.Uint16(d[o:])
 		lz := cellHeight(v)
 		if lz == z {
 			return lz, cellNSWE(v)
@@ -141,7 +144,7 @@ func (c Cell) scanZ(z int, higher bool) int {
 	start, end := c.mlSpan(int(c.r.blocks[c.b].off))
 	best, ok := 0, false
 	for o := start + 1; o < end; o += 2 {
-		lz := cellHeight(leUint16(d[o:]))
+		lz := cellHeight(binary.LittleEndian.Uint16(d[o:]))
 		switch {
 		case lz == z:
 			return z
@@ -160,7 +163,7 @@ func (c Cell) scanZ(z int, higher bool) int {
 // mlSpan — границы данных ячейки multilayer-блока: [start, end).
 func (c Cell) mlSpan(off int) (start, end int) {
 	d := c.r.data
-	start = off + int(c.r.cells[int(c.r.blocks[c.b].ml)+int(c.c)])
+	start = off + int(c.r.cells[int(c.r.blocks[c.b].ml)+int(c.cell)])
 	end = start + 1 + 2*int(d[start])
 	return start, end
 }

@@ -160,6 +160,13 @@ func printGeoReport(rep *geo.Report) {
 		fmt.Printf("игнорировано файлов вне паттерна: %d\n", rep.IgnoredFiles)
 	}
 	for _, e := range rep.Errors {
-		fmt.Printf("ошибка %s %s блок %d офсет %d: %s\n", e.Code, e.File, e.Block, e.Offset, e.Message)
+		// Блок/офсет имеют смысл только у структурных кодов; файл-уровневые
+		// (dup/range/io/size) печатаются без них.
+		switch e.Code {
+		case geo.CodeTrunc, geo.CodeBlockType, geo.CodeLayers, geo.CodeTail:
+			fmt.Printf("ошибка %s %s блок %d офсет %d: %s\n", e.Code, e.File, e.Block, e.Offset, e.Message)
+		default:
+			fmt.Printf("ошибка %s %s: %s\n", e.Code, e.File, e.Message)
+		}
 	}
 }

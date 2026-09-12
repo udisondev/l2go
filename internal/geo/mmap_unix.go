@@ -26,8 +26,7 @@ func mapFile(path string) ([]byte, func() error, error) {
 		return nil, func() error { return nil }, nil
 	}
 	if !sizeOK(int(size)) {
-		return nil, nil, &StructError{Code: CodeSize,
-			Message: fmt.Sprintf("файл %d байт сверх потолка %d", size, maxRegionBytes)}
+		return nil, nil, sizeErr(size)
 	}
 
 	data, err := syscall.Mmap(int(f.Fd()), 0, int(size), syscall.PROT_READ, syscall.MAP_PRIVATE)

@@ -41,8 +41,7 @@ func mapFile(path string) ([]byte, func() error, error) {
 		return nil, func() error { return nil }, nil
 	}
 	if !sizeOK(int(size)) {
-		return nil, nil, &StructError{Code: CodeSize,
-			Message: fmt.Sprintf("файл %d байт сверх потолка %d", size, maxRegionBytes)}
+		return nil, nil, sizeErr(size)
 	}
 
 	h, _, callErr := procCreateFileMappingW.Call(f.Fd(), 0, pageReadOnly,

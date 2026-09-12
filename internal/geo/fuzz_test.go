@@ -1,6 +1,7 @@
 package geo
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,14 +15,14 @@ func cellLayerHeights(c Cell) []int {
 	off := int(bi.off)
 	switch BlockType(d[off]) {
 	case BlockFlat:
-		return []int{int(int16(leUint16(d[off+1:])))}
+		return []int{int(int16(binary.LittleEndian.Uint16(d[off+1:])))}
 	case BlockComplex:
-		return []int{cellHeight(leUint16(d[off+1+2*int(c.c):]))}
+		return []int{cellHeight(binary.LittleEndian.Uint16(d[off+1+2*int(c.cell):]))}
 	default:
 		start, end := c.mlSpan(int(c.r.blocks[c.b].off))
 		out := make([]int, 0, (end-start)/2)
 		for o := start + 1; o < end; o += 2 {
-			out = append(out, cellHeight(leUint16(d[o:])))
+			out = append(out, cellHeight(binary.LittleEndian.Uint16(d[o:])))
 		}
 		return out
 	}

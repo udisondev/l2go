@@ -13,11 +13,13 @@ func TestLookupZeroAllocs(t *testing.T) {
 			t.Fatalf("decodeRegion: %v", err)
 		}
 		m := &Map{}
-		m.regions[16*RegionsY+10] = reg
+		m.regions[16*regionsY+10] = reg
 		return m
 	}
 	m := newMixed(t)
 	flatCell := m.RegionAt(16*regionCells, 10*regionCells).CellAt(16*regionCells, 10*regionCells)
+	// Блок 2 — complex (blockX 0, blockY 2); зонд — ячейка (0, 0).
+	complexCell := m.RegionAt(16*regionCells, 10*regionCells).CellAt(16*regionCells, 10*regionCells+16)
 	// Блок 3 — multilayer (blockX 0, blockY 3); ячейка (lx, ly) = (0, 0)
 	// этого блока трёхслойная.
 	mlCell := m.RegionAt(16*regionCells, 10*regionCells).CellAt(16*regionCells, 10*regionCells+24)
@@ -33,6 +35,11 @@ func TestLookupZeroAllocs(t *testing.T) {
 		{"Nearest flat", func() { sinkInt, sinkNSWE = flatCell.Nearest(100) }},
 		{"LowerZ flat", func() { sinkInt = flatCell.LowerZ(100) }},
 		{"HigherZ flat", func() { sinkInt = flatCell.HigherZ(100) }},
+		{"CellAt complex", func() { sinkCell = complexCell.r.CellAt(16*regionCells, 10*regionCells+16) }},
+		{"BlockType complex", func() { sinkType = complexCell.BlockType() }},
+		{"Nearest complex", func() { sinkInt, sinkNSWE = complexCell.Nearest(100) }},
+		{"LowerZ complex", func() { sinkInt = complexCell.LowerZ(100) }},
+		{"HigherZ complex", func() { sinkInt = complexCell.HigherZ(100) }},
 		{"CellAt multilayer", func() { sinkCell = mlCell.r.CellAt(16*regionCells, 10*regionCells+24) }},
 		{"BlockType multilayer", func() { sinkType = mlCell.BlockType() }},
 		{"Nearest multilayer", func() { sinkInt, sinkNSWE = mlCell.Nearest(100) }},

@@ -85,12 +85,12 @@ func LoadDir(dir string) (*Map, *Report, error) {
 			rep.IgnoredFiles++
 			continue
 		}
-		if rx >= RegionsX || ry >= RegionsY {
+		if rx >= regionsX || ry >= regionsY {
 			rep.err(Entry{File: e.Name(), Code: CodeRange,
-				Message: fmt.Sprintf("координаты региона (%d, %d) вне сетки %d×%d", rx, ry, RegionsX, RegionsY)})
+				Message: fmt.Sprintf("координаты региона (%d, %d) вне сетки %d×%d", rx, ry, regionsX, regionsY)})
 			continue
 		}
-		if m.regions[rx*RegionsY+ry] != nil {
+		if m.regions[rx*regionsY+ry] != nil {
 			rep.err(Entry{File: e.Name(), Code: CodeDup,
 				Message: fmt.Sprintf("регион (%d, %d) уже установлен другим файлом", rx, ry)})
 			continue
@@ -98,7 +98,7 @@ func LoadDir(dir string) (*Map, *Report, error) {
 
 		data, unmap, err := mapFile(filepath.Join(dir, e.Name()))
 		if err != nil {
-			rep.err(Entry{File: e.Name(), Code: CodeIO, Message: err.Error()})
+			rep.err(structEntry(e.Name(), err))
 			continue
 		}
 		reg, st, err := decodeRegion(rx, ry, data)
@@ -111,7 +111,7 @@ func LoadDir(dir string) (*Map, *Report, error) {
 		}
 		// Регион установлен: отображение живёт до конца процесса, unmap
 		// не вызывается (контракт doc пакета).
-		m.regions[rx*RegionsY+ry] = reg
+		m.regions[rx*regionsY+ry] = reg
 		rep.Files++
 		rep.Regions++
 		rep.BlocksFlat += st.blocksFlat

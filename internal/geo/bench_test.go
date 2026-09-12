@@ -54,7 +54,7 @@ func buildBenchFixtures() {
 	mlCell = mlReg.CellAt(16*regionCells, 10*regionCells)
 
 	benchMap = &Map{}
-	benchMap.regions[16*RegionsY+10] = mlReg
+	benchMap.regions[16*regionsY+10] = mlReg
 	mlInputs = map[string][sha256.Size]byte{}
 }
 
@@ -62,19 +62,34 @@ func benchReady() {
 	benchOnce.Do(buildBenchFixtures)
 }
 
+// regionAtCoords — переменные координаты: литералы компилятор сворачивает,
+// и бенч измерял бы пол одного load.
+var regionAtCoords = [4][2]int{
+	{16*regionCells + 3, 10*regionCells + 3},
+	{16*regionCells + 2000, 10*regionCells + 17},
+	{18 * regionCells, 12*regionCells + 2047},
+	{16*regionCells + 100, 10*regionCells + 100},
+}
+
 func BenchmarkRegionAtInWorld(b *testing.B) {
 	benchReady()
 	b.ReportAllocs()
+	i := 0
 	for b.Loop() {
-		sinkRegion = benchMap.RegionAt(16*regionCells+3, 10*regionCells+3)
+		c := regionAtCoords[i%len(regionAtCoords)]
+		sinkRegion = benchMap.RegionAt(c[0], c[1])
+		i++
 	}
 }
 
 func BenchmarkRegionAtOutOfWorld(b *testing.B) {
 	benchReady()
 	b.ReportAllocs()
+	i := 0
 	for b.Loop() {
-		sinkRegion = benchMap.RegionAt(-1, 0)
+		c := regionAtCoords[i%len(regionAtCoords)]
+		sinkRegion = benchMap.RegionAt(c[0]+regionsX*regionCells, c[1])
+		i++
 	}
 }
 

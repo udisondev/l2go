@@ -2,6 +2,7 @@ package geo
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,6 +39,16 @@ func TestLoadDirClean(t *testing.T) {
 	}
 	if rep.ExtraTiles != 0 {
 		t.Errorf("ExtraTiles = %d; want 0", rep.ExtraTiles)
+	}
+	// Счётчики агрегации: flat-регион без слоёв, индексы — только blocks.
+	if rep.LayersTotal != 0 || rep.MaxLayersPerCell != 0 {
+		t.Errorf("layers=%d max=%d; want 0 и 0", rep.LayersTotal, rep.MaxLayersPerCell)
+	}
+	if want := regionBlocks * 8; rep.HeapIndexBytes != want {
+		t.Errorf("HeapIndexBytes = %d; want %d", rep.HeapIndexBytes, want)
+	}
+	if want := regionBlocks * 3; rep.BytesMapped != want {
+		t.Errorf("BytesMapped = %d; want %d", rep.BytesMapped, want)
 	}
 	if m.RegionAt(16*regionCells, 10*regionCells) == nil {
 		t.Error("регион не установлен")
@@ -206,5 +217,67 @@ func TestManifestDeterminism(t *testing.T) {
 	}
 	if want := sha256.Sum256(nil); repBroken.Manifest != want {
 		t.Errorf("манифест без установленных регионов = %x; want %x", repBroken.Manifest, want)
+	}
+
+	// Dup-проигравший не входит: манифест дубля равен манифесту одного
+	// файла-победителя (F22).
+	dirDup, dirSolo := t.TempDir(), t.TempDir()
+	writeRegion(t, dirDup, "016_010.l2j", flatZeroRegion())
+	writeRegion(t, dirDup, "16_10.l2j", flatZeroRegion()) // dup: тот же регион
+	writeRegion(t, dirSolo, "016_010.l2j", flatZeroRegion())
+	_, repDup, err := LoadDir(dirDup)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	_, repSolo, err := LoadDir(dirSolo)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if repDup.Manifest != repSolo.Manifest {
+		t.Errorf("манифест с dup = %x; want %x (состав победителя)", repDup.Manifest, repSolo.Manifest)
+	}
+}
+
+// TestManifestPinned — зашитое значение манифеста фиксированного состава
+// пинует фрейминг (le64(len(name)) ‖ name ‖ contentHash, как в датапаке):
+// правка формулы не может пройти ворота молча.
+func TestManifestPinned(t *testing.T) {
+	dir := t.TempDir()
+	writeRegion(t, dir, "16_10.l2j", flatZeroRegion())
+	_, rep, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	// Пин: SHA-256 над le64(9) ‖ "16_10.l2j" ‖ SHA-256(196 608 нулевых байт).
+	wantHex := "c77130fdcea364bf3e4626bc8f1ee71d069e86076c109c8469a25a0a38d7a19a"
+	if got := fmt.Sprintf("%x", rep.Manifest); got != wantHex {
+		t.Errorf("манифест = %s; want %s (пин фрейминга)", got, wantHex)
+	}
+}
+
+// TestLoadDirMLCounters — агрегация счётчиков multilayer-региона.
+func TestLoadDirMLCounters(t *testing.T) {
+	b := newRegionBuilder()
+	var cells [blockCells][]uint16
+	fillDefault(&cells, encodeCellWord(0, East))
+	cells[0] = []uint16{encodeCellWord(-8, East), encodeCellWord(8, West)}
+	b.addMultilayer(cells)
+	dir := t.TempDir()
+	writeRegion(t, dir, "16_10.l2j", b.build())
+	_, rep, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if rep.BlocksMultilayer != 1 || rep.BlocksFlat != regionBlocks-1 {
+		t.Errorf("blocks: ml=%d flat=%d; want 1 и %d", rep.BlocksMultilayer, rep.BlocksFlat, regionBlocks-1)
+	}
+	if want := blockCells + 1; rep.LayersTotal != want {
+		t.Errorf("LayersTotal = %d; want %d", rep.LayersTotal, want)
+	}
+	if rep.MaxLayersPerCell != 2 {
+		t.Errorf("MaxLayersPerCell = %d; want 2", rep.MaxLayersPerCell)
+	}
+	if want := regionBlocks*8 + blockCells*2; rep.HeapIndexBytes != want {
+		t.Errorf("HeapIndexBytes = %d; want %d", rep.HeapIndexBytes, want)
 	}
 }
