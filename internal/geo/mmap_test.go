@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"testing"
 )
 
@@ -60,8 +61,12 @@ func TestMapFileMissing(t *testing.T) {
 // TestMapFileOffHeap: байты отображения не попадают в Go-кучу — рост кучи
 // ограничен известными индексами представления (HeapIndexBytes) с запасом на
 // шум измерения.
-func TestMapFileOffHeap(t *testing.T) {
-	// Multilayer-тяжёлый регион: 3 слоя в каждой ячейке (~29 МБ).
+// writeMLRegionFile строит multilayer-тяжёлый регион (3 слоя в каждой
+// ячейке, ~29 МБ), пишет его во временный файл и возвращает путь и размер.
+// Фикстура живёт в отдельной функции: буфер билдера не пересекается с окном
+// измерений off-heap-теста.
+func writeMLRegionFile(t *testing.T) (string, int) {
+	t.Helper()
 	b := newRegionBuilder()
 	var cells [blockCells][]uint16
 	one := [3]uint16{encodeCellWord(-16, East), encodeCellWord(0, West), encodeCellWord(16, North)}
@@ -72,14 +77,20 @@ func TestMapFileOffHeap(t *testing.T) {
 		b.addMultilayer(cells)
 	}
 	data := b.build()
-
 	path := filepath.Join(t.TempDir(), "16_10.l2j")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
+	return path, len(data)
+}
 
+func TestMapFileOffHeap(t *testing.T) {
+	path, size := writeMLRegionFile(t)
+
+	// debug.FreeOSMemory завершает свип: без него под параллельной
+	// нагрузкой HeapAlloc держит несвёрнутый мусор и дельта скачет.
 	runtime.GC()
-	runtime.GC()
+	debug.FreeOSMemory()
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 
@@ -93,9 +104,15 @@ func TestMapFileOffHeap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeRegion: %v", err)
 	}
+	// Финализация индексов: ёмкость равна длине — append-запас не остаётся
+	// в живой куче (детерминированный оракул, без измерений).
+	if cap(regHold.cells) != len(regHold.cells) || cap(regHold.blocks) != len(regHold.blocks) {
+		t.Errorf("индексы не финализированы: cells cap=%d len=%d, blocks cap=%d len=%d",
+			cap(regHold.cells), len(regHold.cells), cap(regHold.blocks), len(regHold.blocks))
+	}
 
 	runtime.GC()
-	runtime.GC()
+	debug.FreeOSMemory()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(regHold)
@@ -104,9 +121,9 @@ func TestMapFileOffHeap(t *testing.T) {
 	limit := int64(st.indexBytes) * 13 / 10
 	if delta > limit {
 		t.Errorf("рост кучи %d байт сверх лимита %d (HeapIndexBytes %d, файл %d байт): байты попали в кучу",
-			delta, limit, st.indexBytes, len(data))
+			delta, limit, st.indexBytes, size)
 	}
-	t.Logf("файл %d байт, HeapIndexBytes %d, рост кучи %d", len(data), st.indexBytes, delta)
+	t.Logf("файл %d байт, HeapIndexBytes %d, рост кучи %d", size, st.indexBytes, delta)
 	if err := unmap(); err != nil {
 		t.Errorf("unmap: %v", err)
 	}

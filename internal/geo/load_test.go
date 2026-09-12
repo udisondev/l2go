@@ -281,3 +281,27 @@ func TestLoadDirMLCounters(t *testing.T) {
 		t.Errorf("HeapIndexBytes = %d; want %d", rep.HeapIndexBytes, want)
 	}
 }
+
+// TestStructEntry — проводка ошибок в записи отчёта: StructError сохраняет
+// код и место (включая size из mapFile), прочие ошибки читаются как io.
+func TestStructEntry(t *testing.T) {
+	se := structEntry("16_10.l2j", sizeErr(1<<30+7))
+	if se.File != "16_10.l2j" || se.Code != CodeSize || se.Block != 0 || se.Offset != 0 {
+		t.Errorf("sizeErr → %+v; want код size и имя файла", se)
+	}
+	if se.Message == "" {
+		t.Error("sizeErr → пустое сообщение")
+	}
+	tr := structEntry("x.l2j", &StructError{Code: CodeTrunc, Block: 5, Offset: 12, Message: "м"})
+	if tr.Code != CodeTrunc || tr.Block != 5 || tr.Offset != 12 || tr.File != "x.l2j" {
+		t.Errorf("StructError → %+v; want побитовый перенос квартета", tr)
+	}
+	io := structEntry("y.l2j", errPlain("открытие"))
+	if io.Code != CodeIO || io.File != "y.l2j" || io.Message != "открытие" {
+		t.Errorf("прочая ошибка → %+v; want io с исходным сообщением", io)
+	}
+}
+
+type errPlain string
+
+func (e errPlain) Error() string { return string(e) }

@@ -143,7 +143,9 @@ func (r *Report) err(e Entry) {
 	r.Errors = append(r.Errors, e)
 }
 
-// structEntry превращает ошибку декода в запись отчёта, добавляя имя файла.
+// structEntry превращает ошибку декода или отображения файла в запись
+// отчёта, добавляя имя файла: StructError сохраняет свой код и место, прочие
+// ошибки читаются как io.
 func structEntry(file string, err error) Entry {
 	var se *StructError
 	if errors.As(err, &se) {
