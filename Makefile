@@ -27,3 +27,21 @@ tidy:
 	$(GO) mod tidy
 
 check: build lint checkdeps race
+
+# Fuzz-смоук: короткий прогон всех целей (CI гоняет тот же список).
+fuzz-smoke:
+	$(GO) test -fuzz='^FuzzRoundtripFixed$$' -fuzztime=10s ./internal/protocol/
+	$(GO) test -fuzz='^FuzzRoundtripS$$' -fuzztime=10s ./internal/protocol/
+	$(GO) test -fuzz='^FuzzReadOffsets$$' -fuzztime=10s ./internal/protocol/
+	$(GO) test -fuzz='^FuzzNextFrame$$' -fuzztime=10s ./internal/protocol/
+	$(GO) test -fuzz='^FuzzLoginDecrypt$$' -fuzztime=10s ./internal/crypto/
+	$(GO) test -fuzz='^FuzzGameDecrypt$$' -fuzztime=10s ./internal/crypto/
+
+# Длинный локальный фаззинг: make fuzz-long FUZZTIME=30m (находки — в testdata/fuzz).
+fuzz-long:
+	$(GO) test -fuzz='^FuzzRoundtripFixed$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
+	$(GO) test -fuzz='^FuzzRoundtripS$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
+	$(GO) test -fuzz='^FuzzReadOffsets$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
+	$(GO) test -fuzz='^FuzzNextFrame$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
+	$(GO) test -fuzz='^FuzzLoginDecrypt$$' -fuzztime=$(FUZZTIME) ./internal/crypto/
+	$(GO) test -fuzz='^FuzzGameDecrypt$$' -fuzztime=$(FUZZTIME) ./internal/crypto/

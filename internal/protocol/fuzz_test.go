@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/hex"
+	"errors"
 	"math"
 	"testing"
 )
@@ -129,4 +130,28 @@ func containsNUL(s string) bool {
 		}
 	}
 	return false
+}
+
+// FuzzNextFrame — нарезка произвольного буфера на кадры: без паник; вернувшийся
+// кадр лежит внутри буфера, потребление всегда len(body)+2; ошибки — только
+// сентинелы ErrFrameIncomplete/ErrFrameLength (обёрнутые).
+func FuzzNextFrame(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{0x00})
+	f.Add([]byte{0x02, 0x00})
+	f.Add([]byte{0x00, 0x00})
+	f.Add([]byte{0x05, 0x00, 1, 2, 3})
+	f.Add([]byte{0xff, 0xff, 1, 2, 3})
+	f.Fuzz(func(t *testing.T, b []byte) {
+		body, err := NextFrame(b)
+		switch {
+		case err == nil:
+			if len(body)+2 > len(b) {
+				t.Fatalf("кадр вне буфера: len=%d buf=%d", len(body), len(b))
+			}
+		case errors.Is(err, ErrFrameIncomplete), errors.Is(err, ErrFrameLength):
+		default:
+			t.Fatalf("чужая ошибка: %v", err)
+		}
+	})
 }
