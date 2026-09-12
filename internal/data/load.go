@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // loader — загрузчик одной категории статики.
 type loader struct {
-	name string
-	run  func(fsys fs.FS, ctx *loadCtx)
+	run func(fsys fs.FS, ctx *loadCtx)
 }
 
 // loaders — все категории; порядок фиксирован и влияет на порядок записей
@@ -20,9 +21,9 @@ type loader struct {
 // категориями разрешаются после всех загрузчиков — порядок на проверку
 // целостности не влияет.
 var loaders = []loader{
-	{name: "items", run: loadItems},
-	{name: "npcs", run: loadNpcs},
-	{name: "spawns", run: loadSpawns},
+	{run: loadItems},
+	{run: loadNpcs},
+	{run: loadSpawns},
 }
 
 // loadCtx накапливает результаты категорий, отчёт, состав манифеста входов
@@ -101,6 +102,33 @@ func (ctx *loadCtx) internKey(k string) string {
 	}
 	ctx.keyDict[k] = k
 	return k
+}
+
+// loadFlatCategory читает плоскую категорию: XML-уровень dir, подкаталоги
+// (custom и прочие) считаются в отчёт и не читаются. Общая механика
+// предметов и NPC; специфика — в parseFn.
+func loadFlatCategory(fsys fs.FS, ctx *loadCtx, dir, cat string, parseFn func(path string, data []byte, ctx *loadCtx)) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		ctx.fatal(fmt.Errorf("data: чтение каталога %s: %w", dir, err))
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			ctx.rep.SkippedDirs[e.Name()] += countXML(fsys, dir+"/"+e.Name())
+			continue
+		}
+		if !strings.EqualFold(filepath.Ext(e.Name()), ".xml") {
+			continue
+		}
+		path := dir + "/" + e.Name()
+		data, ok := ctx.readFileCapped(fsys, path, cat)
+		if !ok {
+			continue
+		}
+		ctx.rep.Files++
+		parseFn(path, data, ctx)
+	}
 }
 
 // manifestOf сворачивает состав входов в один SHA-256: отсортированный список

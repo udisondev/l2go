@@ -62,3 +62,24 @@ func TestCheckUsage(t *testing.T) {
 		t.Fatal("без аргументов должен быть ненулевой код")
 	}
 }
+
+func TestCheckBrokenLink(t *testing.T) {
+	bin := buildBinary(t)
+	root := t.TempDir()
+	for _, d := range []string{filepath.Join("stats", "items"), filepath.Join("stats", "npcs"), "spawns"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+	}
+	spawn := filepath.Join(root, "spawns", "a.xml")
+	if err := os.WriteFile(spawn, []byte(`<list enabled="true"><spawn name="x"><npc id="6666" x="1" y="2" z="3"/></spawn></list>`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	out, err := exec.Command(bin, "check", root).CombinedOutput()
+	if err == nil {
+		t.Fatalf("битая ссылка должна давать ненулевой код; вывод:\n%s", out)
+	}
+	if !strings.Contains(string(out), "link") {
+		t.Errorf("вывод без кода link:\n%s", out)
+	}
+}

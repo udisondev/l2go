@@ -16,7 +16,7 @@ type Entry struct {
 const (
 	CodeXML    = "xml"    // малформленный или обрезанный XML
 	CodeRoot   = "root"   // чужой корневой элемент
-	CodeDupID  = "dup_id" // дубликат ID предмета или имени территории
+	CodeDupID  = "dup_id" // дубликат ID записи или имени территории
 	CodeAttr   = "attr"   // обязательный атрибут отсутствует или задан повторно
 	CodeNumber = "number" // число вне домена или неразборчивое значение поля
 	CodeLimit  = "limit"  // файл превышает потолок размера
@@ -44,7 +44,7 @@ type Report struct {
 	// Счётчики широты данных (не ошибки).
 	EmptyValues int
 	DupKeys     int
-	UnnamedSets int
+	UnnamedSets int // set/param без имени
 	StatNoType  int
 
 	// Счётчики категорий P2.2.

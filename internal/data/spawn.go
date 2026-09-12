@@ -71,9 +71,9 @@ func (s NpcSpawn) Set(key string) (string, bool) {
 // spawnsDir — корень категории спавнов (обход рекурсивный).
 const spawnsDir = "spawns"
 
-// fakePlayerRange — диапазон fake players канона: спавн NPC из диапазона
-// без определения — счётчик, не ошибка (порт SpawnData.checkTemplate).
-func fakePlayerRange(id int64) bool {
+// isFakePlayerID — диапазон fake players канона: спавн NPC из диапазона без
+// определения — счётчик, не ошибка (порт SpawnData.checkTemplate).
+func isFakePlayerID(id int64) bool {
 	return id >= 80000 && id <= 89999
 }
 
@@ -181,9 +181,16 @@ func parseSpawnBlock(dec *xml.Decoder, start xml.StartElement, path string, ctx 
 			terrName = strings.TrimSpace(a.Value)
 		case "zones":
 			ctx.rep.SkippedElements["zones"]++ // ноль вхождений в каноне Interlude
+		default:
+			// selection/maximumNpc и прочее — режимы канона вне Interlude:
+			// фиксируются счётчиком, а не теряются.
+			skipAttr(ctx, "spawn", a.Name.Local)
 		}
 	}
-	var blockBag map[string]string // листья AIData, применяются к записям блока по порядку документа
+	// Листья AIData применяются к записям блока по порядку документа — как
+	// в каноне (параметры собираются при обходе, записи читают их в момент
+	// своего разбора).
+	var blockBag map[string]string
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -238,9 +245,11 @@ func parseTerritory(dec *xml.Decoder, start xml.StartElement, terrName, path str
 		case "name":
 			ctx.rep.TerrOwnName++
 		case "shape":
-			t.set["terr.shape"] = strings.TrimSpace(a.Value)
+			terrBagSet(ctx, t.set, "terr.shape", a.Value)
 		case "rad":
-			t.set["terr.rad"] = strings.TrimSpace(a.Value)
+			terrBagSet(ctx, t.set, "terr.rad", a.Value)
+		default:
+			skipAttr(ctx, "territory", a.Name.Local)
 		}
 	}
 	if minRaw == "" || maxRaw == "" {
@@ -258,54 +267,16 @@ func parseTerritory(dec *xml.Decoder, start xml.StartElement, terrName, path str
 		return
 	}
 	t.MinZ, t.MaxZ = int32(minZ), int32(maxZ)
-	nodesOK := true
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			return
-		}
-		switch tt := tok.(type) {
-		case xml.StartElement:
-			if tt.Name.Local != "node" {
-				ctx.rep.SkippedElements[tt.Name.Local]++
-				skipElement(dec, tt)
-				continue
-			}
-			var xRaw, yRaw string
-			for _, a := range tt.Attr {
-				switch a.Name.Local {
-				case "x":
-					xRaw = strings.TrimSpace(a.Value)
-				case "y":
-					yRaw = strings.TrimSpace(a.Value)
-				}
-			}
-			x, err1 := strconv.ParseInt(xRaw, 10, 32)
-			y, err2 := strconv.ParseInt(yRaw, 10, 32)
-			if xRaw == "" || yRaw == "" || err1 != nil || err2 != nil {
-				ctx.entry(Entry{Category: "spawns", File: path, Line: lineOf(dec),
-					Code: CodeAttr, Message: "узел территории " + terrName + " без x/y"})
-				nodesOK = false
-			} else {
-				t.Nodes = append(t.Nodes, [2]int32{int32(x), int32(y)})
-			}
-			skipElement(dec, tt)
-		case xml.EndElement:
-			if tt.Name.Local == start.Name.Local {
-				if !nodesOK || len(t.Nodes) == 0 {
-					return // ошибки узлов уже внесены; вырожденность геометрии — P2.5
-				}
-				if _, dup := ctx.territories[t.Name]; dup {
-					ctx.entry(Entry{Category: "spawns", File: path, Line: line,
-						Code: CodeDupID, Message: "дубликат имени территории " + t.Name + ", побеждает первая"})
-					return
-				}
-				ctx.territories[t.Name] = t
-				ctx.rep.Territories++
-				return
-			}
-		}
+	t.Nodes = readNodes(dec, start, "территории "+terrName, path, ctx)
+	// Дубликат имени — ошибка; побеждает первая. Территория без узлов
+	// регистрируется: вырожденность геометрии — валидация P2.5.
+	if _, dup := ctx.territories[t.Name]; dup {
+		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
+			Code: CodeDupID, Message: "дубликат имени территории " + t.Name + ", побеждает первая"})
+		return
 	}
+	ctx.territories[t.Name] = t
+	ctx.rep.Territories++
 }
 
 // parseBanned разбирает территорию-исключение и прикрепляет её к территории
@@ -320,12 +291,23 @@ func parseBanned(dec *xml.Decoder, start xml.StartElement, terrName, path string
 	}
 	b := BannedTerritory{}
 	var minRaw, maxRaw string
+	ter, terOK := ctx.territories[terrName]
 	for _, a := range start.Attr {
 		switch a.Name.Local {
 		case "minZ":
 			minRaw = strings.TrimSpace(a.Value)
 		case "maxZ":
 			maxRaw = strings.TrimSpace(a.Value)
+		case "shape":
+			if terOK {
+				terrBagSet(ctx, ter.set, "banned.shape", a.Value)
+			}
+		case "rad":
+			if terOK {
+				terrBagSet(ctx, ter.set, "banned.rad", a.Value)
+			}
+		default:
+			skipAttr(ctx, "banned", a.Name.Local)
 		}
 	}
 	minZ, err1 := strconv.ParseInt(minRaw, 10, 32)
@@ -337,10 +319,24 @@ func parseBanned(dec *xml.Decoder, start xml.StartElement, terrName, path string
 		return
 	}
 	b.MinZ, b.MaxZ = int32(minZ), int32(maxZ)
+	b.Nodes = readNodes(dec, start, "banned_territory", path, ctx)
+	if !terOK {
+		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
+			Code: CodeAttr, Message: "banned_territory до определения территории " + terrName})
+		return
+	}
+	ter.Banned = append(ter.Banned, b)
+	ctx.territories[terrName] = ter
+}
+
+// readNodes разбирает узлы {x, y} территории до её закрывающего тега; узел
+// без x/y — запись-ошибка (узел пропускается), прочие элементы — счётчик.
+func readNodes(dec *xml.Decoder, start xml.StartElement, what, path string, ctx *loadCtx) [][2]int32 {
+	var nodes [][2]int32
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			return
+			return nodes
 		}
 		switch tt := tok.(type) {
 		case xml.StartElement:
@@ -356,30 +352,40 @@ func parseBanned(dec *xml.Decoder, start xml.StartElement, terrName, path string
 					xRaw = strings.TrimSpace(a.Value)
 				case "y":
 					yRaw = strings.TrimSpace(a.Value)
+				default:
+					skipAttr(ctx, "node", a.Name.Local)
 				}
 			}
 			x, err1 := strconv.ParseInt(xRaw, 10, 32)
 			y, err2 := strconv.ParseInt(yRaw, 10, 32)
 			if xRaw == "" || yRaw == "" || err1 != nil || err2 != nil {
 				ctx.entry(Entry{Category: "spawns", File: path, Line: lineOf(dec),
-					Code: CodeAttr, Message: "узел banned_territory без x/y"})
+					Code: CodeAttr, Message: "узел " + what + " без x/y"})
 			} else {
-				b.Nodes = append(b.Nodes, [2]int32{int32(x), int32(y)})
+				nodes = append(nodes, [2]int32{int32(x), int32(y)})
 			}
 			skipElement(dec, tt)
 		case xml.EndElement:
 			if tt.Name.Local == start.Name.Local {
-				if ter, ok := ctx.territories[terrName]; ok {
-					ter.Banned = append(ter.Banned, b)
-					ctx.territories[terrName] = ter
-				} else {
-					ctx.entry(Entry{Category: "spawns", File: path, Line: line,
-						Code: CodeAttr, Message: "banned_territory до определения территории " + terrName})
-				}
-				return
+				return nodes
 			}
 		}
 	}
+}
+
+// terrBagSet кладёт значение в raw-bag территории: интернирование ключа,
+// пустые значения — счётчик, дубликаты — счётчик (как bag записей).
+func terrBagSet(ctx *loadCtx, set map[string]string, key, val string) {
+	key = ctx.internKey(key)
+	val = strings.TrimSpace(val)
+	if val == "" {
+		ctx.rep.EmptyValues++
+		return
+	}
+	if _, dup := set[key]; dup {
+		ctx.rep.DupKeys++
+	}
+	set[key] = val
 }
 
 // parseSpawnNpc разбирает запись спавна: точка и/или территория блока.
@@ -391,9 +397,14 @@ func parseSpawnNpc(dec *xml.Decoder, start xml.StartElement, terrName string, bl
 	count := int32(1)
 	respawn := int32(0)
 	hasRespawn := false
-	bag := map[string]string{}
-	for k, v := range blockBag {
-		bag[k] = v
+	// bag создаётся лениво: у большинства записей нет параметров за
+	// пределами типизированных атрибутов.
+	var bag map[string]string
+	if len(blockBag) > 0 {
+		bag = make(map[string]string, len(blockBag))
+		for k, v := range blockBag {
+			bag[k] = v
+		}
 	}
 	for _, a := range start.Attr {
 		v := strings.TrimSpace(a.Value)
@@ -427,15 +438,16 @@ func parseSpawnNpc(dec *xml.Decoder, start xml.StartElement, terrName string, bl
 			}
 			respawn, hasRespawn = int32(n), true
 		case "periodOfDay":
-			if v != "day" && v != "night" {
+			// Канон сравнивает без учёта регистра (equalsIgnoreCase).
+			if !strings.EqualFold(v, "day") && !strings.EqualFold(v, "night") {
 				ctx.entry(Entry{Category: "spawns", File: path, Line: line,
 					Code: CodeAttr, Message: "periodOfDay " + v + " вне домена (day|night)"})
 				skipElement(dec, start)
 				return
 			}
-			spawnBagSet(ctx, bag, "periodOfDay", v)
+			bag = spawnBagSet(ctx, bag, "periodOfDay", v)
 		default:
-			spawnBagSet(ctx, bag, a.Name.Local, v)
+			bag = spawnBagSet(ctx, bag, a.Name.Local, v)
 		}
 	}
 	if idRaw == "" {
@@ -522,18 +534,8 @@ func readSpawnAIData(dec *xml.Decoder, start xml.StartElement, bag map[string]st
 	}
 }
 
-// spawnBagSet кладёт значение в raw-bag спавна: интернирование ключей,
-// квалифицированный счётчик неизвестных (spawn.key.*), пустые — счётчик.
-func spawnBagSet(ctx *loadCtx, bag map[string]string, key, val string) {
-	key = ctx.internKey(key)
-	ctx.rep.UnknownKeys[ctx.internKey("spawn.key."+key)]++
-	val = strings.TrimSpace(val)
-	if val == "" {
-		ctx.rep.EmptyValues++
-		return
-	}
-	if _, dup := bag[key]; dup {
-		ctx.rep.DupKeys++
-	}
-	bag[key] = val
+// spawnBagSet — bagSet для записи спавна (квалификация spawn.key., без
+// типизированных ключей); bag создаётся лениво.
+func spawnBagSet(ctx *loadCtx, bag map[string]string, key, val string) map[string]string {
+	return bagSet(ctx, bag, "spawn.key.", key, val, nil)
 }

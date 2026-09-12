@@ -42,7 +42,7 @@ func resolveLinks(ctx *loadCtx) {
 		if ok {
 			continue
 		}
-		if l.fakeOK && l.kind == linkNPC && fakePlayerRange(l.keyID) {
+		if l.fakeOK && l.kind == linkNPC && isFakePlayerID(l.keyID) {
 			ctx.rep.FakePlayersSkipped++
 			continue
 		}

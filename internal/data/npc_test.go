@@ -25,7 +25,7 @@ func TestNpcGolden(t *testing.T) {
 	n := mustNpc(t, st, 20550)
 	if n.Name != "Учебный орк" || n.Title != "Разбойник" || n.Level != 27 ||
 		n.Type != "Monster" || n.Race != "HUMANOID" {
-		t.Errorf("20550 = name=%q title=%q level=%d type=%q race=%q", n.Name, n.Title, n.Level, n.Type, n.Race)
+		t.Errorf("Npc(20550) = name=%q title=%q level=%d type=%q race=%q; want \"Учебный орк\", \"Разбойник\", 27, \"Monster\", \"HUMANOID\"", n.Name, n.Title, n.Level, n.Type, n.Race)
 	}
 	if n.AggroRange != 500 || n.ClanHelpRange != 300 || !n.IsAggressive {
 		t.Errorf("20550 аггро: aggro=%d clanHelp=%d aggressive=%t", n.AggroRange, n.ClanHelpRange, n.IsAggressive)
@@ -44,10 +44,10 @@ func TestNpcGolden(t *testing.T) {
 	}
 	wantDrops := []DropList{
 		{Type: "drop", Groups: []DropGroup{
-			{Chance: 70, Items: []Drop{{9001, 1, 1, 25}, {9003, 2, 4, 50}}},
-			{Chance: 0.5, Items: []Drop{{9002, 1, 1, 100}}},
-		}, Items: []Drop{{9005, 1, 2, 8.5}}},
-		{Type: "spoil", Items: []Drop{{9004, 1, 1, 100}}},
+			{Chance: 70, Items: []Drop{{ItemID: 9001, Min: 1, Max: 1, Chance: 25}, {ItemID: 9003, Min: 2, Max: 4, Chance: 50}}},
+			{Chance: 0.5, Items: []Drop{{ItemID: 9002, Min: 1, Max: 1, Chance: 100}}},
+		}, Items: []Drop{{ItemID: 9005, Min: 1, Max: 2, Chance: 8.5}}},
+		{Type: "spoil", Items: []Drop{{ItemID: 9004, Min: 1, Max: 1, Chance: 100}}},
 	}
 	if !reflect.DeepEqual(n.DropLists, wantDrops) {
 		t.Errorf("DropLists = %+v; want %+v (порядок файла)", n.DropLists, wantDrops)
@@ -182,7 +182,7 @@ func npcFS(t *testing.T, npcXML string) fstest.MapFS {
 
 // npcBody — минимальный NPC; «###» замещается вложенными элементами.
 func npcBody(id int) string {
-	return "<npc id=\"" + itoa(id) + "\" level=\"10\" type=\"Monster\" name=\"n\">###</npc>"
+	return "<npc id=\"" + strconv.Itoa(id) + "\" level=\"10\" type=\"Monster\" name=\"n\">###</npc>"
 }
 
 // dropBody — NPC с дроп-секцией (обёртка dropLists/drop вокруг items).
@@ -191,4 +191,60 @@ func dropBody(id int, items string) string {
 	return strings.Replace(npcBody(id), "###", body, 1)
 }
 
-func itoa(n int) string { return strconv.Itoa(n) }
+func TestNpcEvilDofix(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		wantCode string
+	}{
+		{"дроп без шанса", "<list>" + dropBody(21010, "<item id=\"9001\" min=\"1\" max=\"1\"/>") + "</list>", CodeAttr},
+		{"группа без шанса", "<list>" + strings.Replace(npcBody(21011), "###", "<dropLists><drop><group><item id=\"9001\" min=\"1\" max=\"1\" chance=\"5\"/></group></drop></dropLists>", 1) + "</list>", CodeAttr},
+		{"миньон count кривой", "<list>" + strings.Replace(npcBody(21012), "###", "<parameters><minions name=\"P\"><npc id=\"20550\" count=\"много\"/></minions></parameters>", 1) + "</list>", CodeNumber},
+		{"миньон respawnTime отрицательный", "<list>" + strings.Replace(npcBody(21013), "###", "<parameters><minions name=\"P\"><npc id=\"20550\" count=\"1\" respawnTime=\"-5\"/></minions></parameters>", 1) + "</list>", CodeNumber},
+		{"коллизия кривая", "<list>" + strings.Replace(npcBody(21014), "###", "<collision><radius normal=\"тринадцать\"/></collision>", 1) + "</list>", CodeNumber},
+		{"ignoreNpcId отрицательный", "<list>" + strings.Replace(npcBody(21015), "###", "<ai><clanList><ignoreNpcId>-5</ignoreNpcId></clanList></ai>", 1) + "</list>", CodeNumber},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, rep, err := Load(npcFS(t, tt.content))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			found := false
+			for _, e := range rep.Errors {
+				if e.Code == tt.wantCode {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("нет записи %q; записи: %+v", tt.wantCode, rep.Errors)
+			}
+		})
+	}
+}
+
+// TestNpcQuietLossCounters: потеря состава без ошибок — счётчиками.
+func TestNpcQuietLossCounters(t *testing.T) {
+	content := "<list>" +
+		"<npc id=\"21020\" level=\"10\" type=\"Monster\" name=\"n\">" +
+		"<parameters><param value=\"безымянный\"/></parameters>" +
+		"<dropLists><drop><group chance=\"oops\"><item id=\"9001\" min=\"1\" max=\"1\" chance=\"5\"/></group></drop></dropLists>" +
+		"</npc></list>"
+	_, rep, err := Load(npcFS(t, content))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if rep.UnnamedSets != 1 {
+		t.Errorf("UnnamedSets = %d; want 1 (param без имени)", rep.UnnamedSets)
+	}
+	// Группа с кривым шансом отброшена: её предметы не считаются и не
+	// оставляют фантомных ссылок.
+	if rep.DropItems != 0 {
+		t.Errorf("DropItems = %d; want 0 (группа отброшена)", rep.DropItems)
+	}
+	for _, e := range rep.Errors {
+		if e.Code == CodeLink {
+			t.Errorf("фантомная ссылка отброшенной группы: %+v", e)
+		}
+	}
+}

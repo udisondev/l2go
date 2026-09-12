@@ -50,7 +50,7 @@ func TestSpawnGolden(t *testing.T) {
 		t.Fatal("территория synth_territory отсутствует")
 	}
 	if ter.MinZ != -3800 || ter.MaxZ != -3400 || len(ter.Nodes) != 3 || ter.Nodes[0] != [2]int32{70780, 125060} {
-		t.Errorf("synth_territory = %+v", ter)
+		t.Errorf("Territory(synth_territory) = minZ=%d maxZ=%d nodes=%v; want -3800/-3400, 3 узла", ter.MinZ, ter.MaxZ, ter.Nodes)
 	}
 	both, ok := st.Territory("synth_both")
 	if !ok {
@@ -169,5 +169,89 @@ func TestDeepNestingNoPanic(t *testing.T) {
 	}
 	if rep.DeepSkips == 0 {
 		t.Errorf("DeepSkips = 0; want >0 (элементы глубже потолка пути)")
+	}
+}
+
+// TestSpawnAIData: листья AIData — raw-bag записей блока, по порядку
+// документа (семантика канона: параметры собираются при обходе, запись
+// читает их в момент своего разбора). Территориальные shape/rad — bag.
+func TestSpawnAIData(t *testing.T) {
+	content := `<list enabled="true">
+	<spawn zone="ai_zone">
+		<territory minZ="-10" maxZ="10" shape="NPoly" rad="500">
+			<node x="5" y="5"/>
+			<node x="6" y="6"/>
+			<node x="7" y="7"/>
+		</territory>
+		<npc id="20550" count="1" respawnDelay="15"/>
+		<AIData>
+			<aggroRange>400</aggroRange>
+			<disableRandomWalk>true</disableRandomWalk>
+		</AIData>
+		<npc id="29019" x="1" y="2" z="3" heading="7" respawnDelay="5"/>
+	</spawn>
+</list>`
+	fsys := catFS(map[string]*fstest.MapFile{
+		"stats/npcs/a.xml": {Data: []byte("<list>" + npcBody(20550) + npcBody(29019) + "</list>")},
+		"spawns/a.xml":     {Data: []byte(content)},
+	})
+	st, rep, err := Load(fsys)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if rep.HasErrors() {
+		t.Fatalf("AIData/shape/rad — широта, не ошибки: %+v", rep.Errors)
+	}
+	sp := st.Spawns()
+	if len(sp) != 2 {
+		t.Fatalf("Spawns = %d; want 2", len(sp))
+	}
+	// Запись до AIData — листьев не получает; после — получает.
+	if _, ok := sp[0].Set("aidata.disableRandomWalk"); ok {
+		t.Errorf("запись до AIData получила листья; порядок документа нарушен")
+	}
+	for key, want := range map[string]string{"aidata.aggroRange": "400", "aidata.disableRandomWalk": "true"} {
+		if v, ok := sp[1].Set(key); !ok || v != want {
+			t.Errorf("Set(%q) = (%q, %v); want (%q, true)", key, v, ok, want)
+		}
+	}
+	ter, _ := st.Territory("ai_zone")
+	for key, want := range map[string]string{"terr.shape": "NPoly", "terr.rad": "500"} {
+		if v, ok := ter.Set(key); !ok || v != want {
+			t.Errorf("Territory.Set(%q) = (%q, %v); want (%q, true)", key, v, ok, want)
+		}
+	}
+}
+
+// TestPeriodOfDayCaseInsensitive: канон сравнивает без учёта регистра.
+func TestPeriodOfDayCaseInsensitive(t *testing.T) {
+	content := `<list enabled="true"><spawn name="a">` +
+		`<npc id="20550" x="1" y="2" z="3" respawnDelay="1" periodOfDay="Day"/>` +
+		`</spawn></list>`
+	fsys := catFS(map[string]*fstest.MapFile{
+		"stats/npcs/a.xml": {Data: []byte("<list>" + npcBody(20550) + "</list>")},
+		"spawns/a.xml":     {Data: []byte(content)},
+	})
+	_, rep, err := Load(fsys)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if rep.HasErrors() {
+		t.Fatalf("periodOfDay=Day должен приниматься (equalsIgnoreCase канона): %+v", rep.Errors)
+	}
+}
+
+// TestDeepNestingSpawnsNoPanic: спавн-ветка разбора тоже итеративна.
+func TestDeepNestingSpawnsNoPanic(t *testing.T) {
+	deep := `<list enabled="true"><spawn zone="z"><territory minZ="0" maxZ="1">` +
+		strings.Repeat("<a>", 50000) + strings.Repeat("</a>", 50000) +
+		`</territory></spawn></list>`
+	fsys := catFS(map[string]*fstest.MapFile{"spawns/deep.xml": {Data: []byte(deep)}})
+	st, rep, err := Load(fsys)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if st == nil || rep == nil {
+		t.Fatal("Load вернул nil")
 	}
 }

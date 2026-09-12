@@ -178,3 +178,16 @@ func TestTerritoryFirstWins(t *testing.T) {
 		t.Errorf("победила %+v; want первая запись (minZ=0)", ter)
 	}
 }
+
+// TestInternKeyNoAllocations: интернирование фальсифицируемо — повторный
+// ключ не аллоцирует (словарь удерживает единственный экземпляр строки).
+func TestInternKeyNoAllocations(t *testing.T) {
+	ctx := newLoadCtx()
+	ctx.internKey("stats.vitals.hp") // прогрев
+	n := testing.AllocsPerRun(100, func() {
+		ctx.internKey("stats.vitals.hp")
+	})
+	if n > 0 {
+		t.Errorf("internKey на повторном ключе: %v аллокаций; want 0 (словарь переиспользует экземпляр)", n)
+	}
+}

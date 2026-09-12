@@ -49,7 +49,7 @@ func printReport(rep *data.Report) {
 		fmt.Printf("пустые значения: %d\n", rep.EmptyValues)
 	}
 	if rep.DupKeys > 0 {
-		fmt.Printf("дубликаты ключей внутри предмета: %d\n", rep.DupKeys)
+		fmt.Printf("дубликаты ключей raw-bag: %d\n", rep.DupKeys)
 	}
 	if rep.UnnamedSets > 0 {
 		fmt.Printf("set без имени: %d\n", rep.UnnamedSets)

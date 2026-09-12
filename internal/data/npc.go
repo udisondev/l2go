@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"math"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -90,7 +89,7 @@ const maxBagDepth = 32
 // поглощаемые ими); прочие ключи считаются неизвестными (широта данных).
 var npcTypedBagKeys = map[string]bool{
 	"npc.id": true, "npc.level": true, "npc.type": true, "npc.name": true,
-	"npc.title": true, "race": true,
+	"npc.title":     true,
 	"ai.aggroRange": true, "ai.clanHelpRange": true, "ai.isAggressive": true,
 	"collision.radius.normal": true, "collision.height.normal": true,
 	"minions": true,
@@ -107,29 +106,11 @@ type bagFrame struct {
 // (custom и прочие) считаются в отчёт и не читаются. Семантика разбора и
 // дефолты: L2J_Mobius NpcData.parseDocument (порт, GPLv3).
 func loadNpcs(fsys fs.FS, ctx *loadCtx) {
-	entries, err := fs.ReadDir(fsys, npcsDir)
-	if err != nil {
-		ctx.fatal(fmt.Errorf("data: чтение каталога %s: %w", npcsDir, err))
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			ctx.rep.SkippedDirs[e.Name()] += countXML(fsys, npcsDir+"/"+e.Name())
-			continue
-		}
-		if !strings.EqualFold(filepath.Ext(e.Name()), ".xml") {
-			continue
-		}
-		path := npcsDir + "/" + e.Name()
-		data, ok := ctx.readFileCapped(fsys, path, "npcs")
-		if !ok {
-			continue
-		}
-		ctx.rep.Files++
-		parseNpcsFile(path, data, ctx)
-	}
+	loadFlatCategory(fsys, ctx, npcsDir, "npcs", parseNpcsFile)
 }
 
+// parseNpcsFile разбирает файл категории NPC: корень list, NPC верхнего
+// уровня; true из parseNpc — остановка файла после ошибки XML.
 func parseNpcsFile(path string, data []byte, ctx *loadCtx) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	sawRoot := false
@@ -181,28 +162,30 @@ func parseNpc(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCt
 	n := Npc{Level: 85, Type: "Folk"} // дефолты канона (NpcData, порт)
 	bag := map[string]string{}
 	var idRaw string
-	haveLevel, haveType, haveName, haveTitle := false, false, false, false
-	seen := map[string]bool{}
-	for _, a := range start.Attr {
-		if seen[a.Name.Local] {
+	haveID, haveLevel, haveType, haveName, haveTitle := false, false, false, false, false
+	dupAttr := func(name string, seen *bool) {
+		if *seen {
 			ctx.entry(Entry{Category: "npcs", File: path, Line: line,
-				Code: CodeAttr, Message: "повтор атрибута " + a.Name.Local})
+				Code: CodeAttr, Message: "повтор атрибута " + name})
 		}
-		seen[a.Name.Local] = true
+		*seen = true
+	}
+	for _, a := range start.Attr {
 		switch a.Name.Local {
 		case "id":
+			dupAttr("id", &haveID)
 			idRaw = strings.TrimSpace(a.Value)
 		case "level":
-			haveLevel = true
+			dupAttr("level", &haveLevel)
 			npcBagSet(ctx, bag, "npc.level", a.Value)
 		case "type":
-			haveType = true
+			dupAttr("type", &haveType)
 			npcBagSet(ctx, bag, "npc.type", a.Value)
 		case "name":
-			haveName = true
+			dupAttr("name", &haveName)
 			npcBagSet(ctx, bag, "npc.name", a.Value)
 		case "title":
-			haveTitle = true
+			dupAttr("title", &haveTitle)
 			npcBagSet(ctx, bag, "npc.title", a.Value)
 		default:
 			npcBagSet(ctx, bag, "npc."+a.Name.Local, a.Value)
@@ -280,10 +263,11 @@ func parseNpc(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCt
 					return true
 				}
 				raceSeen = true
-				if v := strings.TrimSpace(text); v != "" {
+				// Канон нормализует расу toUpperCase (NpcData, порт).
+				if v := strings.ToUpper(strings.TrimSpace(text)); v != "" {
 					n.Race = v
 					if !knownNpcRaces[v] {
-						ctx.rep.UnknownTypes["npc.race."+v]++
+						ctx.rep.UnknownTypes[ctx.internKey("npc.race."+v)]++
 					}
 				} else {
 					ctx.rep.EmptyValues++
@@ -295,7 +279,7 @@ func parseNpc(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCt
 			case "dropLists":
 				readDropLists(dec, t, &n, path, &links, ctx)
 			case "collision":
-				readCollision(dec, t, &n, bag, ctx)
+				readCollision(dec, t, &n, bag, path, ctx)
 			case "skillList":
 				ctx.rep.SkippedElements["skillList"]++
 				skipElement(dec, t)
@@ -311,6 +295,8 @@ func parseNpc(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCt
 				}
 			}
 		case xml.CharData:
+			// Текст копится только пока у верхнего кадра нет детей: текст
+			// листа — его значение, текст контейнера — форматирование.
 			if len(frames) > 0 && !frames[len(frames)-1].childSeen {
 				leaf = append(leaf, t...)
 			}
@@ -326,9 +312,11 @@ func parseNpc(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCt
 			frames = frames[:len(frames)-1]
 			if !fr.childSeen {
 				p := joinPath(frames, fr.name)
-				if v := strings.TrimSpace(string(leaf)); v != "" {
+				if v := string(bytes.TrimSpace(leaf)); v != "" {
 					npcBagSet(ctx, bag, p, v)
 				} else if fr.attrs == 0 {
+					// Пустой лист без атрибутов — пустое значение; лист с
+					// атрибутами уже отдал их в bag на StartElement.
 					ctx.rep.EmptyValues++
 				}
 			}
@@ -367,20 +355,34 @@ func joinPath(frames []bagFrame, name string) string {
 // npcBagSet кладёт значение в raw-bag NPC с ключом-путём: интернирование
 // ключа, счётчик неизвестных ключей (за вычетом типизированных), пустые
 // значения — счётчик, дубликаты — счётчик (побеждает последний).
-func npcBagSet(ctx *loadCtx, bag map[string]string, key, val string) {
+// bagSet кладёт значение в raw-bag записи с ключом-путём: интернирование
+// ключа, квалифицированный счётчик неизвестных (за вычетом typ — словаря
+// типизированных ключей категории), пустые значения — счётчик, дубликаты —
+// счётчик (побеждает последний). Возвращает bag (возможно, свежесозданный).
+func bagSet(ctx *loadCtx, bag map[string]string, qual, key, val string, typ map[string]bool) map[string]string {
+	if bag == nil {
+		bag = map[string]string{}
+	}
 	key = ctx.internKey(key)
-	if !npcTypedBagKeys[key] {
-		ctx.rep.UnknownKeys[ctx.internKey("npc.key."+key)]++
+	if typ == nil || !typ[key] {
+		ctx.rep.UnknownKeys[ctx.internKey(qual+key)]++
 	}
 	val = strings.TrimSpace(val)
 	if val == "" {
 		ctx.rep.EmptyValues++
-		return
+		return bag
 	}
 	if _, dup := bag[key]; dup {
 		ctx.rep.DupKeys++
 	}
 	bag[key] = val
+	return bag
+}
+
+// npcBagSet — bagSet для NPC (квалификация npc.key., словарь типизированных
+// ключей NPC); bag NPC существует всегда.
+func npcBagSet(ctx *loadCtx, bag map[string]string, key, val string) {
+	bagSet(ctx, bag, "npc.key.", key, val, npcTypedBagKeys)
 }
 
 // readAi разбирает блок ai: аггро-поля типизированы, clanList — clans и
@@ -467,9 +469,9 @@ func readClanList(dec *xml.Decoder, start xml.StartElement, n *Npc, path string,
 					return
 				}
 				v, err := strconv.ParseInt(strings.TrimSpace(text), 10, 32)
-				if err != nil {
+				if err != nil || v <= 0 {
 					ctx.entry(Entry{Category: "npcs", File: path, Line: lineOf(dec), ID: int64(n.ID),
-						Code: CodeNumber, Message: "ignoreNpcId " + strings.TrimSpace(text) + " не разбирается как число"})
+						Code: CodeNumber, Message: "ignoreNpcId " + strings.TrimSpace(text) + " вне домена (int32, положительный)"})
 					continue
 				}
 				n.IgnoreNpcIDs = append(n.IgnoreNpcIDs, NpcID(v))
@@ -521,6 +523,8 @@ func readParameters(dec *xml.Decoder, start xml.StartElement, n *Npc, bag map[st
 				}
 				if name != "" {
 					npcBagSet(ctx, bag, "parameters."+name, val)
+				} else {
+					ctx.rep.UnnamedSets++ // param без имени — потеря состава, считаем
 				}
 			case "minions":
 				readMinions(dec, t, n, bag, path, links, ctx)
@@ -562,18 +566,31 @@ func readMinions(dec *xml.Decoder, start xml.StartElement, n *Npc, bag map[strin
 			line := lineOf(dec)
 			var idRaw string
 			m := MinionRef{}
+			numeric := true // домен всех чисел миньона: int32, неотрицательный
+			num := func(name, v string) int32 {
+				p, err := strconv.ParseInt(strings.TrimSpace(v), 10, 32)
+				if err != nil || p < 0 {
+					ctx.entry(Entry{Category: "npcs", File: path, Line: line, ID: int64(n.ID),
+						Code: CodeNumber, Message: "миньон " + name + "=" + v + " вне домена (int32, неотрицательный)"})
+					numeric = false
+					return 0
+				}
+				return int32(p)
+			}
 			for _, a := range t.Attr {
 				switch a.Name.Local {
 				case "id":
 					idRaw = strings.TrimSpace(a.Value)
 				case "count":
-					m.Count = atoi32(a.Value)
+					m.Count = num("count", a.Value)
 				case "max":
-					m.Max = atoi32(a.Value)
+					m.Max = num("max", a.Value)
 				case "respawnTime":
-					m.RespawnTime = atoi32(a.Value)
+					m.RespawnTime = num("respawnTime", a.Value)
 				case "weightPoint":
-					m.WeightPoint = atoi32(a.Value)
+					m.WeightPoint = num("weightPoint", a.Value)
+				default:
+					skipAttr(ctx, "minion", a.Name.Local)
 				}
 			}
 			if idRaw == "" {
@@ -589,6 +606,10 @@ func readMinions(dec *xml.Decoder, start xml.StartElement, n *Npc, bag map[strin
 				skipElement(dec, t)
 				continue
 			}
+			if !numeric {
+				skipElement(dec, t)
+				continue
+			}
 			m.NpcID = NpcID(id)
 			n.Minions = append(n.Minions, m)
 			*links = append(*links, linkRef{cat: "npcs", file: path, line: line,
@@ -601,16 +622,15 @@ func readMinions(dec *xml.Decoder, start xml.StartElement, n *Npc, bag map[strin
 	}
 }
 
-// atoi32 — разбор int32; неразборчивое значение даёт 0 (домен поля
-// проверяет вызывающий код).
-func atoi32(v string) int32 {
-	n, _ := strconv.ParseInt(strings.TrimSpace(v), 10, 32)
-	return int32(n)
+// skipAttr считает посторонний атрибут типизированного листа: потеря
+// состава невозможна, интерпретация — по потребителю.
+func skipAttr(ctx *loadCtx, tag, name string) {
+	ctx.rep.UnknownKeys[ctx.internKey("skip.attr."+tag+"."+name)]++
 }
 
 // readCollision разбирает коллизию: normal — типизированные радиус/высота,
 // grown — raw-bag.
-func readCollision(dec *xml.Decoder, start xml.StartElement, n *Npc, bag map[string]string, ctx *loadCtx) {
+func readCollision(dec *xml.Decoder, start xml.StartElement, n *Npc, bag map[string]string, path string, ctx *loadCtx) {
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -621,16 +641,22 @@ func readCollision(dec *xml.Decoder, start xml.StartElement, n *Npc, bag map[str
 			switch t.Name.Local {
 			case "radius", "height":
 				for _, a := range t.Attr {
+					// Все атрибуты коллизии — в raw-bag; normal/grown сверх
+					// того отражаются в типизированные поля.
 					npcBagSet(ctx, bag, "collision."+t.Name.Local+"."+a.Name.Local, a.Value)
 					if a.Name.Local != "normal" {
 						continue
 					}
-					if f, err := strconv.ParseFloat(strings.TrimSpace(a.Value), 64); err == nil {
-						if t.Name.Local == "radius" {
-							n.CollisionRadius = f
-						} else {
-							n.CollisionHeight = f
-						}
+					f, err := strconv.ParseFloat(strings.TrimSpace(a.Value), 64)
+					if err != nil {
+						ctx.entry(Entry{Category: "npcs", File: path, Line: lineOf(dec), ID: int64(n.ID),
+							Code: CodeNumber, Message: "коллизия " + t.Name.Local + "." + a.Name.Local + "=" + a.Value + " не разбирается как число"})
+						continue
+					}
+					if t.Name.Local == "radius" {
+						n.CollisionRadius = f
+					} else {
+						n.CollisionHeight = f
 					}
 				}
 				skipElement(dec, t)
@@ -684,19 +710,33 @@ func readDropSection(dec *xml.Decoder, start xml.StartElement, dl *DropList, n *
 			switch t.Name.Local {
 			case "group":
 				g := DropGroup{}
-				chanceOK := true
+				chanceOK := false
+				hasChance := false
 				for _, a := range t.Attr {
 					if a.Name.Local == "chance" {
+						hasChance = true
 						g.Chance, chanceOK = dropChance(a.Value, "шанс группы", dec, path, n, ctx)
+					} else {
+						skipAttr(ctx, "group", a.Name.Local)
 					}
 				}
-				readDropGroup(dec, t, &g, n, path, links, ctx)
+				if !hasChance {
+					ctx.entry(Entry{Category: "npcs", File: path, Line: lineOf(dec), ID: int64(n.ID),
+						Code: CodeAttr, Message: "группа дропа без атрибута chance"})
+				}
+				// Шанс группы обязателен (канон: parseDouble без дефолта);
+				// ссылки и счётчики группы — только если группа вошла.
+				var groupLinks []linkRef
+				readDropGroup(dec, t, &g, n, path, &groupLinks, ctx)
 				if chanceOK {
 					dl.Groups = append(dl.Groups, g)
+					*links = append(*links, groupLinks...)
+					ctx.rep.DropItems += len(g.Items)
 				}
 			case "item":
 				if d, ok := readDropItem(dec, t, n, path, links, ctx); ok {
 					dl.Items = append(dl.Items, d)
+					ctx.rep.DropItems++
 				}
 			default:
 				ctx.rep.SkippedElements[t.Name.Local]++
@@ -734,8 +774,10 @@ func readDropGroup(dec *xml.Decoder, start xml.StartElement, g *DropGroup, n *Np
 	}
 }
 
-// readDropItem разбирает предмет дропа: id обязателен, min/max ≥ 0, шанс —
-// неотрицательное конечное число; min>max и шанс >100 — счётчики широты.
+// readDropItem разбирает предмет дропа: id и chance обязательны (канон:
+// parseDouble/parseInteger без дефолтов), min/max ≥ 0, шанс — неотрицательное
+// конечное число; min>max и шанс >100 — счётчики широты. Ссылку регистрирует
+// в переданный буфер — коммит только вместе с вошедшей секцией.
 func readDropItem(dec *xml.Decoder, start xml.StartElement, n *Npc, path string, links *[]linkRef, ctx *loadCtx) (Drop, bool) {
 	line := lineOf(dec)
 	var idRaw, minRaw, maxRaw, chanceRaw string
@@ -749,6 +791,8 @@ func readDropItem(dec *xml.Decoder, start xml.StartElement, n *Npc, path string,
 			maxRaw = strings.TrimSpace(a.Value)
 		case "chance":
 			chanceRaw = strings.TrimSpace(a.Value)
+		default:
+			skipAttr(ctx, "drop", a.Name.Local)
 		}
 	}
 	skipElement(dec, start)
@@ -781,13 +825,15 @@ func readDropItem(dec *xml.Decoder, start xml.StartElement, n *Npc, path string,
 	if d.Min > d.Max {
 		ctx.rep.MinOverMax++
 	}
-	if chanceRaw != "" {
-		var ok bool
-		if d.Chance, ok = dropChance(chanceRaw, "шанс", dec, path, n, ctx); !ok {
-			return Drop{}, false
-		}
+	if chanceRaw == "" {
+		ctx.entry(Entry{Category: "npcs", File: path, Line: line, ID: int64(n.ID),
+			Code: CodeAttr, Message: "предмет дропа без атрибута chance"})
+		return Drop{}, false
 	}
-	ctx.rep.DropItems++
+	var ok bool
+	if d.Chance, ok = dropChance(chanceRaw, "шанс", dec, path, n, ctx); !ok {
+		return Drop{}, false
+	}
 	*links = append(*links, linkRef{cat: "npcs", file: path, line: line,
 		ownerID: int64(n.ID), kind: linkItem, keyID: id, desc: "дроп"})
 	return d, true

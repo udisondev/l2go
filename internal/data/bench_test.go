@@ -45,7 +45,8 @@ func BenchmarkLoadReal(b *testing.B) {
 
 // TestRealResidentHeap — резидентная память статики после Load на реальном
 // дистрибутиве (L2GO_REAL_DATA): GC, затем HeapAlloc; выжимка — в журнал
-// (baseline для P2.7). В CI не выполняется.
+// (baseline для P2.7). Замер строго до построения дампа: дамп — отдельная
+// строка, в резидентность статики не входит. В CI не выполняется.
 func TestRealResidentHeap(t *testing.T) {
 	root := os.Getenv("L2GO_REAL_DATA")
 	if root == "" {
@@ -58,11 +59,12 @@ func TestRealResidentHeap(t *testing.T) {
 	if rep.HasErrors() {
 		t.Fatalf("ошибки целостности: %d", len(rep.Errors))
 	}
-	dump := st.Dump()
 	runtime.GC()
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
-	// Обращения к st и dump после замера удерживают их от сбора GC.
-	t.Logf("резидентно после GC: HeapAlloc=%d МБ (Npcs=%d, Spawns=%d, Territories=%d, DropItems=%d, спавнов в статике=%d, дамп=%d МБ)",
-		ms.HeapAlloc>>20, rep.Npcs, rep.Spawns, rep.Territories, rep.DropItems, len(st.Spawns()), len(dump)>>20)
+	// Обращение к st после замера удерживает статику от сбора GC.
+	t.Logf("резидентно после GC: HeapAlloc=%d МБ (Npcs=%d, Spawns=%d, Territories=%d, DropItems=%d, спавнов в статике=%d)",
+		ms.HeapAlloc>>20, rep.Npcs, rep.Spawns, rep.Territories, rep.DropItems, len(st.Spawns()))
+	dump := st.Dump()
+	t.Logf("канонический дамп: %d МБ (сверка артефакта P2.7, вне резидентности)", len(dump)>>20)
 }

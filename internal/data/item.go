@@ -71,27 +71,7 @@ var typedSetKeys = map[string]bool{
 // Семантика разбора и дефолты: L2J_Mobius DocumentItem, DocumentBase.parseBeanSet,
 // ItemTemplate.set (порт, GPLv3).
 func loadItems(fsys fs.FS, ctx *loadCtx) {
-	entries, err := fs.ReadDir(fsys, itemsDir)
-	if err != nil {
-		ctx.fatal(fmt.Errorf("data: чтение каталога %s: %w", itemsDir, err))
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			ctx.rep.SkippedDirs[e.Name()] += countXML(fsys, itemsDir+"/"+e.Name())
-			continue
-		}
-		if !strings.EqualFold(filepath.Ext(e.Name()), ".xml") {
-			continue
-		}
-		path := itemsDir + "/" + e.Name()
-		data, ok := ctx.readFileCapped(fsys, path, "items")
-		if !ok {
-			continue
-		}
-		ctx.rep.Files++
-		parseItemsFile(path, data, ctx)
-	}
+	loadFlatCategory(fsys, ctx, itemsDir, "items", parseItemsFile)
 }
 
 // countXML считает XML-файлы каталога. Ошибка чтения даёт 0 сознательно:
