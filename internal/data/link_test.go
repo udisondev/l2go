@@ -23,7 +23,6 @@ func brokenBaseFS() fstest.MapFS {
 	spawnXML := `<list enabled="true">
 	<spawn name="p"><npc id="6666" x="1" y="2" z="3"/></spawn>
 	<spawn zone="nope">
-		<territory minZ="0" maxZ="1"><node x="1" y="1"/></territory>
 		<npc id="20550" count="1"/>
 	</spawn>
 </list>`

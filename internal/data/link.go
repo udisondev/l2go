@@ -1,5 +1,7 @@
 package data
 
+import "fmt"
+
 // Виды ссылок каркаса целостности.
 const (
 	linkItem byte = 'i' // дроп → предмет
@@ -18,6 +20,8 @@ type linkRef struct {
 	kind    byte   // linkItem | linkNPC | linkTerr
 	keyID   int64  // числовой ключ (предмет/NPC)
 	keyName string // строковый ключ (территория)
+	desc    string // вид ссылки для сообщения об ошибке
+	fakeOK  bool   // ссылка спавна: отсутствие NPC в диапазоне fake players — счётчик
 }
 
 // resolveLinks разрешает накопленные ссылки против финальных карт категорий.
@@ -25,5 +29,30 @@ type linkRef struct {
 // не ошибка (порт гейта L2J_Mobius SpawnData.checkTemplate, GPLv3); прочие
 // неразрешённые ссылки — записи-ошибки с местом.
 func resolveLinks(ctx *loadCtx) {
-	_ = ctx
+	for _, l := range ctx.links {
+		var ok bool
+		switch l.kind {
+		case linkItem:
+			_, ok = ctx.items[ItemID(l.keyID)]
+		case linkNPC:
+			_, ok = ctx.npcs[NpcID(l.keyID)]
+		case linkTerr:
+			_, ok = ctx.territories[l.keyName]
+		}
+		if ok {
+			continue
+		}
+		if l.fakeOK && l.kind == linkNPC && fakePlayerRange(l.keyID) {
+			ctx.rep.FakePlayersSkipped++
+			continue
+		}
+		key := fmt.Sprintf("%d", l.keyID)
+		if l.kind == linkTerr {
+			key = "\"" + l.keyName + "\""
+		}
+		ctx.entry(Entry{Category: l.cat, File: l.file, Line: l.line, ID: l.ownerID,
+			Code: CodeLink, Message: l.desc + "→" + map[byte]string{
+				linkItem: "предмет", linkNPC: "NPC", linkTerr: "территория",
+			}[l.kind] + " " + key + " не существует"})
+	}
 }

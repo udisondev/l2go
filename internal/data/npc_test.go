@@ -138,7 +138,7 @@ func TestNpcEvil(t *testing.T) {
 	}{
 		{"дубликат NPC", "<list>" + npcBody(21000) + npcBody(21000) + "</list>", CodeDupID},
 		{"npc без id", "<list><npc level=\"10\" type=\"Monster\" name=\"n\"/></list>", CodeAttr},
-		{"npc без name и level и type", "<list><npc id=\"21001\"/></list>", CodeAttr},
+		{"кривой level", "<list><npc id=\"21001\" level=\"много\" type=\"Monster\" name=\"n\"/></list>", CodeNumber},
 		{"id вне int32", "<list><npc id=\"9999999999\" type=\"Monster\" name=\"n\"/></list>", CodeNumber},
 		{"кривой aggroRange", "<list>" + strings.Replace(npcBody(21002), "###", "<ai aggroRange=\"далеко\"/>", 1) + "</list>", CodeNumber},
 		{"кривой isAggressive", "<list>" + strings.Replace(npcBody(21003), "###", "<ai isAggressive=\"зло\"/>", 1) + "</list>", CodeNumber},

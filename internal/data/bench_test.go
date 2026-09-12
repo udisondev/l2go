@@ -2,6 +2,7 @@ package data
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -40,4 +41,28 @@ func BenchmarkLoadReal(b *testing.B) {
 			b.Fatalf("ошибки целостности в реальном наборе: %d", len(rep.Errors))
 		}
 	}
+}
+
+// TestRealResidentHeap — резидентная память статики после Load на реальном
+// дистрибутиве (L2GO_REAL_DATA): GC, затем HeapAlloc; выжимка — в журнал
+// (baseline для P2.7). В CI не выполняется.
+func TestRealResidentHeap(t *testing.T) {
+	root := os.Getenv("L2GO_REAL_DATA")
+	if root == "" {
+		t.Skip("L2GO_REAL_DATA не задан")
+	}
+	st, rep, err := Load(os.DirFS(root))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if rep.HasErrors() {
+		t.Fatalf("ошибки целостности: %d", len(rep.Errors))
+	}
+	dump := st.Dump()
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	// Обращения к st и dump после замера удерживают их от сбора GC.
+	t.Logf("резидентно после GC: HeapAlloc=%d МБ (Npcs=%d, Spawns=%d, Territories=%d, DropItems=%d, спавнов в статике=%d, дамп=%d МБ)",
+		ms.HeapAlloc>>20, rep.Npcs, rep.Spawns, rep.Territories, rep.DropItems, len(st.Spawns()), len(dump)>>20)
 }

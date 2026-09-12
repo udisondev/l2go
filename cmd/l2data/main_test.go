@@ -40,6 +40,13 @@ func TestCheckDirty(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "bad.xml"), []byte("<list><item id=\"1\" type=\"Weapon\" name=\"a\"/><item id=\"1\" type=\"Weapon\" name=\"b\"/></list>"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
+	// Каталоги остальных категорий обязательны (их отсутствие — фатальная
+	// FS-ошибка, а не ошибка данных).
+	for _, d := range []string{filepath.Join("stats", "npcs"), "spawns"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+	}
 	out, err := exec.Command(bin, "check", root).CombinedOutput()
 	if err == nil {
 		t.Fatalf("check на грязных данных должен вернуть ненулевой код; вывод:\n%s", out)

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -104,10 +105,134 @@ func dumpItems(sb *strings.Builder, s *Static) {
 	}
 }
 
-// dumpNpcs и dumpTerritories/dumpSpawns — реализации P2.2.
-func dumpNpcs(sb *strings.Builder, s *Static)        {}
-func dumpTerritories(sb *strings.Builder, s *Static) {}
-func dumpSpawns(sb *strings.Builder, s *Static)      {}
+// dumpNpcs пишет канонический текст NPC по возрастанию ID, включая
+// дроплисты (порядок файла) и миньонов — сверка артефакта P2.7 без них слепа.
+func dumpNpcs(sb *strings.Builder, s *Static) {
+	ids := make([]int64, 0, len(s.npcs))
+	for id := range s.npcs {
+		ids = append(ids, int64(id))
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, idv := range ids {
+		n := s.npcs[NpcID(idv)]
+		fmt.Fprintf(sb,
+			"npc id=%d name=%q title=%q level=%d type=%q race=%q aggro=%d clanHelp=%d aggressive=%t collision=%s/%s",
+			n.ID, n.Name, n.Title, n.Level, n.Type, n.Race, n.AggroRange,
+			n.ClanHelpRange, n.IsAggressive, ftoa(n.CollisionRadius), ftoa(n.CollisionHeight))
+		sb.WriteString(" clans=[")
+		for i, c := range n.Clans {
+			if i > 0 {
+				sb.WriteByte(' ')
+			}
+			sb.WriteString(c)
+		}
+		sb.WriteString("] ignore=[")
+		for i, id := range n.IgnoreNpcIDs {
+			if i > 0 {
+				sb.WriteByte(' ')
+			}
+			fmt.Fprintf(sb, "%d", id)
+		}
+		sb.WriteString("] minions=[")
+		for i, m := range n.Minions {
+			if i > 0 {
+				sb.WriteByte(' ')
+			}
+			fmt.Fprintf(sb, "%d:%d/%d/%d/%d", m.NpcID, m.Count, m.Max, m.RespawnTime, m.WeightPoint)
+		}
+		sb.WriteString("] drops=[")
+		for i, dl := range n.DropLists {
+			if i > 0 {
+				sb.WriteByte(' ')
+			}
+			sb.WriteString(dl.Type)
+			sb.WriteByte('{')
+			for _, g := range dl.Groups {
+				fmt.Fprintf(sb, "g%s[", ftoa(g.Chance))
+				for j, d := range g.Items {
+					if j > 0 {
+						sb.WriteByte(' ')
+					}
+					fmt.Fprintf(sb, "%d %d-%d@%s", d.ItemID, d.Min, d.Max, ftoa(d.Chance))
+				}
+				sb.WriteByte(']')
+			}
+			if len(dl.Items) > 0 {
+				if len(dl.Groups) > 0 {
+					sb.WriteByte(' ')
+				}
+				sb.WriteString("i[")
+				for j, d := range dl.Items {
+					if j > 0 {
+						sb.WriteByte(' ')
+					}
+					fmt.Fprintf(sb, "%d %d-%d@%s", d.ItemID, d.Min, d.Max, ftoa(d.Chance))
+				}
+				sb.WriteByte(']')
+			}
+			sb.WriteByte('}')
+		}
+		sb.WriteString("]")
+		writeSets(sb, n.set)
+		sb.WriteByte('\n')
+	}
+}
+
+// dumpTerritories пишет канонический текст территорий по имени.
+func dumpTerritories(sb *strings.Builder, s *Static) {
+	names := make([]string, 0, len(s.territories))
+	for name := range s.territories {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		t := s.territories[name]
+		fmt.Fprintf(sb, "terr name=%q minZ=%d maxZ=%d nodes=[", t.Name, t.MinZ, t.MaxZ)
+		for i, nd := range t.Nodes {
+			if i > 0 {
+				sb.WriteByte(' ')
+			}
+			fmt.Fprintf(sb, "%d,%d", nd[0], nd[1])
+		}
+		sb.WriteString("] banned=[")
+		for i, b := range t.Banned {
+			if i > 0 {
+				sb.WriteByte(' ')
+			}
+			fmt.Fprintf(sb, "{%d,%d [", b.MinZ, b.MaxZ)
+			for j, nd := range b.Nodes {
+				if j > 0 {
+					sb.WriteByte(' ')
+				}
+				fmt.Fprintf(sb, "%d,%d", nd[0], nd[1])
+			}
+			sb.WriteString("]}")
+		}
+		sb.WriteString("]")
+		writeSets(sb, t.set)
+		sb.WriteByte('\n')
+	}
+}
+
+// dumpSpawns пишет записи спавнов в порядке загрузки.
+func dumpSpawns(sb *strings.Builder, s *Static) {
+	for _, sp := range s.spawns {
+		fmt.Fprintf(sb, "spawn npc=%d", sp.NpcID)
+		if sp.HasPoint {
+			fmt.Fprintf(sb, " point=%d,%d,%d,%d", sp.Point.X, sp.Point.Y, sp.Point.Z, sp.Point.Heading)
+		} else {
+			sb.WriteString(" point=-")
+		}
+		fmt.Fprintf(sb, " terr=%q count=%d respawn=%d", sp.Territory, sp.Count, sp.RespawnDelay)
+		writeSets(sb, sp.set)
+		sb.WriteByte('\n')
+	}
+}
+
+// ftoa — каноническая запись числа с плавающей точкой для дампа.
+func ftoa(f float64) string {
+	return strconv.FormatFloat(f, 'g', -1, 64)
+}
 
 // writeSets дописывает отсортированный набор параметров записи.
 func writeSets(sb *strings.Builder, set map[string]string) {

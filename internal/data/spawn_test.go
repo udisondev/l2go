@@ -41,8 +41,8 @@ func TestSpawnGolden(t *testing.T) {
 	if v, ok := sp[3].Set("chaseRange"); !ok || v != "2000" {
 		t.Errorf("spawns[3].Set(chaseRange) = (%q,%v); want (2000,true)", v, ok)
 	}
-	if v, ok := sp[5].Set("periodOfDay"); !ok || v != "day" {
-		t.Errorf("spawns[5].Set(periodOfDay) = (%q,%v); want (day,true) — 29019 day-спавн", v, ok)
+	if v, ok := sp[4].Set("periodOfDay"); !ok || v != "day" {
+		t.Errorf("spawns[4].Set(periodOfDay) = (%q,%v); want (day,true) — 29019 day-спавн", v, ok)
 	}
 	// Территории.
 	ter, ok := st.Territory("synth_territory")
@@ -96,7 +96,7 @@ func TestSpawnEvil(t *testing.T) {
 	}{
 		{"list без enabled", "<list><spawn name=\"a\"><npc id=\"1\" x=\"1\" y=\"2\" z=\"3\"/></spawn></list>", CodeAttr},
 		{"list с кривым enabled", "<list enabled=\"junk\"><spawn/></list>", CodeAttr},
-		{"npc без точки и территории", "<list enabled=\"true\"><spawn zone=\"z1\"><territory minZ=\"0\" maxZ=\"1\"><node x=\"1\" y=\"1\"/></territory><npc id=\"20550\"/></spawn></list>", CodeAttr},
+		{"npc без точки и территории", "<list enabled=\"true\"><spawn name=\"a\"><npc id=\"20550\"/></spawn></list>", CodeAttr},
 		{"точка без y", "<list enabled=\"true\"><spawn name=\"a\"><npc id=\"20550\" x=\"1\" z=\"3\"/></spawn></list>", CodeAttr},
 		{"территория без minZ", "<list enabled=\"true\"><spawn zone=\"z2\"><territory maxZ=\"1\"><node x=\"1\" y=\"1\"/></territory><npc id=\"20550\" count=\"1\"/></spawn></list>", CodeAttr},
 		{"узел без x", "<list enabled=\"true\"><spawn zone=\"z3\"><territory minZ=\"0\" maxZ=\"1\"><node y=\"1\"/></territory><npc id=\"20550\" count=\"1\"/></spawn></list>", CodeAttr},

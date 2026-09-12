@@ -33,7 +33,8 @@ func usage() {
 }
 
 func printReport(rep *data.Report) {
-	fmt.Printf("файлов: %d, предметов: %d, манифест: %x\n", rep.Files, rep.Items, rep.Manifest)
+	fmt.Printf("файлов: %d, предметов: %d, NPC: %d, спавнов: %d, территорий: %d, дроп-предметов: %d, манифест: %x\n",
+		rep.Files, rep.Items, rep.Npcs, rep.Spawns, rep.Territories, rep.DropItems, rep.Manifest)
 	for _, e := range rep.Errors {
 		id := ""
 		if e.ID != 0 {
@@ -55,6 +56,37 @@ func printReport(rep *data.Report) {
 	}
 	if rep.StatNoType > 0 {
 		fmt.Printf("stat без типа: %d\n", rep.StatNoType)
+	}
+	if n := rep.MissingLevel + rep.MissingType + rep.MissingName + rep.MissingRace; n > 0 {
+		fmt.Printf("NPC без level/type/name/race: %d/%d/%d/%d (дефолты канона)\n",
+			rep.MissingLevel, rep.MissingType, rep.MissingName, rep.MissingRace)
+	}
+	if rep.ChanceOver100 > 0 {
+		fmt.Printf("шансы дропа >100 («всегда»): %d\n", rep.ChanceOver100)
+	}
+	if rep.MinOverMax > 0 {
+		fmt.Printf("min>max в дропе: %d\n", rep.MinOverMax)
+	}
+	if rep.WithoutRespawnDelay > 0 {
+		fmt.Printf("спавны без respawnDelay: %d\n", rep.WithoutRespawnDelay)
+	}
+	if rep.WithoutHeading > 0 {
+		fmt.Printf("точечные спавны без heading: %d\n", rep.WithoutHeading)
+	}
+	if rep.FakePlayersSkipped > 0 {
+		fmt.Printf("fake-player-спавны без определения: %d\n", rep.FakePlayersSkipped)
+	}
+	if rep.NamedBlocks > 0 {
+		fmt.Printf("именованные спавн-блоки: %d\n", rep.NamedBlocks)
+	}
+	if rep.DisabledFiles > 0 {
+		fmt.Printf("отключённые файлы спавнов: %d\n", rep.DisabledFiles)
+	}
+	if rep.TerrOwnName > 0 {
+		fmt.Printf("собственные имена территорий (не читаются): %d\n", rep.TerrOwnName)
+	}
+	if rep.DeepSkips > 0 {
+		fmt.Printf("элементы глубже потолка пути: %d\n", rep.DeepSkips)
 	}
 	printCounters("пропущено файлов в подкаталогах", rep.SkippedDirs)
 }

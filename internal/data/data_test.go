@@ -9,12 +9,13 @@ import (
 )
 
 // catFS собирает FS поверх файлов с обязательными каталогами категорий
-// (stats/npcs, spawns — пустые), чтобы MapFS-фикстуры отдельных категорий
-// не падали фатально на чужом отсутствующем каталоге.
+// (stats/items, stats/npcs, spawns — пустые), чтобы MapFS-фикстуры
+// отдельных категорий не падали фатально на чужом отсутствующем каталоге.
 func catFS(files map[string]*fstest.MapFile) fstest.MapFS {
 	out := fstest.MapFS{
-		"stats/npcs/.keep": &fstest.MapFile{},
-		"spawns/.keep":     &fstest.MapFile{},
+		"stats/items/.keep": &fstest.MapFile{},
+		"stats/npcs/.keep":  &fstest.MapFile{},
+		"spawns/.keep":      &fstest.MapFile{},
 	}
 	for k, v := range files {
 		out[k] = v
