@@ -158,6 +158,7 @@ func parseSkillsFile(path string, data []byte, ctx *loadCtx) {
 func parseSkill(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx) bool {
 	line := lineOf(dec)
 	var idRaw, name, levelsRaw string
+	hasName := false
 	routes := map[int8]int{}
 	seen := map[string]struct{}{}
 	for _, a := range start.Attr {
@@ -171,6 +172,7 @@ func parseSkill(dec *xml.Decoder, start xml.StartElement, path string, ctx *load
 			idRaw = strings.TrimSpace(a.Value)
 		case a.Name.Local == "name":
 			name = strings.TrimSpace(a.Value)
+			hasName = true
 		case a.Name.Local == "levels":
 			levelsRaw = strings.TrimSpace(a.Value)
 		case strings.HasPrefix(a.Name.Local, "enchantGroup"):
@@ -185,7 +187,9 @@ func parseSkill(dec *xml.Decoder, start xml.StartElement, path string, ctx *load
 			ctx.rep.UnknownKeys[ctx.internKey("skill.attr."+a.Name.Local)]++
 		}
 	}
-	if idRaw == "" || name == "" || levelsRaw == "" {
+	// Пустое имя легально (name="" встречается в дистрибутиве: канон хранит
+	// пустую строку); отсутствие атрибута — ошибка.
+	if idRaw == "" || !hasName || levelsRaw == "" {
 		ctx.entry(Entry{Category: "skills", File: path, Line: line,
 			Code: CodeAttr, Message: "нет обязательного атрибута id/name/levels"})
 		skipElement(dec, start)

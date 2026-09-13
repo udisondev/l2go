@@ -69,6 +69,10 @@ func printReport(rep *data.Report) {
 		fmt.Printf("зон: %d (спавн-точек: %d, рас-точек: %d, с явным id: %d)\n",
 			rep.Zones, rep.ZoneSpawns, rep.ZoneRacePoints, rep.ZonesWithID)
 	}
+	if rep.Skills > 0 {
+		fmt.Printf("скиллов: %d (уровней: %d, с энчантами: %d, таблиц: %d)\n",
+			rep.Skills, rep.SkillLevels, rep.EnchantedSkills, rep.SkillTables)
+	}
 	if rep.MinZOverMaxZ > 0 {
 		fmt.Printf("minZ>maxZ (канон нормализует): %d\n", rep.MinZOverMaxZ)
 	}
@@ -133,6 +137,18 @@ func printReport(rep *data.Report) {
 	}
 	if rep.DeepSkips > 0 {
 		fmt.Printf("элементы глубже потолка пути: %d\n", rep.DeepSkips)
+	}
+	if rep.MissingTargetType > 0 {
+		fmt.Printf("скиллы без targetType (дефолт SELF): %d\n", rep.MissingTargetType)
+	}
+	if rep.OrphanEnchants > 0 {
+		fmt.Printf("мёртвые override энчантов без маршрута: %d\n", rep.OrphanEnchants)
+	}
+	if rep.NestedDirect > 0 {
+		fmt.Printf("вложенные прямые элементы скиллов: %d\n", rep.NestedDirect)
+	}
+	if rep.DupTables > 0 {
+		fmt.Printf("дубликаты таблиц скиллов: %d\n", rep.DupTables)
 	}
 	printCounters("пропущено файлов в подкаталогах", rep.SkippedDirs)
 }

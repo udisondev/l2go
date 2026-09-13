@@ -25,20 +25,25 @@ func BenchmarkLoadSynth(b *testing.B) {
 // BenchmarkLoadReal — локальный baseline-замер на реальном дистрибутиве
 // (корень данных в L2GO_REAL_DATA); в CI не выполняется. Числа — вход для
 // сравнения с загрузкой компилированного артефакта статики: полный состав
-// Load (предметы+NPC+спавны), ns/op, B/op, allocs/op.
+// Load (предметы+NPC+спавны+скиллы), ns/op, B/op, allocs/op. Известный
+// дефект канона (скилл 2214→предмет 9716) не блокирует замер: ошибки
+// логируются, вердикт красноты — задача l2data check.
 func BenchmarkLoadReal(b *testing.B) {
 	root := os.Getenv("L2GO_REAL_DATA")
 	if root == "" {
 		b.Skip("L2GO_REAL_DATA не задан")
 	}
 	b.ReportAllocs()
+	logged := false
 	for b.Loop() {
 		_, rep, err := Load(os.DirFS(root))
 		if err != nil {
 			b.Fatalf("Load: %v", err)
 		}
-		if rep.HasErrors() {
-			b.Fatalf("ошибки целостности в реальном наборе: %d", len(rep.Errors))
+		if rep.HasErrors() && !logged {
+			logged = true
+			b.Logf("ошибки целостности в реальном наборе: %d", len(rep.Errors))
+			b.Logf("%+v", rep.Errors)
 		}
 	}
 }
@@ -46,7 +51,9 @@ func BenchmarkLoadReal(b *testing.B) {
 // TestRealResidentHeap — резидентная память статики после Load на реальном
 // дистрибутиве (L2GO_REAL_DATA): GC, затем HeapAlloc; выжимка — в журнал
 // (baseline для P2.7). Замер строго до построения дампа: дамп — отдельная
-// строка, в резидентность статики не входит. В CI не выполняется.
+// строка, в резидентность статики не входит. Известный дефект канона
+// (скилл 2214→предмет 9716) не блокирует замер: ошибки логируются, вердикт
+// красноты — задача l2data check. В CI не выполняется.
 func TestRealResidentHeap(t *testing.T) {
 	root := os.Getenv("L2GO_REAL_DATA")
 	if root == "" {
@@ -57,14 +64,15 @@ func TestRealResidentHeap(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if rep.HasErrors() {
-		t.Fatalf("ошибки целостности: %d", len(rep.Errors))
+		t.Logf("ошибки целостности (замер продолжается): %d", len(rep.Errors))
+		t.Logf("%+v", rep.Errors)
 	}
 	runtime.GC()
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	// Обращение к st после замера удерживает статику от сбора GC.
-	t.Logf("резидентно после GC: HeapAlloc=%d МБ (Npcs=%d, Spawns=%d, Territories=%d, DropItems=%d, спавнов в статике=%d)",
-		ms.HeapAlloc>>20, rep.Npcs, rep.Spawns, rep.Territories, rep.DropItems, len(st.Spawns()))
+	t.Logf("резидентно после GC: HeapAlloc=%d МБ (Npcs=%d, Spawns=%d, Territories=%d, DropItems=%d, Skills=%d, SkillLevels=%d, спавнов в статике=%d)",
+		ms.HeapAlloc>>20, rep.Npcs, rep.Spawns, rep.Territories, rep.DropItems, rep.Skills, rep.SkillLevels, len(st.Spawns()))
 	dump := st.Dump()
 	t.Logf("канонический дамп: %d МБ (сверка артефакта P2.7, вне резидентности)", len(dump)>>20)
 }

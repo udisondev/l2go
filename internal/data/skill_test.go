@@ -400,3 +400,27 @@ func TestSkillItemLinkDedup(t *testing.T) {
 		t.Errorf("записей link про 9998 = %d; want 1 (дедуп по паре скилл-предмет)", n)
 	}
 }
+
+// TestSkillEmptyName: пустое имя легально (name="" в дистрибутиве канона,
+// канон хранит пустую строку), отсутствие атрибута — ошибка.
+func TestSkillEmptyName(t *testing.T) {
+	xml := `<list>
+	<skill id="9900" levels="1" name="">
+		<operateType>P</operateType><targetType>NONE</targetType>
+	</skill>
+	<skill id="9901" levels="1">
+		<operateType>P</operateType><targetType>NONE</targetType>
+	</skill>
+</list>`
+	st, rep := loadSkillXML(t, xml)
+	if len(rep.Errors) != 1 || rep.Errors[0].Code != CodeAttr {
+		t.Fatalf("ожидана одна attr-ошибка (нет name); got %+v", rep.Errors)
+	}
+	sk, ok := st.Skill(9900, 1)
+	if !ok || sk.Name != "" {
+		t.Errorf("Skill(9900,1) = %+v, %v; want пустое имя", sk, ok)
+	}
+	if _, ok := st.Skill(9901, 1); ok {
+		t.Errorf("Skill(9901,1) = ok=true; want false (скилл без name отброшен)")
+	}
+}
