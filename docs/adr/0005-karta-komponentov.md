@@ -49,6 +49,7 @@ slog, простота, гайды стиля и производительно�
 | `pkg/bufpool` | — |
 | `internal/data` | — |
 | `internal/geo` | — |
+| `internal/artifact` | data, geo |
 | `internal/transport` | — |
 | `internal/protocol/fixture` | — |
 | `internal/protocol` | protocol/fixture |

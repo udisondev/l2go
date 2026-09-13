@@ -12,6 +12,7 @@ MODULE=github.com/udisondev/l2go
 allowed() {
 	case "$1" in
 		internal/version|internal/crypto|internal/transport|internal/data|internal/geo) echo "" ;;
+		internal/artifact) echo "internal/data internal/geo" ;;
 		pkg/bufpool) echo "" ;;
 		internal/protocol) echo "internal/protocol/fixture" ;;
 		internal/protocol/fixture) echo "" ;;
