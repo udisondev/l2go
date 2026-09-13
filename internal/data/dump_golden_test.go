@@ -48,14 +48,15 @@ zone name="synth_unknown" type="MysteryZone" shape="Octagon" minZ=0 maxZ=10 node
 	}
 }
 
-// dumpLines выбирает строки дампа по префиксу.
-func dumpLines(t *testing.T, prefix string) []string {
-	t.Helper()
-	st, _ := loadSynth(t)
-	var out []string
-	for _, ln := range strings.Split(st.Dump(), "\n") {
-		if strings.HasPrefix(ln, prefix) {
-			out = append(out, ln)
+// dumpLinesByPrefix выбирает строки одного дампа (загруженного один раз)
+// по префиксам.
+func dumpLinesByPrefix(dump string, prefixes ...string) map[string][]string {
+	out := map[string][]string{}
+	for _, ln := range strings.Split(dump, "\n") {
+		for _, p := range prefixes {
+			if strings.HasPrefix(ln, p) {
+				out[p] = append(out[p], ln)
+			}
 		}
 	}
 	return out
@@ -67,15 +68,11 @@ func dumpLines(t *testing.T, prefix string) []string {
 // репрезентативные строки всех форм записи; полная сверка — эквивалентность
 // артефакта P2.7.
 func TestDumpGoldenSkills(t *testing.T) {
+	st, _ := loadSynth(t)
+	dump := st.Dump()
 	skillDefs := map[string]string{
-		"skill id=7001 ": `skill id=7001 name="Тренировочный удар" levels=4 ench=[1:30 2:30] sets=[abnormalTime=60 hitTime=#hit icon=icon.skill7001 isMagic=0 magicLevel=1 operateType=A1 reuseDelay=#reuse targetType=ONE] tables=[#ench1Reuse=990 980 970 960 950 940 930 920 910 900 890 880 870 860 850 840 830 820 810 800 790 780 770 760 750 740 730 720 710 700 #hit=100 200 300 400 #reuse=1000 2000 3000 4000] ench1=[reuseDelay=#ench1Reuse] ench2=[isDebuff=true operateType=A2] raw=[<effects><effect name="TestDamage"><power>10</power></effect><effect name="TestOverTime" tick="2000"></effect></effects> <enchant2effects><effect name="TestEnchDamage" power="20"></effect></enchant2effects>]`,
-		"skill id=7002 ": `skill id=7002 name="Пассивка новичка" levels=1 ench=[] sets=[isDebuff=false operateType=P] tables=[] raw=[]`,
-	}
-	for prefix, want := range skillDefs {
-		lines := dumpLines(t, prefix)
-		if len(lines) != 1 || lines[0] != want {
-			t.Errorf("def %q:\n got=%q\nwant=%q", prefix, lines, want)
-		}
+		"skill id=7001 ": `skill id=7001 name="Тренировочный удар" levels=4 ench=[1:30 2:30] tables=[#ench1Reuse=990 980 970 960 950 940 930 920 910 900 890 880 870 860 850 840 830 820 810 800 790 780 770 760 750 740 730 720 710 700 #hit=100 200 300 400 #reuse=1000 2000 3000 4000] sets=[abnormalTime=60 hitTime=#hit icon=icon.skill7001 isMagic=0 magicLevel=1 operateType=A1 reuseDelay=#reuse targetType=ONE] ench1=[reuseDelay=#ench1Reuse] ench2=[isDebuff=true operateType=A2] raw=[<effects><effect name="TestDamage"><power>10</power></effect><effect name="TestOverTime" tick="2000"></effect></effects> <enchant2effects><effect name="TestEnchDamage" power="20"></effect></enchant2effects>]`,
+		"skill id=7002 ": `skill id=7002 name="Пассивка новичка" levels=1 ench=[] tables=[] sets=[isDebuff=false operateType=P] raw=[]`,
 	}
 	skillLevels := map[string]string{
 		"skilllvl id=7001 level=1 ":   `skilllvl id=7001 level=1 name="Тренировочный удар" op="A1" target="ONE" hit=100 reuse=1000 abtime=60 ismagic=0 isdebuff=false`,
@@ -84,8 +81,22 @@ func TestDumpGoldenSkills(t *testing.T) {
 		"skilllvl id=7002 level=1 ":   `skilllvl id=7002 level=1 name="Пассивка новичка" op="P" target="SELF" hit=0 reuse=0 abtime=0 ismagic=0 isdebuff=false`,
 		"skilllvl id=7100 level=1 ":   `skilllvl id=7100 level=1 name="Филлер 7100" op="A1" target="SELF" hit=300 reuse=0 abtime=0 ismagic=0 isdebuff=true`,
 	}
+	prefixes := make([]string, 0, len(skillDefs)+len(skillLevels))
+	for p := range skillDefs {
+		prefixes = append(prefixes, p)
+	}
+	for p := range skillLevels {
+		prefixes = append(prefixes, p)
+	}
+	byPrefix := dumpLinesByPrefix(dump, prefixes...)
+	for prefix, want := range skillDefs {
+		lines := byPrefix[prefix]
+		if len(lines) != 1 || lines[0] != want {
+			t.Errorf("def %q:\n got=%q\nwant=%q", prefix, lines, want)
+		}
+	}
 	for prefix, want := range skillLevels {
-		lines := dumpLines(t, prefix)
+		lines := byPrefix[prefix]
 		if len(lines) != 1 || lines[0] != want {
 			t.Errorf("lvl %q:\n got=%q\nwant=%q", prefix, lines, want)
 		}

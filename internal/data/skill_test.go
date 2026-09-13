@@ -163,8 +163,13 @@ func TestSkillDefAccess(t *testing.T) {
 	}
 }
 
-// TestSkillCounters: счётчики категории на синтетике (состав фикстуры
-// детерминирован генератором).
+// TestSkillCounters: счётчики категории на синтетике. Вывод чисел фикстуры
+// (генератор детерминирован): 35 = 5 семантических + 30 филлеров; базовые
+// уровни 1086 = 11 семантических (4+1+3+2+1) + 1075 филлеров
+// (Σ(1+(7i mod 80)), i=0..29); энчант-уровни 330 = 60 (7001: маршруты 1/2)
+// + 270 (филлеры: route1 у i кратных 5 — 6 шт., route2 у кратных 10 —
+// 3 шт., по 30 уровней); 1416 = 1086+330; EnchantedSkills = 1+6; таблицы
+// 41 = 5 семантических + 30 #hit + 6 #enchR.
 func TestSkillCounters(t *testing.T) {
 	_, rep := loadSynth(t)
 	if rep.Skills != 35 {
@@ -194,8 +199,7 @@ func TestSkillCounters(t *testing.T) {
 // TestSkillItemLinks: предметные ссылки 7003 (таблица — свой предмет на
 // уровень) и 7005 (литерал) разрешаются общим каркасом.
 func TestSkillItemLinks(t *testing.T) {
-	st, rep := loadSynth(t)
-	_ = st
+	_, rep := loadSynth(t)
 	if rep.HasErrors() {
 		t.Fatalf("ошибки: %+v", rep.Errors)
 	}
@@ -251,8 +255,8 @@ func TestSkillEvil(t *testing.T) {
 		{"hitTime минус", base(skill(`id="9711" levels="1" name="A"`, `<operateType>A1</operateType><targetType>SELF</targetType><hitTime>-1</hitTime>`)), CodeNumber, 9711, ""},
 		{"isDebuff не bool", base(skill(`id="9712" levels="1" name="A"`, `<operateType>A2</operateType><targetType>ONE</targetType><isDebuff>да</isDebuff>`)), CodeNumber, 9712, ""},
 		{"isMagic не число", base(skill(`id="9713" levels="1" name="A"`, `<operateType>A2</operateType><targetType>ONE</targetType><isMagic>abc</isMagic>`)), CodeNumber, 9713, ""},
-		{"enchantGroup9", base(skill(`id="9714" levels="1" name="A" enchantGroup9="1"`, `<operateType>P</operateType><targetType>SELF</targetType>`)), CodeAttr, 9714, ""},
-		{"enchantGroup значение 0", base(skill(`id="9715" levels="1" name="A" enchantGroup1="0"`, `<operateType>P</operateType><targetType>SELF</targetType>`)), CodeAttr, 9715, ""},
+		{"enchantGroup9", base(skill(`id="9714" levels="1" name="A" enchantGroup9="1"`, `<operateType>P</operateType><targetType>SELF</targetType>`)), CodeAttr, 0, ""},
+		{"enchantGroup значение 0", base(skill(`id="9715" levels="1" name="A" enchantGroup1="0"`, `<operateType>P</operateType><targetType>SELF</targetType>`)), CodeAttr, 0, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -422,5 +426,227 @@ func TestSkillEmptyName(t *testing.T) {
 	}
 	if _, ok := st.Skill(9901, 1); ok {
 		t.Errorf("Skill(9901,1) = ok=true; want false (скилл без name отброшен)")
+	}
+}
+
+// TestSkillSparseRoutes: несмежные и смещённые наборы маршрутов — лукап по
+// полю Route, а не по позиции (F32): {1,3} и только {2}.
+func TestSkillSparseRoutes(t *testing.T) {
+	xml := `<list>
+	<skill id="9830" levels="2" name="Разреженный" enchantGroup1="1" enchantGroup3="1">
+		<operateType>A1</operateType><targetType>SELF</targetType>
+	</skill>
+	<skill id="9831" levels="2" name="Только второй" enchantGroup2="1">
+		<operateType>A1</operateType><targetType>SELF</targetType>
+	</skill>
+</list>`
+	st, rep := loadSkillXML(t, xml)
+	if rep.HasErrors() {
+		t.Fatalf("ошибки: %+v", rep.Errors)
+	}
+	// {1,3}: маршрут 2 не существует — уровни 141..170 недостижимы;
+	// маршруты 1 и 3 достижимы своими номерами.
+	if _, ok := st.Skill(9830, 101); !ok {
+		t.Errorf("9830 L101 = ok=false; want true (маршрут 1)")
+	}
+	if _, ok := st.Skill(9830, 130); !ok {
+		t.Errorf("9830 L130 = ok=false; want true (маршрут 1)")
+	}
+	if _, ok := st.Skill(9830, 141); ok {
+		t.Errorf("9830 L141 = ok=true; want false (маршрута 2 нет)")
+	}
+	if _, ok := st.Skill(9830, 181); !ok {
+		t.Errorf("9830 L181 = ok=false; want true (маршрут 3)")
+	}
+	if _, ok := st.Skill(9830, 195); !ok {
+		t.Errorf("9830 L195 = ok=false; want true (маршрут 3)")
+	}
+	// Только маршрут 2: уровни 141+ достижимы.
+	if _, ok := st.Skill(9831, 141); !ok {
+		t.Errorf("9831 L141 = ok=false; want true (маршрут 2)")
+	}
+	if _, ok := st.Skill(9831, 101); ok {
+		t.Errorf("9831 L101 = ok=true; want false (маршрута 1 нет)")
+	}
+	if s, _ := st.Skill(9830, 181); s.Level != 181 {
+		t.Errorf("9830 L181.Level = %d; want 181", s.Level)
+	}
+}
+
+// TestSkillRawTableRef: разрыв цепочки ловится и для нетипизированного ключа
+// (F33): таблица нетипизированной ссылки короче levels — красная сборка.
+func TestSkillRawTableRef(t *testing.T) {
+	xml := `<list>
+	<skill id="9840" levels="5" name="Сырая ссылка">
+		<table name="#mp">1 2</table>
+		<operateType>A1</operateType><targetType>SELF</targetType>
+		<mpConsume>#mp</mpConsume>
+	</skill>
+	<skill id="9841" levels="1" name="Сырая отсутствующая">
+		<operateType>A1</operateType><targetType>SELF</targetType>
+		<power>#nope</power>
+	</skill>
+</list>`
+	_, rep := loadSkillXML(t, xml)
+	if len(rep.Errors) != 2 {
+		t.Fatalf("ожидалось 2 ошибки table; got %+v", rep.Errors)
+	}
+	for _, e := range rep.Errors {
+		if e.Code != CodeTable {
+			t.Errorf("код %s; want table (%s)", e.Code, e.Message)
+		}
+	}
+	if !strings.Contains(rep.Errors[0].Message, "#mp") || !strings.Contains(rep.Errors[0].Message, "уровни 1..5") {
+		t.Errorf("запись про #mp без охвата уровней: %s", rep.Errors[0].Message)
+	}
+	if !strings.Contains(rep.Errors[1].Message, "#nope") {
+		t.Errorf("запись про #nope: %s", rep.Errors[1].Message)
+	}
+}
+
+// TestSkillItemLinkPlace: ссылка скилл→предмет несёт место — файл и строку
+// источника (F34).
+func TestSkillItemLinkPlace(t *testing.T) {
+	xml := "<list>\n\t<skill id=\"9850\" levels=\"1\" name=\"С виткой\">\n" +
+		"\t\t<operateType>A1</operateType><targetType>SELF</targetType>\n" +
+		"\t\t<itemConsumeId>9999</itemConsumeId>\n\t</skill>\n</list>\n"
+	_, rep := loadSkillXML(t, xml)
+	found := false
+	for _, e := range rep.Errors {
+		if e.Code == CodeLink && strings.Contains(e.Message, "9999") {
+			found = true
+			if e.File != "stats/skills/x.xml" || e.Line != 4 {
+				t.Errorf("место ссылки = %s:%d; want stats/skills/x.xml:4", e.File, e.Line)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("нет link-записи про 9999: %+v", rep.Errors)
+	}
+}
+
+// TestSkillLegacySet: легаси set-элемент (0 в дистрибутиве, поддержка —
+// против тихой потери на чужом дистрибутиве, решение КТ-1).
+func TestSkillLegacySet(t *testing.T) {
+	xml := `<list>
+	<skill id="9860" levels="1" name="Легаси">
+		<operateType>P</operateType><targetType>SELF</targetType>
+		<set name="icon" val="icon.skill9860"/>
+		<set name="feed">40</set>
+	</skill>
+</list>`
+	st, rep := loadSkillXML(t, xml)
+	if rep.HasErrors() {
+		t.Fatalf("ошибки: %+v", rep.Errors)
+	}
+	def, _ := st.SkillDef(9860)
+	if v, ok := def.Set("icon"); !ok || v != "icon.skill9860" {
+		t.Errorf("Set(icon) = %q, %v; want val-атрибут", v, ok)
+	}
+	if v, ok := def.Set("feed"); !ok || v != "40" {
+		t.Errorf("Set(feed) = %q, %v; want текст тега", v, ok)
+	}
+}
+
+// TestSkillEvilXML: битый и обрезанный XML скиллов — детерминированные
+// записи xml, не паника (прецедент npc/spawn/zone).
+func TestSkillEvilXML(t *testing.T) {
+	for name, xml := range map[string]string{
+		"битый":     `<list><skill id="9870" levels="1" name="A"><operateType>P</operateType`,
+		"обрыв":     `<list><skill id="9871" levels="2" name="A" enchantGroup1="1"><table name="#hit">1`,
+		"raw-хвост": `<list><skill id="9872" levels="1" name="A"><operateType>P</operateType><effects><effect name="X"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, rep := loadSkillXML(t, xml)
+			found := false
+			for _, e := range rep.Errors {
+				if e.Code == CodeXML {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("нет записи xml; отчёт: %+v", rep.Errors)
+			}
+		})
+	}
+}
+
+// TestSkillAttrOnSkill: чужой атрибут самого skill-элемента — счётчик
+// skill.attr.* (F8).
+func TestSkillAttrOnSkill(t *testing.T) {
+	xml := `<list>
+	<skill id="9880" levels="1" name="А" foo="1">
+		<operateType>P</operateType><targetType>SELF</targetType>
+	</skill>
+</list>`
+	_, rep := loadSkillXML(t, xml)
+	if rep.HasErrors() {
+		t.Fatalf("ошибки: %+v", rep.Errors)
+	}
+	if got := rep.UnknownKeys["skill.attr.foo"]; got != 1 {
+		t.Errorf("UnknownKeys[skill.attr.foo] = %d; want 1", got)
+	}
+}
+
+// TestSkillLevelsCap: потолок levels — защитный домен (F-реестр: мимо плана,
+// против make([]Skill, 2^31)).
+func TestSkillLevelsCap(t *testing.T) {
+	xml := `<list>
+	<skill id="9890" levels="999999999" name="Огромный">
+		<operateType>P</operateType>
+	</skill>
+</list>`
+	_, rep := loadSkillXML(t, xml)
+	found := false
+	for _, e := range rep.Errors {
+		if e.Code == CodeNumber && strings.Contains(e.Message, "levels") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("нет записи number про levels; отчёт: %+v", rep.Errors)
+	}
+}
+
+// TestSkillTableLastWins: дубликат таблицы — побеждает последняя (значение,
+// не только счётчик).
+func TestSkillTableLastWins(t *testing.T) {
+	xml := `<list>
+	<skill id="9895" levels="1" name="Дубль">
+		<table name="#t">1</table><table name="#t">2</table>
+		<operateType>P</operateType><targetType>SELF</targetType>
+		<hitTime>#t</hitTime>
+	</skill>
+</list>`
+	st, rep := loadSkillXML(t, xml)
+	if rep.HasErrors() {
+		t.Fatalf("ошибки: %+v", rep.Errors)
+	}
+	if s, _ := st.Skill(9895, 1); s.HitTime != 2 {
+		t.Errorf("HitTime = %d; want 2 (последняя таблица)", s.HitTime)
+	}
+}
+
+// TestSkillEnchantValAttr: значение override из атрибута val — симметрия с
+// легаси set (порт parseBeanSet).
+func TestSkillEnchantValAttr(t *testing.T) {
+	xml := `<list>
+	<skill id="9898" levels="2" name="Val" enchantGroup1="1">
+		<table name="#e">50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80</table>
+		<operateType>A1</operateType><targetType>SELF</targetType>
+		<hitTime>200</hitTime>
+		<enchant1 name="hitTime" val="77"/>
+		<enchant1 name="reuseDelay">#e</enchant1>
+	</skill>
+</list>`
+	st, rep := loadSkillXML(t, xml)
+	if rep.HasErrors() {
+		t.Fatalf("ошибки: %+v", rep.Errors)
+	}
+	if s, _ := st.Skill(9898, 101); s.HitTime != 77 {
+		t.Errorf("L101 HitTime = %d; want 77 (val-атрибут)", s.HitTime)
+	}
+	if s, _ := st.Skill(9898, 101); s.ReuseDelay != 50 {
+		t.Errorf("L101 ReuseDelay = %d; want 50 (таблица)", s.ReuseDelay)
 	}
 }

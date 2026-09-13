@@ -78,7 +78,7 @@ type Report struct {
 	SkillLevels       int // материализованные записи уровней (база + энчанты)
 	EnchantedSkills   int // defs хотя бы с одним энчант-маршрутом
 	SkillTables       int // таблицы значений
-	MissingTargetType int // уровни без targetType (дефолт SELF)
+	MissingTargetType int // defs без targetType (дефолт SELF на всех уровнях)
 	OrphanEnchants    int // override enchantR без маршрута (канон игнорирует)
 	NestedDirect      int // вложенные дети прямого элемента (текст конкатенируется)
 	DupTables         int // дубликаты имени таблицы внутри скилла

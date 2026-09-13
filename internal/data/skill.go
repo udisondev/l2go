@@ -3,7 +3,6 @@ package data
 import (
 	"encoding/xml"
 	"fmt"
-	"io"
 	"io/fs"
 	"sort"
 	"strconv"
@@ -56,7 +55,7 @@ type Skill struct {
 }
 
 // SkillEnchant — энчант-маршрут определения скилла; размер маршрута — длина
-// соответствующего слайса EnchLvls.
+// соответствующего слайса EnchantLevels.
 type SkillEnchant struct {
 	Route int8
 }
@@ -84,12 +83,12 @@ type RawNode struct {
 // контракт «только чтение» пакета. Семантика генерации уровней и резолва —
 // порт L2J_Mobius DocumentSkill/DocumentBase (GPLv3).
 type SkillDef struct {
-	ID       SkillID
-	Name     string
-	Levels   int32
-	Enchant  []SkillEnchant
-	Base     []Skill
-	EnchLvls [][]Skill
+	ID            SkillID
+	Name          string
+	Levels        int32
+	Enchant       []SkillEnchant
+	Base          []Skill
+	EnchantLevels [][]Skill // индекс совпадает с Enchant (маршрут — поле Route)
 
 	tables           map[string][]string
 	set              map[string]string
@@ -178,7 +177,9 @@ func parseSkill(dec *xml.Decoder, start xml.StartElement, path string, ctx *load
 		case strings.HasPrefix(a.Name.Local, "enchantGroup"):
 			r, g, ok := parseEnchantGroupAttr(a.Name.Local, a.Value)
 			if !ok {
-				ctx.entry(Entry{Category: "skills", File: path, Line: line, ID: atoi64(idRaw),
+				// id ещё не разобран надёжно — запись без ID, как у прочих
+				// атрибутных ошибок категорий.
+				ctx.entry(Entry{Category: "skills", File: path, Line: line,
 					Code: CodeAttr, Message: a.Name.Local + "=" + a.Value + " вне домена (маршрут 1–8, значение ≥ 1)"})
 				continue
 			}
@@ -226,7 +227,7 @@ func parseSkill(dec *xml.Decoder, start xml.StartElement, path string, ctx *load
 	ctx.skills[def.ID] = def
 	ctx.rep.Skills++
 	ctx.rep.SkillLevels += len(def.Base)
-	for _, lv := range def.EnchLvls {
+	for _, lv := range def.EnchantLevels {
 		ctx.rep.SkillLevels += len(lv)
 	}
 	if len(def.Enchant) > 0 {
@@ -259,6 +260,14 @@ func enchantGroupSize(group int) int {
 	return 15
 }
 
+// Суффиксы семейств контейнеров канона: effects/selfEffects/…/enchantNeffects
+// и conditions/enchantNconditions — обрезанные суффиксы матчат всё семейство
+// одной проверкой (DocumentSkill читает их единообразно).
+const (
+	containerEffectsSuffix = "ffects"
+	containerCondSuffix    = "onditions"
+)
+
 // readSkillContent читает детей skill до закрывающего тега: таблицы,
 // override энчантов, контейнеры эффектов/условий, прямые элементы.
 // false — обрыв или ошибка XML (запись уже внесена).
@@ -286,10 +295,10 @@ func readSkillContent(dec *xml.Decoder, start xml.StartElement, path string, def
 				if !readSkillOverride(dec, t, path, def, srcs, routes, ctx) {
 					return false
 				}
-			case strings.HasSuffix(name, "ffects") || strings.HasSuffix(name, "onditions") || name == "cond":
-				node, ok := readRawNode(dec, t, path, ctx)
-				if !ok {
-					return badXML(io.ErrUnexpectedEOF)
+			case strings.HasSuffix(name, containerEffectsSuffix) || strings.HasSuffix(name, containerCondSuffix):
+				node, err := readRawNode(dec, t, ctx)
+				if err != nil {
+					return badXML(err)
 				}
 				def.raw = append(def.raw, node)
 			case name == "set":
@@ -309,12 +318,12 @@ func readSkillContent(dec *xml.Decoder, start xml.StartElement, path string, def
 	}
 }
 
-// isEnchantOverride: enchantR без суффиксов эффектов/условий.
+// isEnchantOverride: enchantR без суффиксов контейнеров эффектов/условий.
 func isEnchantOverride(name string) bool {
 	if !strings.HasPrefix(name, "enchant") {
 		return false
 	}
-	return !strings.HasSuffix(name, "ffects") && !strings.HasSuffix(name, "onditions")
+	return !strings.HasSuffix(name, containerEffectsSuffix) && !strings.HasSuffix(name, containerCondSuffix)
 }
 
 // readSkillTable переносит семантику table-элемента (порт
@@ -347,8 +356,9 @@ func readSkillTable(dec *xml.Decoder, start xml.StartElement, path string, def *
 }
 
 // readSkillOverride читает enchantR-элемент: ключ из атрибута name, значение
-// из текста. Мёртвый override (нет enchantGroupR) — счётчик OrphanEnchants,
-// значение не сохраняется (канон игнорирует молча).
+// из атрибута val или текста (порт DocumentBase.parseBeanSet — симметрия
+// с легаси set). Мёртвый override (нет enchantGroupR) — счётчик
+// OrphanEnchants, значение не сохраняется (канон игнорирует молча).
 func readSkillOverride(dec *xml.Decoder, start xml.StartElement, path string, def *SkillDef,
 	srcs *[]skillSrc, routes map[int8]int, ctx *loadCtx) bool {
 	line := lineOf(dec)
@@ -360,18 +370,29 @@ func readSkillOverride(dec *xml.Decoder, start xml.StartElement, path string, de
 	}
 	route := int8(r)
 	name := ""
+	val := ""
+	haveVal := false
 	for _, a := range start.Attr {
-		if a.Name.Local == "name" {
+		switch a.Name.Local {
+		case "name":
 			name = strings.TrimSpace(a.Value)
-		} else {
+		case "val":
+			val = strings.TrimSpace(a.Value)
+			haveVal = true
+		default:
 			ctx.rep.UnknownKeys[ctx.internKey("skill.attr."+a.Name.Local)]++
 		}
 	}
-	text, err := readText(dec, start)
-	if err != nil {
-		ctx.entry(Entry{Category: "skills", File: path, Line: line, ID: int64(def.ID),
-			Code: CodeXML, Message: fmt.Sprintf("разбор XML: %v", err)})
-		return false
+	if !haveVal {
+		text, err := readText(dec, start)
+		if err != nil {
+			ctx.entry(Entry{Category: "skills", File: path, Line: line, ID: int64(def.ID),
+				Code: CodeXML, Message: fmt.Sprintf("разбор XML: %v", err)})
+			return false
+		}
+		val = strings.TrimSpace(text)
+	} else {
+		skipElement(dec, start)
 	}
 	if _, has := routes[route]; !has {
 		ctx.rep.OrphanEnchants++
@@ -381,7 +402,6 @@ func readSkillOverride(dec *xml.Decoder, start xml.StartElement, path string, de
 		ctx.rep.UnnamedSets++
 		return true
 	}
-	val := strings.TrimSpace(text)
 	if val == "" {
 		ctx.rep.EmptyValues++
 		return true
@@ -486,7 +506,10 @@ func readSkillSetElem(dec *xml.Decoder, start xml.StartElement, path string, def
 
 // readTextNested читает текстовое содержимое элемента с признаком
 // вложенных элементов; текст всех потомков конкатенируется (семантика
-// getTextContent канона).
+// getTextContent канона). Отличается от readText (предметы) подсчётом по
+// глубине, а не по имени закрывающего тега: одноимённые вложенные элементы
+// не завершают чтение раньше времени; флаг hasChild — для счётчика
+// NestedDirect.
 func readTextNested(dec *xml.Decoder, el xml.StartElement, hasChild *bool) (string, error) {
 	var sb strings.Builder
 	depth := 1
@@ -510,7 +533,8 @@ func readTextNested(dec *xml.Decoder, el xml.StartElement, hasChild *bool) (stri
 
 // readRawNode читает поддерево эффектов/условий в иммутабельное дерево:
 // атрибуты сортируются, текст нормализуется, комментарии опускаются.
-func readRawNode(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx) (RawNode, bool) {
+// Ошибка декодера возвращается вызывающему с позицией.
+func readRawNode(dec *xml.Decoder, start xml.StartElement, ctx *loadCtx) (RawNode, error) {
 	node := RawNode{Name: ctx.internKey(start.Name.Local)}
 	for _, a := range start.Attr {
 		node.Attrs = append(node.Attrs, RawAttr{Name: ctx.internKey(a.Name.Local), Value: a.Value})
@@ -520,13 +544,13 @@ func readRawNode(dec *xml.Decoder, start xml.StartElement, path string, ctx *loa
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			return RawNode{}, false
+			return RawNode{}, err
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			child, ok := readRawNode(dec, t, path, ctx)
-			if !ok {
-				return RawNode{}, false
+			child, err := readRawNode(dec, t, ctx)
+			if err != nil {
+				return RawNode{}, err
 			}
 			node.Children = append(node.Children, child)
 		case xml.CharData:
@@ -536,7 +560,7 @@ func readRawNode(dec *xml.Decoder, start xml.StartElement, path string, ctx *loa
 		case xml.EndElement:
 			if t.Name.Local == start.Name.Local {
 				node.Text = normalizeSpace(text.String())
-				return node, true
+				return node, nil
 			}
 		}
 	}
@@ -562,27 +586,27 @@ var skillTypedKeys = map[string]struct{}{
 // требуемой длины (прямой — levels, override — размер маршрута): запись
 // table, поле остаётся с дефолтом, уровень материализуется (сборка красная).
 func buildSkillLevels(def *SkillDef, srcs []skillSrc, routes map[int8]int, path string, line int, ctx *loadCtx) {
-	// Требуемые длины таблиц типизированных ссылок — одна запись на разрыв.
+	// Требуемые длины таблиц всех "#"-ссылок (типизированных и raw: разрыв
+	// цепочки — свойство уровня, а не поля) — одна запись на разрыв.
 	for _, s := range srcs {
-		if _, typed := skillTypedKeys[s.key]; !typed {
-			continue
-		}
 		if !strings.HasPrefix(s.val, "#") {
 			continue
 		}
 		need := int(def.Levels)
+		scope := fmt.Sprintf("уровни 1..%d", def.Levels)
 		if s.route != 0 {
 			need = routes[s.route]
+			scope = fmt.Sprintf("маршрут %d, уровни %d..%d", s.route, 101+40*(int32(s.route)-1), 100+40*(int32(s.route)-1)+int32(need))
 		}
 		tbl, ok := def.tables[strings.TrimPrefix(s.val, "#")]
 		if !ok {
 			ctx.entry(Entry{Category: "skills", File: path, Line: s.line, ID: int64(def.ID),
-				Code: CodeTable, Message: "таблица " + s.val + " не существует"})
+				Code: CodeTable, Message: "таблица " + s.val + " не существует (" + scope + ")"})
 			continue
 		}
 		if len(tbl) < need {
 			ctx.entry(Entry{Category: "skills", File: path, Line: s.line, ID: int64(def.ID),
-				Code: CodeTable, Message: fmt.Sprintf("таблица %s короче требуемой длины %d (есть %d)", s.val, need, len(tbl))})
+				Code: CodeTable, Message: fmt.Sprintf("таблица %s короче требуемой длины %d (есть %d; %s)", s.val, need, len(tbl), scope)})
 		}
 	}
 	// Операция обязательна (в дистрибутиве есть всегда; канон при отсутствии
@@ -624,16 +648,18 @@ func buildSkillLevels(def *SkillDef, srcs []skillSrc, routes map[int8]int, path 
 		for i := range lvls {
 			lvls[i] = materializeSkill(def, srcs, r, 101+40*int32(r-1)+int32(i), int32(i), path, ctx, state)
 		}
-		def.EnchLvls = append(def.EnchLvls, lvls)
+		def.EnchantLevels = append(def.EnchantLevels, lvls)
 	}
 }
 
 // skillMatState — сквозное состояние материализации одного def: проверенные
-// значения (литерал не перепроверяется на каждом уровне) и дедупликация
-// предметных ссылок по паре (скилл, предмет).
+// значения (литерал не перепроверивается на каждом уровне), последнее
+// ошибочное значение itemConsumeId и дедупликация предметных ссылок по
+// паре (скилл, предмет).
 type skillMatState struct {
-	checked   map[string]string
-	seenItems map[ItemID]struct{}
+	checked        map[string]string
+	seenItems      map[ItemID]struct{}
+	itemConsumeErr string
 }
 
 // materializeSkill собирает запись уровня: шапка, значения типизированных
@@ -644,7 +670,8 @@ type skillMatState struct {
 // регистрируются с дедупликацией по паре (скилл, предмет).
 func materializeSkill(def *SkillDef, srcs []skillSrc, route int8, level, sub int32, path string, ctx *loadCtx, state *skillMatState) Skill {
 	sk := Skill{ID: def.ID, Level: level, Name: def.Name, TargetType: "SELF"}
-	vals := map[string]string{}
+	itemConsume := ""
+	itemLine := 0
 	for _, s := range srcs {
 		if _, typed := skillTypedKeys[s.key]; !typed {
 			continue
@@ -667,18 +694,28 @@ func materializeSkill(def *SkillDef, srcs []skillSrc, route int8, level, sub int
 				continue // разрыв уже внесён записью table
 			}
 		}
-		vals[s.key] = val
+		// Словарные значения интернируются: уровней ~30 тыс., словарь —
+		// десятки строк (решение F4).
+		switch s.key {
+		case "operateType", "targetType":
+			val = ctx.internKey(val)
+		}
 		assignSkillField(&sk, s.key, val)
+		if s.key == "itemConsumeId" {
+			itemConsume = val
+			itemLine = s.line
+		}
 		if prev, done := state.checked[s.key]; !done || prev != val {
 			state.checked[s.key] = val
 			validateSkillField(def.ID, s.key, val, level, path, ctx)
 		}
 	}
-	if id := parseItemConsume(vals, def, level, path, ctx); id != 0 {
+	if id := parseItemConsume(itemConsume, def, level, path, ctx, state); id != 0 {
 		if _, dup := state.seenItems[id]; !dup {
 			state.seenItems[id] = struct{}{}
 			ctx.links = append(ctx.links, linkRef{
-				cat: "skills", keyID: int64(id), kind: linkItem, ownerID: int64(def.ID),
+				cat: "skills", file: path, line: itemLine, keyID: int64(id),
+				kind: linkItem, ownerID: int64(def.ID),
 				desc: fmt.Sprintf("потребление уровня %d", level),
 			})
 		}
@@ -767,27 +804,25 @@ func atoi32(val string) (int32, bool) {
 }
 
 // parseItemConsume возвращает id предмета потребления уровня (0 — нет).
-func parseItemConsume(vals map[string]string, def *SkillDef, level int32, path string, ctx *loadCtx) ItemID {
-	val, ok := vals["itemConsumeId"]
-	if !ok || val == "" {
+// Ошибка домена выносится однократно на новое значение (литерал на всех
+// уровнях — одна запись, как у прочих полей).
+func parseItemConsume(val string, def *SkillDef, level int32, path string, ctx *loadCtx, state *skillMatState) ItemID {
+	if val == "" {
 		return 0
 	}
 	n, err := strconv.ParseInt(val, 10, 32)
 	if err != nil || n < 0 {
-		ctx.entry(Entry{Category: "skills", File: path, ID: int64(def.ID),
-			Code: CodeNumber, Message: fmt.Sprintf("уровень %d: itemConsumeId=%s вне домена (int32, неотрицательный)", level, val)})
+		if state.itemConsumeErr != val {
+			state.itemConsumeErr = val
+			ctx.entry(Entry{Category: "skills", File: path, ID: int64(def.ID),
+				Code: CodeNumber, Message: fmt.Sprintf("уровень %d: itemConsumeId=%s вне домена (int32, неотрицательный)", level, val)})
+		}
 		return 0
 	}
 	if n == 0 {
 		return 0
 	}
 	return ItemID(n)
-}
-
-// atoi64 — мягкий разбор int64 для идентификации записи в сообщении.
-func atoi64(s string) int64 {
-	n, _ := strconv.ParseInt(s, 10, 64)
-	return n
 }
 
 // dumpSkills пишет канонический текст скиллов: определения по возрастанию
@@ -806,10 +841,9 @@ func dumpSkills(sb *strings.Builder, s *Static) {
 			if i > 0 {
 				sb.WriteByte(' ')
 			}
-			fmt.Fprintf(sb, "%d:%d", r.Route, len(d.EnchLvls[i]))
+			fmt.Fprintf(sb, "%d:%d", r.Route, len(d.EnchantLevels[i]))
 		}
 		sb.WriteByte(']')
-		writeSets(sb, d.set)
 		sb.WriteString(" tables=[")
 		names := make([]string, 0, len(d.tables))
 		for n := range d.tables {
@@ -823,6 +857,7 @@ func dumpSkills(sb *strings.Builder, s *Static) {
 			fmt.Fprintf(sb, "#%s=%s", n, strings.Join(d.tables[n], " "))
 		}
 		sb.WriteByte(']')
+		writeSets(sb, d.set)
 		dumpSkillOverrides(sb, d)
 		sb.WriteString(" raw=[")
 		for i, n := range d.raw {
@@ -836,7 +871,7 @@ func dumpSkills(sb *strings.Builder, s *Static) {
 	for _, idv := range ids {
 		d := s.skills[SkillID(idv)]
 		dumpSkillLevels(sb, d.Base)
-		for _, lvls := range d.EnchLvls {
+		for _, lvls := range d.EnchantLevels {
 			dumpSkillLevels(sb, lvls)
 		}
 	}

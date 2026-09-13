@@ -60,8 +60,9 @@ func (s *Static) Zones() []Zone {
 }
 
 // Skill возвращает типизированную запись уровня скилла: базовые уровни
-// 1..Levels, энчант-маршруты с номеров 101+40·(r−1). ok=false вне
-// заявленных уровней.
+// 1..Levels, энчант-маршруты с номеров 101+40·(r−1). Маршруты адресуются
+// полем Route (набор может быть несмежным: {1,3} или только {2}).
+// ok=false вне заявленных уровней.
 func (s *Static) Skill(id SkillID, level int32) (Skill, bool) {
 	def, ok := s.skills[id]
 	if !ok {
@@ -74,14 +75,17 @@ func (s *Static) Skill(id SkillID, level int32) (Skill, bool) {
 		return Skill{}, false
 	}
 	r := (level-101)/40 + 1
-	if r < 1 || int(r) > len(def.EnchLvls) {
-		return Skill{}, false
-	}
 	sub := level - (101 + 40*(r-1))
-	if sub < 0 || int(sub) >= len(def.EnchLvls[r-1]) {
-		return Skill{}, false
+	for i, e := range def.Enchant {
+		if e.Route != int8(r) {
+			continue
+		}
+		if sub < 0 || int(sub) >= len(def.EnchantLevels[i]) {
+			return Skill{}, false
+		}
+		return def.EnchantLevels[i][sub], true
 	}
-	return def.EnchLvls[r-1][sub], true
+	return Skill{}, false
 }
 
 // SkillDef возвращает определение скилла по ID: исходную форму (таблицы,

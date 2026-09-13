@@ -37,17 +37,17 @@ func benchSkillsXML() string {
 }
 
 // benchSkillStatic — статика с бенчмарк-набором скиллов.
-func benchSkillStatic(b *testing.B) *Static {
-	b.Helper()
+func benchSkillStatic(tb testing.TB) *Static {
+	tb.Helper()
 	fsys := catFS(map[string]*fstest.MapFile{
 		"stats/skills/bench.xml": {Data: []byte(benchSkillsXML())},
 	})
 	st, rep, err := Load(fsys)
 	if err != nil {
-		b.Fatalf("Load: %v", err)
+		tb.Fatalf("Load: %v", err)
 	}
 	if rep.HasErrors() {
-		b.Fatalf("ошибки: %+v", rep.Errors)
+		tb.Fatalf("ошибки: %+v", rep.Errors)
 	}
 	return st
 }
@@ -60,20 +60,21 @@ func BenchmarkSkillLookup(b *testing.B) {
 		name string
 		id   SkillID
 		lv   int32
+		hit  bool
 	}{
-		{"base-hit", 8001, 40},
-		{"ench1-hit", 8001, 115},
-		{"ench2-hit", 8001, 155},
-		{"gap-miss", 8001, 135},
-		{"beyond-miss", 8001, 200},
-		{"absent-miss", 9999, 1},
+		{"base-hit", 8001, 40, true},
+		{"ench1-hit", 8001, 115, true},
+		{"ench2-hit", 8001, 155, true},
+		{"gap-miss", 8001, 135, false},
+		{"beyond-miss", 8001, 200, false},
+		{"absent-miss", 9999, 1, false},
 	}
 	for _, tt := range cases {
 		b.Run(tt.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				sk, ok := st.Skill(tt.id, tt.lv)
-				if tt.name == "base-hit" {
+				if tt.hit {
 					benchSink = ok && sk.HitTime > 0
 				} else {
 					benchSink = ok
@@ -85,16 +86,7 @@ func BenchmarkSkillLookup(b *testing.B) {
 
 // TestSkillLookupZeroAllocs: лукап не аллоцирует (запись по значению).
 func TestSkillLookupZeroAllocs(t *testing.T) {
-	fsys := catFS(map[string]*fstest.MapFile{
-		"stats/skills/bench.xml": {Data: []byte(benchSkillsXML())},
-	})
-	st, rep, err := Load(fsys)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if rep.HasErrors() {
-		t.Fatalf("ошибки: %+v", rep.Errors)
-	}
+	st := benchSkillStatic(t)
 	allocs := testing.AllocsPerRun(200, func() {
 		sk, ok := st.Skill(8001, 115)
 		benchSink = ok && sk.ReuseDelay > 0
