@@ -18,7 +18,7 @@ const (
 // переходов не возникает, обе грани угла проверяются своей стороной.
 // z луча интерполируется целочисленно по параметру пересечения. Без
 // аллокаций; обе точки луча обязаны лежать в сетке мира (гарантия
-// вызывающего — см. move.go).
+// вызывающего).
 type stepper struct {
 	cx, cy   int // текущая ячейка
 	tx, ty   int // конечная ячейка
@@ -69,9 +69,6 @@ func newStepper(from, to Loc, zFrom, zTo int) stepper {
 // next эмитит следующую ячейку обхода; ok=false после конечной ячейки.
 func (s *stepper) next() (x, y, z int, kind stepKind, ok bool) {
 	switch s.phase {
-	case 1: // угловое касание первой осью (ячейка B)
-		s.phase = 2
-		return s.bcx + s.bsx, s.bcy, s.zc, touchX, true
 	case 2: // угловое касание второй осью (ячейка D)
 		s.phase = 3
 		return s.bcx, s.bcy + s.bsy, s.zc, touchY, true
@@ -103,6 +100,16 @@ func (s *stepper) next() (x, y, z int, kind stepKind, ok bool) {
 	case txNum > tyNum:
 		return s.advanceY()
 	default:
+		// Corner точно на конце луча: конечная ячейка совпадает с
+		// касанием пучка — обход завершается обычным шагом в цель;
+		// заходящие за конец луча касания не эмитируются (итератор
+		// канона останавливается на конечной ячейке).
+		if s.cx+s.sx == s.tx && s.cy == s.ty {
+			return s.advanceX()
+		}
+		if s.cx == s.tx && s.cy+s.sy == s.ty {
+			return s.advanceY()
+		}
 		s.bcx, s.bcy, s.bsx, s.bsy = s.cx, s.cy, s.sx, s.sy
 		s.zc = s.rayZ(s.ex, s.adx)
 		s.phase = 2 // B эмитится ниже; следующая эмиссия пучка — D
@@ -137,9 +144,9 @@ func (s *stepper) arrive() {
 }
 
 // rayZ — z луча в точке пересечения: расстояние d по оси длиной a
-// (целочисленное усечение к нулю).
+// (целочисленное усечение к нулю; a > 0 — ось активна).
 func (s *stepper) rayZ(d, a int) int {
-	if s.dz == 0 || a == 0 {
+	if s.dz == 0 {
 		return s.zFrom
 	}
 	return s.zFrom + int(int64(s.dz)*int64(d)/int64(a))

@@ -60,8 +60,10 @@ func buildFuzzWorlds() {
 	fuzzWorlds = append(fuzzWorlds, worldMap(w))
 }
 
-// FuzzValidLocation: инварианты решения 6 плана на детерминированных мирах;
-// вход — только координаты пары (в сетке по построению).
+// FuzzValidLocation: машинные инварианты ValidLocation на
+// детерминированных мирах; вход — координаты пары (в сетке по построению,
+// точки — произвольные внутри ячеек, включая границы: офсет 0..15 от
+// юго-западного угла ячейки).
 func FuzzValidLocation(f *testing.F) {
 	f.Add(uint8(0), int32(100), int32(200), int32(300), int32(400), int32(0), int32(0))
 	f.Add(uint8(3), int32(80), int32(80), int32(2000), int32(80), int32(200), int32(0))
@@ -70,15 +72,16 @@ func FuzzValidLocation(f *testing.F) {
 		fuzzWorldsOnce.Do(buildFuzzWorlds)
 		m := fuzzWorlds[int(sel)%len(fuzzWorlds)]
 		// Координаты сворачиваются в сетку региона-якоря и его соседа:
-		// любые int32 дают in-grid точки.
+		// любые int32 дают in-grid точки; офсет внутри ячейки выводится
+		// из других бит входа — границы и центры равноправны в корпусе.
 		from := Loc{
-			X: GeoToWorldX(int(uint32(ax)%regionCells) + testRX*regionCells),
-			Y: GeoToWorldY(int(uint32(ay)%regionCells) + testRY*regionCells),
+			X: worldMinX + (testRX*regionCells+int(uint32(ax)%regionCells))*cellSize + int(uint32(ax)>>8%cellSize),
+			Y: worldMinY + (testRY*regionCells+int(uint32(ay)%regionCells))*cellSize + int(uint32(ay)>>8%cellSize),
 			Z: int(az),
 		}
 		to := Loc{
-			X: GeoToWorldX(int(uint32(bx)%(2*regionCells)) + testRX*regionCells),
-			Y: GeoToWorldY(int(uint32(by)%regionCells) + testRY*regionCells),
+			X: worldMinX + (testRX*regionCells+int(uint32(bx)%(2*regionCells)))*cellSize + int(uint32(bx)>>4%cellSize),
+			Y: worldMinY + (testRY*regionCells+int(uint32(by)%regionCells))*cellSize + int(uint32(by)>>8%cellSize),
 			Z: int(bz),
 		}
 		res, ok := m.ValidLocation(from, to)

@@ -11,7 +11,9 @@ const (
 	layerDropLimit          = 1000 // правило MultilayerBlock.getNearestZ
 )
 
-// Loc — точка в мировых координатах.
+// Loc — точка в мировых координатах. Z — высота; допустимы значения
+// клиентского диапазона (int32): вне высот мира используется как есть,
+// экстремальные значения вне диапазона не поддерживаются.
 type Loc struct {
 	X, Y, Z int
 }
@@ -20,7 +22,9 @@ type Loc struct {
 // мира — программный контракт вызывающего (недоверенные координаты
 // валидируются до вызова); нарушение — паника с диагностикой, как у
 // Region.CellAt. Прецедент канона: GeoEngine.getRegion за границами сетки
-// бросает исключение.
+// бросает исключение. Точки в полосе до cellSize за западной/северной
+// границей целочисленным усечением отображаются в краевую ячейку — так же,
+// как в каноне (целочисленное деление Java).
 func geoOf(x, y int) (int, int) {
 	gx, gy := WorldToGeoX(x), WorldToGeoY(y)
 	if uint(gx) >= regionsX*regionCells || uint(gy) >= regionsY*regionCells {
@@ -65,11 +69,11 @@ func (m *Map) higherZ(gx, gy, z int) int {
 	return z
 }
 
-// checkNswe — разрешён ли переход из ячейки в направлении dir с высоты z:
+// checkNSWE — разрешён ли переход из ячейки в направлении dir с высоты z:
 // флаги ближайшего к z слоя без правила 1000 (порт
 // GeoEngine.checkNearestNswe → MultilayerBlock.getNearestNSWE). Ячейка без
 // гео — разрешён (NullRegion).
-func (m *Map) checkNswe(gx, gy, z int, dir NSWE) bool {
+func (m *Map) checkNSWE(gx, gy, z int, dir NSWE) bool {
 	r := m.RegionAt(gx, gy)
 	if r == nil {
 		return true
@@ -96,30 +100,30 @@ func computeNswe(px, py, cx, cy int) NSWE {
 	return nswe
 }
 
-// checkNsweAntiCornerCut — движение из ячейки в направлении dir с учётом
+// checkNSWEAntiCornerCut — движение из ячейки в направлении dir с учётом
 // анти-среза диагонали (порт GeoEngine.checkNearestNsweAntiCornerCut):
 // составное направление требует оба ортогональных флага самой ячейки и оба
 // переходных флага ячеек угла.
-func (m *Map) checkNsweAntiCornerCut(gx, gy, z int, dir NSWE) bool {
+func (m *Map) checkNSWEAntiCornerCut(gx, gy, z int, dir NSWE) bool {
 	switch dir {
 	case North | East:
-		if !m.checkNswe(gx, gy-1, z, East) || !m.checkNswe(gx+1, gy, z, North) {
+		if !m.checkNSWE(gx, gy-1, z, East) || !m.checkNSWE(gx+1, gy, z, North) {
 			return false
 		}
 	case North | West:
-		if !m.checkNswe(gx, gy-1, z, West) || !m.checkNswe(gx-1, gy, z, North) {
+		if !m.checkNSWE(gx, gy-1, z, West) || !m.checkNSWE(gx-1, gy, z, North) {
 			return false
 		}
 	case South | East:
-		if !m.checkNswe(gx, gy+1, z, East) || !m.checkNswe(gx+1, gy, z, South) {
+		if !m.checkNSWE(gx, gy+1, z, East) || !m.checkNSWE(gx+1, gy, z, South) {
 			return false
 		}
 	case South | West:
-		if !m.checkNswe(gx, gy+1, z, West) || !m.checkNswe(gx-1, gy, z, South) {
+		if !m.checkNSWE(gx, gy+1, z, West) || !m.checkNSWE(gx-1, gy, z, South) {
 			return false
 		}
 	}
-	return m.checkNswe(gx, gy, z, dir)
+	return m.checkNSWE(gx, gy, z, dir)
 }
 
 // hasNeighbourLayerNear — есть ли у одного из четырёх NSWE-соседей ячейки
@@ -138,7 +142,7 @@ func (m *Map) hasNeighbourLayerNear(gx, gy, z, tol int) bool {
 // losGeoZ — гео-высота для проверки LOS: переход prev→cur открыт — ближайший
 // слой, закрыт — слой выше (порт GeoEngine.getLosGeoZ).
 func (m *Map) losGeoZ(px, py, pz, cx, cy int, dir NSWE) int {
-	if m.checkNsweAntiCornerCut(px, py, pz, dir) {
+	if m.checkNSWEAntiCornerCut(px, py, pz, dir) {
 		return m.nearestZ(cx, cy, pz)
 	}
 	return m.higherZ(cx, cy, pz)
@@ -179,41 +183,39 @@ func (m *Map) ValidLocation(from, to Loc) (Loc, bool) {
 		if kind == touchX || kind == touchY {
 			// Угловое касание: высотная проверка касания; NSWE обоих
 			// переходов покрывается композицией диагональной ячейки
-			// (checkNsweAntiCornerCut). Позиция обхода не двигается —
+			// (checkNSWEAntiCornerCut). Позиция обхода не двигается —
 			// кламп остаётся у основания пучка.
-			if m.heightWall(cx, cy, prevZ) {
+			if rawZ := m.nearestZ(cx, cy, prevZ); m.heightWall(cx, cy, prevZ, rawZ) {
 				return cellCenter(prevX, prevY, prevZ), false
 			}
 			continue
 		}
-		curZ := prevZ
-		if rawZ := m.nearestZ(cx, cy, prevZ); rawZ-prevZ > heightIncreaseLimit {
+		curZ := m.nearestZ(cx, cy, prevZ)
+		if curZ-prevZ > heightIncreaseLimit {
 			// Одноячеечный разрыв слоя: непрерывность через соседа
 			// (порт GeoEngine.getValidLocation, ветка >40).
-			if m.heightWall(cx, cy, prevZ) {
+			if m.heightWall(cx, cy, prevZ, curZ) {
 				return cellCenter(prevX, prevY, prevZ), false
 			}
 			curZ = prevZ
-		} else if rawZ != prevZ {
-			curZ = rawZ
 		}
 		if m.hasGeo(prevX, prevY) {
-			if !m.checkNsweAntiCornerCut(prevX, prevY, prevZ, computeNswe(prevX, prevY, cx, cy)) {
+			if !m.checkNSWEAntiCornerCut(prevX, prevY, prevZ, computeNswe(prevX, prevY, cx, cy)) {
 				return cellCenter(prevX, prevY, prevZ), false
 			}
 		}
 		prevX, prevY, prevZ = cx, cy, curZ
 	}
 	if m.hasGeo(prevX, prevY) && prevZ != toZ {
-		return Loc{from.X, from.Y, fromZ}, false
+		return Loc{X: from.X, Y: from.Y, Z: fromZ}, false
 	}
-	return Loc{to.X, to.Y, toZ}, true
+	return Loc{X: to.X, Y: to.Y, Z: toZ}, true
 }
 
-// heightWall — резкий подъём без непрерывности: у ячейки нет слоя в
+// heightWall — резкий подъём rawZ без непрерывности: у ячейки нет слоя в
 // пределах pathContinuityTolerance ни у одного NSWE-соседа.
-func (m *Map) heightWall(gx, gy, prevZ int) bool {
-	if m.nearestZ(gx, gy, prevZ)-prevZ <= heightIncreaseLimit {
+func (m *Map) heightWall(gx, gy, prevZ, rawZ int) bool {
+	if rawZ-prevZ <= heightIncreaseLimit {
 		return false
 	}
 	return !m.hasNeighbourLayerNear(gx, gy, prevZ, pathContinuityTolerance)
@@ -245,7 +247,7 @@ func (m *Map) CanSee(from, to Loc) bool {
 	prevX, prevY, prevZ := gx, gy, fromZ
 	pointIndex := 0
 	for {
-		cx, cy, beeZ, kind, ok := st.next()
+		cx, cy, zRay, kind, ok := st.next()
 		if !ok {
 			break
 		}
@@ -253,18 +255,19 @@ func (m *Map) CanSee(from, to Loc) bool {
 		if m.hasGeo(cx, cy) {
 			dir := computeNswe(prevX, prevY, cx, cy)
 			curZ = m.losGeoZ(prevX, prevY, prevZ, cx, cy, dir)
-			maxHeight := beeZ + maxSeeOverHeight
+			maxHeight := zRay + maxSeeOverHeight
 			if pointIndex < elevatedSeeOverDistance {
 				maxHeight = fromZ + maxSeeOverHeight
 			}
-			if !m.canSeeThrough(prevX, prevY, prevZ, curZ, dir, beeZ, maxHeight) {
+			if !m.canSeeThrough(prevX, prevY, prevZ, curZ, dir, zRay, maxHeight) {
 				return false
 			}
 		}
 		if kind == touchX || kind == touchY {
 			// Касание угла — проверенная, но не пройденная точка: позиция
-			// и z обзора не двигаются.
-			pointIndex++
+			// и z обзора не двигаются; окно высоты источника не
+			// расходуется (у обхода канона точек-касаний нет — счётчик
+			// точек растёт только на пройденных ячейках).
 			continue
 		}
 		prevX, prevY, prevZ = cx, cy, curZ
@@ -276,7 +279,7 @@ func (m *Map) CanSee(from, to Loc) bool {
 // canSeeThrough — перекрывает ли ячейка линию: собственная гео-высота
 // (curZ) и, на диагональном переходе, обе касательные ячейки угла с их
 // переходными гейтами (порт GeoEngine.canSeeTarget, ветки NE/NW/SE/SW).
-func (m *Map) canSeeThrough(px, py, pz, curZ int, dir NSWE, beeZ, maxHeight int) bool {
+func (m *Map) canSeeThrough(px, py, pz, curZ int, dir NSWE, zRay, maxHeight int) bool {
 	if curZ > maxHeight {
 		return false
 	}
@@ -301,5 +304,5 @@ func (m *Map) canSeeThrough(px, py, pz, curZ int, dir NSWE, beeZ, maxHeight int)
 	z1 := m.losGeoZ(px, py, pz, c1x, c1y, gate1)
 	z2 := m.losGeoZ(px, py, pz, c2x, c2y, gate2)
 	return z1 <= maxHeight && z2 <= maxHeight &&
-		z1 <= m.nearestZ(c1x, c1y, beeZ) && z2 <= m.nearestZ(c2x, c2y, beeZ)
+		z1 <= m.nearestZ(c1x, c1y, zRay) && z2 <= m.nearestZ(c2x, c2y, zRay)
 }

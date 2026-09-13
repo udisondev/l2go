@@ -43,6 +43,7 @@ func TestCanSee(t *testing.T) {
 			world: func(w *cellWorld) { w.setFlatBlock(geoX(8), geoY(0), 49) },
 			from:  at(0, 0, 0),
 			to:    at(16, 0, 0),
+			want:  false,
 		},
 		{
 			// «С высоты источника»: первые elevatedSeeOverDistance точек
@@ -66,6 +67,7 @@ func TestCanSee(t *testing.T) {
 			},
 			from: at(0, 0, 1000),
 			to:   at(12, 0, 0),
+			want: false,
 		},
 		{
 			// Диагональная ветка corner-пучка (порт canSeeTarget, ветки
@@ -79,6 +81,7 @@ func TestCanSee(t *testing.T) {
 			},
 			from: at(0, 0, 0),
 			to:   at(10, 10, 0),
+			want: false,
 		},
 		{
 			// Контроль: флаг открыт — eastGeoZ через getNearestZ (−8).
@@ -96,6 +99,7 @@ func TestCanSee(t *testing.T) {
 			world: func(w *cellWorld) { w.setML(geoX(5), geoY(5), layer(0, NSWEAll), layer(1000, NSWEAll)) },
 			from:  at(5, 5, 0),
 			to:    at(5, 5, 1000),
+			want:  false,
 		},
 		{
 			name:  "same-cell same-layer",
@@ -166,5 +170,77 @@ func TestCanSeeReflexivity(t *testing.T) {
 				t.Errorf("мир %d: CanSee(%v, %v) = false; want true", i, p, p)
 			}
 		}
+	}
+}
+
+// TestCanSeeElevatedWindowDiagonal — окно высоты источника на точном
+// диагональном луче: первые пройденные ячейки видны от высоты источника,
+// касания пучка окно не расходуют (у обхода канона точек-касаний нет).
+func TestCanSeeElevatedWindowDiagonal(t *testing.T) {
+	w := newCellWorld(testRX, testRY)
+	w.set(geoX(0), geoY(0), 1000, NSWEAll)
+	w.set(geoX(1), geoY(1), 1016, NSWEAll)
+	m := buildCellMap(t, w)
+	if !m.CanSee(at(0, 0, 1000), at(10, 10, 0)) {
+		t.Errorf("шип 1016 у первой диагональной ячейки скрыт; want виден (окно fromZ+48)")
+	}
+
+	w2 := newCellWorld(testRX, testRY)
+	w2.set(geoX(0), geoY(0), 1000, NSWEAll)
+	w2.set(geoX(3), geoY(3), 800, NSWEAll)
+	m2 := buildCellMap(t, w2)
+	if m2.CanSee(at(0, 0, 1000), at(10, 10, 0)) {
+		t.Errorf("шип 800 у четвёртой диагональной ячейки виден; want скрыт (окно исчерпано)")
+	}
+}
+
+// TestCanSeeCornerQuadrants — диагональная ветка LOS во всех четырёх
+// квадрантах: перпендикулярный флаг источника закрыт — касательная ячейка
+// резолвится через getNextHigherZ и перекрывает; флаг открыт — видно.
+func TestCanSeeCornerQuadrants(t *testing.T) {
+	for name, q := range map[string][2]int{"SE": {1, 1}, "NE": {1, -1}, "SW": {-1, 1}, "NW": {-1, -1}} {
+		sx, sy := q[0], q[1]
+		t.Run(name, func(t *testing.T) {
+			ax, ay := geoX(20), geoY(20)
+			from := at(20, 20, 0)
+			to := atGeo(ax+10*sx, ay+10*sy, 0)
+			// Флаг источника к B=(20+sx,20): S/N-семейство.
+			flagY := South
+			if sy < 0 {
+				flagY = North
+			}
+			// Флаг источника к D=(20,20+sy): E/W-семейство.
+			flagX := East
+			if sx < 0 {
+				flagX = West
+			}
+			// Угловая ячейка: нижний слой −8 (ближайший), верхний 56.
+			raise := func(w *cellWorld, corner [2]int) {
+				w.setML(corner[0], corner[1], layer(-8, NSWEAll), layer(56, NSWEAll))
+			}
+			cases := []struct {
+				name   string
+				closed *NSWE
+				corner [2]int
+				want   bool
+			}{
+				{"флаг к B закрыт (S/N)", &flagY, [2]int{ax + sx, ay}, false},
+				{"флаг к D закрыт (E/W)", &flagX, [2]int{ax, ay + sy}, false},
+				{"флаги открыты", nil, [2]int{ax + sx, ay}, true},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					w := newCellWorld(testRX, testRY)
+					if tc.closed != nil {
+						w.set(ax, ay, 0, NSWEAll&^*tc.closed)
+					}
+					raise(w, tc.corner)
+					m := buildCellMap(t, w)
+					if got := m.CanSee(from, to); got != tc.want {
+						t.Errorf("квадрант %s %s: CanSee = %v; want %v", name, tc.name, got, tc.want)
+					}
+				})
+			}
+		})
 	}
 }
