@@ -312,8 +312,7 @@ func parseTerritory(dec *xml.Decoder, start xml.StartElement, terrName, path str
 		}
 	}
 	t.MinX, t.MaxX, t.MinY, t.MaxY = polyBounds(nodes)
-	// Дубликат имени — ошибка; побеждает первая. Территория без узлов
-	// регистрируется: вырожденность геометрии — выше.
+	// Дубликат имени — ошибка; побеждает первая.
 	if _, dup := ctx.territories[t.Name]; dup {
 		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
 			Code: CodeDupID, Message: "дубликат имени территории " + t.Name + ", побеждает первая"})

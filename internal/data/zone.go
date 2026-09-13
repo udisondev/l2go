@@ -631,8 +631,8 @@ func polyBounds(nodes [][2]int32) (minX, maxX, minY, maxY int32) {
 func polyCollinear(nodes [][2]int32) bool {
 	for i := range nodes {
 		p1, p2, p3 := nodes[i], nodes[(i+1)%len(nodes)], nodes[(i+2)%len(nodes)]
-		cross := int64(p2[0]-p1[0])*int64(p3[1]-p1[1]) -
-			int64(p2[1]-p1[1])*int64(p3[0]-p1[0])
+		cross := (int64(p2[0])-int64(p1[0]))*(int64(p3[1])-int64(p1[1])) -
+			(int64(p2[1])-int64(p1[1]))*(int64(p3[0])-int64(p1[0]))
 		if cross != 0 {
 			return false
 		}

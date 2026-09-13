@@ -122,33 +122,43 @@ func scanZones() []Zone {
 	return zones
 }
 
+// scanPoints — прекомпьют точек запроса по классам от самих зон (класс
+// относится к проверяемой зоне; генерация вне замеряемого цикла — в
+// единице работы фазы 3 точка приходит извне).
+func scanPoints(zones []Zone) [][3]int32 {
+	pts := make([][3]int32, len(zones))
+	for i := range zones {
+		zn := &zones[i]
+		switch i % 4 {
+		case 0: // z-промах
+			pts[i] = [3]int32{zn.MinX + 1, zn.MinY + 1, 99999}
+		case 1: // угол bbox: платит кроссинг, как правило мимо
+			pts[i] = [3]int32{zn.MinX + 1, zn.MinY + 1, 0}
+		case 2: // центр bbox: как правило попадание
+			pts[i] = [3]int32{zn.MinX + (zn.MaxX-zn.MinX)/2, zn.MinY + (zn.MaxY-zn.MinY)/2, 0}
+		default: // полный промах
+			pts[i] = [3]int32{-300000, -300000, 0}
+		}
+	}
+	return pts
+}
+
 // BenchmarkZonesScan: перебор всех зон по точке — единица работы фазы 3 до
-// пространственного индекса. Классы точек вычисляются от самой зоны в
-// итерации (не от фикс-зон): z-промах; угол bbox (внутри bbox, обычно мимо
-// полигона — платит кроссинг); центр bbox (обычно попадание); полный промах.
-// Одна константная точка мерила бы везение бранч-предиктора.
+// пространственного индекса. Классы точек — z-промах; угол bbox (внутри
+// bbox, обычно мимо полигона — платит кроссинг); центр bbox (обычно
+// попадание); полный промах. Одна константная точка мерила бы везение
+// бранч-предиктора.
 func BenchmarkZonesScan(b *testing.B) {
 	zones := scanZones()
 	if len(zones) < 1900 {
 		b.Fatalf("скан-набор = %d зон; want ~2000", len(zones))
 	}
+	pts := scanPoints(zones)
 	b.ReportAllocs()
 	for b.Loop() {
 		hit := false
 		for i := range zones {
-			zn := &zones[i]
-			var x, y, z int32
-			switch i % 4 {
-			case 0: // z-промах
-				x, y, z = zn.MinX+1, zn.MinY+1, 99999
-			case 1: // угол bbox: платит кроссинг, как правило мимо
-				x, y = zn.MinX+1, zn.MinY+1
-			case 2: // центр bbox: как правило попадание
-				x, y = zn.MinX+(zn.MaxX-zn.MinX)/2, zn.MinY+(zn.MaxY-zn.MinY)/2
-			default: // полный промах
-				x, y = -300000, -300000
-			}
-			if zn.Contains(x, y, z) {
+			if zones[i].Contains(pts[i][0], pts[i][1], pts[i][2]) {
 				hit = true
 			}
 		}
@@ -161,22 +171,12 @@ func BenchmarkZonesScan(b *testing.B) {
 // один бранч-путь).
 func TestScanClasses(t *testing.T) {
 	zones := scanZones()
+	pts := scanPoints(zones)
 	classHit, classMiss := [4]int{}, [4]int{}
 	for i := range zones {
-		zn := &zones[i]
-		var x, y, z int32
 		class := i % 4
-		switch class {
-		case 0:
-			x, y, z = zn.MinX+1, zn.MinY+1, 99999
-		case 1:
-			x, y = zn.MinX+1, zn.MinY+1
-		case 2:
-			x, y = zn.MinX+(zn.MaxX-zn.MinX)/2, zn.MinY+(zn.MaxY-zn.MinY)/2
-		default:
-			x, y = -300000, -300000
-		}
-		if zn.Contains(x, y, z) {
+		p := pts[i]
+		if zones[i].Contains(p[0], p[1], p[2]) {
 			classHit[class]++
 		} else {
 			classMiss[class]++
