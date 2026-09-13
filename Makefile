@@ -4,7 +4,7 @@ STATICCHECK_VERSION ?= v0.8.1
 
 # check — единственная команда для агентов и CI: все ворота разом
 # (build + lint: vet, staticcheck, gofmt + checkdeps + test -race).
-.PHONY: build test race lint checkdeps check tidy
+.PHONY: build test race lint checkdeps check tidy fuzz-smoke fuzz-long embedded
 
 build:
 	$(GO) build ./...
@@ -42,6 +42,7 @@ fuzz-smoke:
 	$(GO) test -fuzz='^FuzzLoadNpcSpawns$$' -fuzztime=10s ./internal/data/
 	$(GO) test -fuzz='^FuzzDecodeRegion$$' -fuzztime=10s ./internal/geo/
 	$(GO) test -fuzz='^FuzzValidLocation$$' -fuzztime=10s ./internal/geo/
+	$(GO) test -fuzz='^FuzzArtifactDecode$$' -fuzztime=10s ./internal/artifact/
 
 # Длинный локальный фаззинг: make fuzz-long FUZZTIME=30m (находки — в testdata/fuzz).
 fuzz-long:
@@ -55,3 +56,16 @@ fuzz-long:
 	$(GO) test -fuzz='^FuzzLoadNpcSpawns$$' -fuzztime=$(FUZZTIME) ./internal/data/
 	$(GO) test -fuzz='^FuzzDecodeRegion$$' -fuzztime=$(FUZZTIME) ./internal/geo/
 	$(GO) test -fuzz='^FuzzValidLocation$$' -fuzztime=$(FUZZTIME) ./internal/geo/
+	$(GO) test -fuzz='^FuzzArtifactDecode$$' -fuzztime=$(FUZZTIME) ./internal/artifact/
+
+# Сборка сервера одним файлом: статики вшивается артефактом (идемпотентная
+# пересборка — байт-идентичный артефакт не переписывается).
+# make embedded DATA=<корень датапака> GEO=<каталог геодаты>
+embedded:
+	@test -n "$(DATA)" || { echo "make embedded DATA=<корень датапака> [GEO=<каталог геодаты>]"; exit 2; }
+	@if [ -n "$(GEO)" ]; then \
+		$(GO) run ./cmd/l2data build "$(DATA)" "$(GEO)"; \
+	else \
+		$(GO) run ./cmd/l2data build "$(DATA)"; \
+	fi
+	$(GO) build -tags embedded -o bin/ ./...

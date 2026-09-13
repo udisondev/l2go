@@ -92,8 +92,7 @@ func BenchmarkLoadFileRealPhases(b *testing.B) {
 	payload := raw[120:]
 	dataSec := payload[40 : 40+meta.DataLen]
 	geoSec := payload[40+meta.DataLen:]
-	regs, err := decodeGeoRegions(geoSec)
-	if err != nil {
+	if _, err := decodeGeoRegions(geoSec); err != nil {
 		b.Fatalf("регионы для прогона: %v", err)
 	}
 
@@ -122,7 +121,6 @@ func BenchmarkLoadFileRealPhases(b *testing.B) {
 			}
 		}
 	})
-	_ = regs
 }
 
 // BenchmarkBuildReal — полный цикл сборки с записью (фазы: parse вне цикла —

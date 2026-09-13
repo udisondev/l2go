@@ -63,7 +63,7 @@ type Report struct {
 func (r *Report) HasErrors() bool { return len(r.Errors) > 0 }
 
 // LoadDir загружает каталог геодаты (файлы «NN_NN.l2j» в корне; подпапки и
-// прочие имена не читаются, но видны в счётчиках). Отображения установленных
+// прочие имена не читаются, но видятны в счётчиках). Отображения установленных
 // регионов принадлежат Map на всё время жизни процесса (см. doc пакета).
 // error — только фатальное (каталог не читается); ошибки данных — в отчёте.
 func LoadDir(dir string) (*Map, *Report, error) {
@@ -72,9 +72,10 @@ func LoadDir(dir string) (*Map, *Report, error) {
 		return nil, nil, fmt.Errorf("geo: чтение каталога %s: %w", dir, err)
 	}
 
-	m := &Map{}
 	rep := &Report{}
 	inputs := map[string][sha256.Size]byte{}
+	var regs []*Region
+	seen := make(map[int]bool)
 	for _, e := range entries {
 		if e.IsDir() {
 			rep.SkippedDirs++
@@ -90,9 +91,21 @@ func LoadDir(dir string) (*Map, *Report, error) {
 				Message: fmt.Sprintf("координаты региона (%d, %d) вне сетки %d×%d", rx, ry, regionsX, regionsY)})
 			continue
 		}
-		if m.regions[rx*regionsY+ry] != nil {
+		idx := rx*regionsY + ry
+		if seen[idx] {
 			rep.err(Entry{File: e.Name(), Code: CodeDup,
 				Message: fmt.Sprintf("регион (%d, %d) уже установлен другим файлом", rx, ry)})
+			continue
+		}
+		// Потолок файла региона проверяется до отображения (mapFile потолка
+		// не имеет: он же отображает артефакт статики произвольного размера).
+		info, err := e.Info()
+		if err != nil {
+			rep.err(Entry{File: e.Name(), Code: CodeIO, Message: err.Error()})
+			continue
+		}
+		if !sizeOK(int(info.Size())) {
+			rep.err(Entry{File: e.Name(), Code: CodeSize, Message: sizeErr(info.Size()).Error()})
 			continue
 		}
 
@@ -111,7 +124,8 @@ func LoadDir(dir string) (*Map, *Report, error) {
 		}
 		// Регион установлен: отображение живёт до конца процесса, unmap
 		// не вызывается (контракт doc пакета).
-		m.regions[rx*regionsY+ry] = reg
+		regs = append(regs, reg)
+		seen[idx] = true
 		rep.Files++
 		rep.Regions++
 		rep.BlocksFlat += st.blocksFlat
@@ -128,6 +142,10 @@ func LoadDir(dir string) (*Map, *Report, error) {
 		rep.BytesMapped += len(data)
 		rep.HeapIndexBytes += st.indexBytes
 		inputs[e.Name()] = sha256.Sum256(data)
+	}
+	m, err := NewMapFromRegions(regs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("geo: сборка карты: %w", err)
 	}
 	rep.Manifest = manifestOf(inputs)
 	return m, rep, nil

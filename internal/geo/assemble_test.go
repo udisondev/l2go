@@ -25,10 +25,10 @@ func TestNewMapFromRegions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMapFromRegions: %v", err)
 	}
-	if got := m.RegionAt(16*256, 10*256); got != reg {
+	if got := m.RegionAt(16*2048, 10*2048); got != reg {
 		t.Errorf("RegionAt региона 16_10 не вернул установленный регион")
 	}
-	if got := m.RegionAt(17*256, 10*256); got != nil {
+	if got := m.RegionAt(17*2048, 10*2048); got != nil {
 		t.Errorf("RegionAt пустого слота вернул %v, хочу nil", got)
 	}
 }
@@ -87,6 +87,9 @@ func TestEachRegionStop(t *testing.T) {
 
 func TestMapFileNoCeiling(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "big.bin")
+	if err := os.WriteFile(path, []byte{0}, 0o644); err != nil {
+		t.Fatalf("создание файла: %v", err)
+	}
 	// Размер заведомо выше потолка файла региона: усечение расширяет файл
 	// нулями, не записывая их (разрежённый хвост).
 	const size = int64(maxRegionBytes) + 8

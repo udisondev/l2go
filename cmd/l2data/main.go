@@ -1,29 +1,52 @@
-// l2data — проверка статики: загрузка датапака и геодаты с полным отчётом
-// валидации.
+// l2data — статики: проверка датапака и геодаты, сборка компилированного
+// артефакта и загрузка из него.
 package main
 
 import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
+	"time"
 
+	"github.com/udisondev/l2go/internal/artifact"
 	"github.com/udisondev/l2go/internal/data"
 	"github.com/udisondev/l2go/internal/geo"
 )
 
+// defaultArtifact — путь артефакта по умолчанию (embed-каталог); относителен
+// корню модуля — при запуске из другого каталога используй -o.
+var defaultArtifact = filepath.Join("internal", "artifact", "embedded", "artifact.l2a")
+
 func main() {
 	flag.Usage = usage
 	flag.Parse()
-	if flag.NArg() != 2 {
+	if flag.NArg() < 1 {
 		usage()
 		os.Exit(2)
 	}
 	switch flag.Arg(0) {
 	case "check":
+		if flag.NArg() != 2 {
+			usage()
+			os.Exit(2)
+		}
 		check(flag.Arg(1))
 	case "geo":
+		if flag.NArg() != 2 {
+			usage()
+			os.Exit(2)
+		}
 		checkGeo(flag.Arg(1))
+	case "build":
+		cmdBuild(flag.Args()[1:])
+	case "load":
+		if flag.NArg() != 2 {
+			usage()
+			os.Exit(2)
+		}
+		cmdLoad(flag.Arg(1))
 	default:
 		usage()
 		os.Exit(2)
@@ -59,7 +82,98 @@ func checkGeo(dir string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "использование: l2data check <корень данных> | l2data geo <каталог геодаты>")
+	fmt.Fprintln(os.Stderr, "использование: l2data check <корень данных> | l2data geo <каталог геодаты> |")
+	fmt.Fprintln(os.Stderr, "           l2data build <корень данных> [каталог геодаты] [-o артефакт] | l2data load <артефакт>")
+}
+
+// cmdBuild собирает артефакт статики: парсинг и валидация исходников (красные
+// — выход 1, артефакт не трогается), затем атомарная запись (идентичный
+// существующему — «актуален», без записи).
+func cmdBuild(args []string) {
+	out := defaultArtifact
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-o" {
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "l2data: -o требует путь")
+				os.Exit(2)
+			}
+			out = args[i+1]
+			i++
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	if len(rest) < 1 || len(rest) > 2 {
+		usage()
+		os.Exit(2)
+	}
+	root, geoDir := rest[0], ""
+	if len(rest) == 2 {
+		geoDir = rest[1]
+	}
+
+	t0 := time.Now()
+	st, drep, err := data.Load(os.DirFS(root))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "l2data: %v\n", err)
+		os.Exit(1)
+	}
+	printReport(drep)
+	if drep.HasErrors() {
+		os.Exit(1)
+	}
+	var m *geo.Map
+	var grep *geo.Report
+	if geoDir != "" {
+		m, grep, err = geo.LoadDir(geoDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "l2data: %v\n", err)
+			os.Exit(1)
+		}
+		printGeoReport(grep)
+		if grep.HasErrors() || grep.Regions == 0 {
+			if !grep.HasErrors() {
+				fmt.Println("регионы не загружены — проверьте каталог и формат (нужен L2J .l2j)")
+			}
+			os.Exit(1)
+		}
+	} else {
+		fmt.Println("геодата не задана: регионов: 0")
+	}
+	parseDur := time.Since(t0)
+
+	res, err := artifact.Build(out, st, drep, m, grep)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "l2data: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("манифест данных: %x\nманифест гео: %x\n", res.Meta.DataManifest, res.Meta.GeoManifest)
+	fmt.Printf("секция данных: %d байт, гео: %d байт, регионов: %d\n",
+		res.Meta.DataLen, res.Meta.GeoLen, res.Meta.Regions)
+	fmt.Printf("фазы: parse=%s encode=%s write=%s\n", parseDur, res.Encode, res.Write)
+	if res.Fresh {
+		fmt.Printf("артефакт записан: %s\n", out)
+	} else {
+		fmt.Printf("артефакт актуален, запись не требуется: %s\n", out)
+	}
+}
+
+// cmdLoad загружает артефакт (mmap + проверка + декодирование) и печатает
+// манифесты, счётчики и времена фаз.
+func cmdLoad(path string) {
+	st, m, meta, ph, err := artifact.LoadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "l2data: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("манифест данных: %x\nманифест гео: %x\n", meta.DataManifest, meta.GeoManifest)
+	fmt.Printf("файлов: %d, предметов: %d, NPC: %d, спавнов: %d, территорий: %d, зон: %d, скиллов: %d (уровней: %d), регионов: %d\n",
+		meta.Files, meta.Items, meta.Npcs, meta.Spawns, meta.Territories, meta.Zones, meta.Skills, meta.SkillLevels, meta.Regions)
+	fmt.Printf("секция данных: %d байт, гео: %d байт\n", meta.DataLen, meta.GeoLen)
+	fmt.Printf("фазы: verify=%s decode-data=%s decode-geo=%s\n", ph.Verify, ph.DecodeData, ph.DecodeGeo)
+	_ = st
+	_ = m
 }
 
 func printReport(rep *data.Report) {

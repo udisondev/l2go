@@ -22,15 +22,52 @@ var knownOperateTypes = map[string]struct{}{
 
 // knownTargetTypes — словарь TargetType канона, 38 значений (порт, GPLv3).
 var knownTargetTypes = map[string]struct{}{
-	"AREA": {}, "AREA_CORPSE_MOB": {}, "AREA_FRIENDLY": {}, "AREA_SUMMON": {},
-	"AREA_UNDEAD": {}, "AURA": {}, "AURA_CORPSE_MOB": {}, "AURA_FRIENDLY": {},
-	"BEHIND_AREA": {}, "BEHIND_AURA": {}, "CLAN": {}, "CLAN_MEMBER": {},
-	"COMMAND_CHANNEL": {}, "CORPSE": {}, "CORPSE_CLAN": {}, "CORPSE_MOB": {},
-	"ENEMY_SUMMON": {}, "FLAGPOLE": {}, "FRONT_AREA": {}, "FRONT_AURA": {},
-	"GROUND": {}, "HOLY": {}, "NONE": {}, "ONE": {}, "OWNER_PET": {},
-	"PARTY": {}, "PARTY_CLAN": {}, "PARTY_MEMBER": {}, "PARTY_NOTME": {},
-	"PARTY_OTHER": {}, "PC_BODY": {}, "PET": {}, "SELF": {}, "SERVITOR": {},
-	"SUMMON": {}, "TARGET_PARTY": {}, "UNDEAD": {}, "UNLOCKABLE": {},
+	"AREA":            {},
+	"AREA_CORPSE_MOB": {},
+	"AREA_FRIENDLY":   {},
+	"AREA_SUMMON":     {},
+
+	"AREA_UNDEAD":     {},
+	"AURA":            {},
+	"AURA_CORPSE_MOB": {},
+	"AURA_FRIENDLY":   {},
+
+	"BEHIND_AREA": {},
+	"BEHIND_AURA": {},
+	"CLAN":        {},
+	"CLAN_MEMBER": {},
+
+	"COMMAND_CHANNEL": {},
+	"CORPSE":          {},
+	"CORPSE_CLAN":     {},
+	"CORPSE_MOB":      {},
+
+	"ENEMY_SUMMON": {},
+	"FLAGPOLE":     {},
+	"FRONT_AREA":   {},
+	"FRONT_AURA":   {},
+
+	"GROUND":    {},
+	"HOLY":      {},
+	"NONE":      {},
+	"ONE":       {},
+	"OWNER_PET": {},
+
+	"PARTY":        {},
+	"PARTY_CLAN":   {},
+	"PARTY_MEMBER": {},
+	"PARTY_NOTME":  {},
+
+	"PARTY_OTHER": {},
+	"PC_BODY":     {},
+	"PET":         {},
+	"SELF":        {},
+	"SERVITOR":    {},
+
+	"SUMMON":       {},
+	"TARGET_PARTY": {},
+	"UNDEAD":       {},
+	"UNLOCKABLE":   {},
 }
 
 // maxSkillLevels — потолок атрибута levels (максимум дистрибутива 80, запас
@@ -532,9 +569,17 @@ func readTextNested(dec *xml.Decoder, el xml.StartElement, hasChild *bool) (stri
 }
 
 // readRawNode читает поддерево эффектов/условий в иммутабельное дерево:
-// атрибуты сортируются, текст нормализуется, комментарии опускаются.
-// Ошибка декодера возвращается вызывающему с позицией.
+// атрибуты сортируются, текст нормализуется, комментарии опускаются. Глубина
+// ограничена maxRawDepth (симметрично декодеру секции статики: парс-зелёное
+// всегда декодируется). Ошибка декодера возвращается вызывающему с позицией.
 func readRawNode(dec *xml.Decoder, start xml.StartElement, ctx *loadCtx) (RawNode, error) {
+	return readRawNodeDepth(dec, start, ctx, 1)
+}
+
+func readRawNodeDepth(dec *xml.Decoder, start xml.StartElement, ctx *loadCtx, depth int) (RawNode, error) {
+	if depth > maxRawDepth {
+		return RawNode{}, fmt.Errorf("raw-дерево глубже %d: <%s>", maxRawDepth, start.Name.Local)
+	}
 	node := RawNode{Name: ctx.internKey(start.Name.Local)}
 	for _, a := range start.Attr {
 		node.Attrs = append(node.Attrs, RawAttr{Name: ctx.internKey(a.Name.Local), Value: a.Value})
@@ -548,7 +593,7 @@ func readRawNode(dec *xml.Decoder, start xml.StartElement, ctx *loadCtx) (RawNod
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			child, err := readRawNode(dec, t, ctx)
+			child, err := readRawNodeDepth(dec, t, ctx, depth+1)
 			if err != nil {
 				return RawNode{}, err
 			}

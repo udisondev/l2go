@@ -132,7 +132,7 @@ func TestBuildDecodeRoundtrip(t *testing.T) {
 			t.Errorf("регион[%d]: %+v против %+v", i, a[i], c[i])
 		}
 	}
-	if m2.RegionAt(16*256, 10*256) == nil || m2.RegionAt(17*256, 10*256) == nil {
+	if m2.RegionAt(16*2048, 10*2048) == nil || m2.RegionAt(17*2048, 10*2048) == nil {
 		t.Errorf("лукап регионов артефактной карты пуст")
 	}
 }
@@ -251,8 +251,33 @@ func TestLoadFileAndRenameOverMapping(t *testing.T) {
 	if err := os.Rename(tmp, out); err != nil {
 		t.Fatalf("rename поверх живого отображения: %v", err)
 	}
-	if m.RegionAt(16*256, 10*256) == nil {
+	if m.RegionAt(16*2048, 10*2048) == nil {
 		t.Errorf("живое отображение региона потерялось после rename")
+	}
+}
+
+// TestGeoLookupsZeroAllocOverArtifact — перенос критерия P2.3: гео-лукапы
+// поверх байтов артефакта не аллоцируют (путь P2.4 без изменений).
+func TestGeoLookupsZeroAllocOverArtifact(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "a.l2a")
+	buildSynth(t, out)
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	_, m, _, err := artifact.Decode(b)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	gx, gy := 16*2048+8, 10*2048+8
+	allocs := testing.AllocsPerRun(200, func() {
+		cell := m.RegionAt(gx, gy).CellAt(gx, gy)
+		cell.Nearest(0)
+		cell.LowerZ(-100)
+		cell.HigherZ(100)
+	})
+	if allocs != 0 {
+		t.Errorf("гео-лукапы поверх артефакта аллоцируют: %g оп/вызов", allocs)
 	}
 }
 
