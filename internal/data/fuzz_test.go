@@ -81,3 +81,34 @@ func FuzzLoadNpcSpawns(f *testing.F) {
 		}
 	})
 }
+
+// FuzzLoadZones: любые байты как файл категории зон — без паник; Load
+// возвращает отчёт и детерминирован по всему отчёту.
+func FuzzLoadZones(f *testing.F) {
+	seed, err := os.ReadFile("testdata/synth/zones/zones.xml")
+	if err != nil {
+		f.Fatalf("чтение seed: %v", err)
+	}
+	f.Add(seed)
+	f.Add([]byte("<list enabled=\"true\"><zone name=\"a\" ty"))
+	f.Add([]byte("<list><zone type=\"PeaceZone\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"1\""))
+	f.Add([]byte{0xff, 0xfe, 0x00})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		fsys := catFS(map[string]*fstest.MapFile{"zones/x.xml": {Data: data}})
+		_, rep1, err1 := Load(fsys)
+		_, rep2, err2 := Load(fsys)
+		if (err1 == nil) != (err2 == nil) {
+			t.Fatalf("недетерминированная фатальная ошибка: %v vs %v", err1, err2)
+		}
+		if err1 != nil {
+			return
+		}
+		if rep1 == nil || rep2 == nil {
+			t.Fatal("отчёт nil на произвольном входе")
+		}
+		if !reflect.DeepEqual(rep1, rep2) {
+			t.Fatalf("недетерминированный отчёт:\n%+v\n---\n%+v", rep1, rep2)
+		}
+	})
+}

@@ -56,8 +56,8 @@ func TestSpawnGolden(t *testing.T) {
 	if !ok {
 		t.Fatal("территория synth_both отсутствует")
 	}
-	if len(both.Banned) != 1 || both.Banned[0].MinZ != -50 || len(both.Banned[0].Nodes) != 2 {
-		t.Errorf("synth_both.Banned = %+v; want одна запрещённая территория", both.Banned)
+	if len(both.Banned) != 1 || both.Banned[0].MinZ != -50 || len(both.Banned[0].Nodes) != 3 {
+		t.Errorf("synth_both.Banned = %+v; want одна запрещённая территория из 3 узлов", both.Banned)
 	}
 	if _, ok := st.Territory("нет такой"); ok {
 		t.Errorf("несуществующая территория найдена")
@@ -100,7 +100,7 @@ func TestSpawnEvil(t *testing.T) {
 		{"точка без y", "<list enabled=\"true\"><spawn name=\"a\"><npc id=\"20550\" x=\"1\" z=\"3\"/></spawn></list>", CodeAttr},
 		{"территория без minZ", "<list enabled=\"true\"><spawn zone=\"z2\"><territory maxZ=\"1\"><node x=\"1\" y=\"1\"/></territory><npc id=\"20550\" count=\"1\"/></spawn></list>", CodeAttr},
 		{"узел без x", "<list enabled=\"true\"><spawn zone=\"z3\"><territory minZ=\"0\" maxZ=\"1\"><node y=\"1\"/></territory><npc id=\"20550\" count=\"1\"/></spawn></list>", CodeAttr},
-		{"дубликат имени территории", "<list enabled=\"true\"><spawn zone=\"dup\"><territory minZ=\"0\" maxZ=\"1\"><node x=\"1\" y=\"1\"/></territory><npc id=\"20550\" count=\"1\"/></spawn><spawn zone=\"dup\"><territory minZ=\"0\" maxZ=\"1\"><node x=\"2\" y=\"2\"/></territory><npc id=\"20550\" count=\"1\"/></spawn></list>", CodeDupID},
+		{"дубликат имени территории", "<list enabled=\"true\"><spawn zone=\"dup\"><territory minZ=\"0\" maxZ=\"1\"><node x=\"0\" y=\"0\"/><node x=\"9\" y=\"0\"/><node x=\"9\" y=\"9\"/></territory><npc id=\"20550\" count=\"1\"/></spawn><spawn zone=\"dup\"><territory minZ=\"0\" maxZ=\"1\"><node x=\"2\" y=\"2\"/><node x=\"5\" y=\"2\"/><node x=\"5\" y=\"5\"/></territory><npc id=\"20550\" count=\"1\"/></spawn></list>", CodeDupID},
 		{"count ноль", "<list enabled=\"true\"><spawn name=\"a\"><npc id=\"20550\" x=\"1\" y=\"2\" z=\"3\" count=\"0\"/></spawn></list>", CodeNumber},
 		{"кривой respawnDelay", "<list enabled=\"true\"><spawn name=\"a\"><npc id=\"20550\" x=\"1\" y=\"2\" z=\"3\" respawnDelay=\"скоро\"/></spawn></list>", CodeNumber},
 		{"кривой periodOfDay", "<list enabled=\"true\"><spawn name=\"a\"><npc id=\"20550\" x=\"1\" y=\"2\" z=\"3\" periodOfDay=\"утро\"/></spawn></list>", CodeAttr},
@@ -180,8 +180,8 @@ func TestSpawnAIData(t *testing.T) {
 	<spawn zone="ai_zone">
 		<territory minZ="-10" maxZ="10" shape="NPoly" rad="500">
 			<node x="5" y="5"/>
+			<node x="6" y="5"/>
 			<node x="6" y="6"/>
-			<node x="7" y="7"/>
 		</territory>
 		<npc id="20550" count="1" respawnDelay="15"/>
 		<AIData>

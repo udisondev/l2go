@@ -16,11 +16,12 @@
 		<territory name="ignored" minZ="-100" maxZ="100">
 			<node x="1" y="1" />
 			<node x="2" y="2" />
-			<node x="3" y="3" />
+			<node x="3" y="1" />
 		</territory>
 		<banned_territory minZ="-50" maxZ="50">
 			<node x="1" y="1" />
 			<node x="2" y="2" />
+			<node x="2" y="1" />
 		</banned_territory>
 		<npc id="20550" x="50" y="60" z="0" heading="0" count="2" respawnDelay="30" respawnRandom="5" chaseRange="2000" />
 		<npc id="29019" x="10" y="20" z="30" heading="5" respawnDelay="1" periodOfDay="day" />

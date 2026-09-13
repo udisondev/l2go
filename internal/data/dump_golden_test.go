@@ -22,7 +22,7 @@ npc id=20551 name="Орк-приспешник" title="" level=25 type="Monster"
 npc id=29019 name="Учебный босс" title="" level=79 type="GrandBoss" race="DRAGON" aggro=0 clanHelp=0 aggressive=false collision=100/200 clans=[] ignore=[] minions=[] drops=[drop{g100[9001 12-29@200]} spoil{i[9003 1-1@148.76]}] sets=[collision.height.normal=200 collision.radius.normal=100 npc.level=79 npc.name=Учебный босс npc.type=GrandBoss]
 npc id=30080 name="Торговец без уровня" title="" level=85 type="Merchant" race="" aggro=0 clanHelp=0 aggressive=false collision=0/0 clans=[] ignore=[] minions=[] drops=[] sets=[npc.name=Торговец без уровня npc.type=Merchant]
 npc id=30081 name="" title="" level=40 type="CustomThing" race="" aggro=0 clanHelp=0 aggressive=false collision=0/0 clans=[] ignore=[] minions=[] drops=[] sets=[npc.level=40 npc.type=CustomThing]
-terr name="synth_both" minZ=-100 maxZ=100 nodes=[1,1 2,2 3,3] banned=[{-50,50 [1,1 2,2]}] sets=[]
+terr name="synth_both" minZ=-100 maxZ=100 nodes=[1,1 2,2 3,1] banned=[{-50,50 [1,1 2,2 2,1]}] sets=[]
 terr name="synth_territory" minZ=-3800 maxZ=-3400 nodes=[70780,125060 71852,124640 72660,125432] banned=[] sets=[]
 spawn npc=30080 point=147456,22576,-1989,16384 terr="" count=1 respawn=60 sets=[]
 spawn npc=20550 point=100,200,-300,-1 terr="" count=1 respawn=0 sets=[]
@@ -30,6 +30,13 @@ spawn npc=20551 point=- terr="synth_territory" count=3 respawn=22 sets=[]
 spawn npc=20550 point=50,60,0,0 terr="synth_both" count=2 respawn=30 sets=[chaseRange=2000 respawnRandom=5]
 spawn npc=29019 point=10,20,30,5 terr="synth_both" count=1 respawn=1 sets=[periodOfDay=day]
 spawn npc=80000 point=83485,147998,-3407,23509 terr="" count=1 respawn=60 sets=[]
+zone name="synth_noenabled" type="TownZone" shape="Cuboid" minZ=-3000 maxZ=-2500 nodes=[100000,150000 101000,150500] spawns=[] races=[] sets=[]
+zone name="synth_cuboid" type="PeaceZone" shape="Cuboid" id=70001 minZ=-1000 maxZ=-500 nodes=[100000,100000 110000,110000] spawns=[] races=[] sets=[zone.stat.NoBookmark=true zone.stat.reuse=5000]
+zone name="synth_npoly" type="WaterZone" shape="NPoly" minZ=500 maxZ=100 nodes=[100000,100000 110000,100000 115000,105000 115000,115000 110000,120000 100000,120000 95000,115000 95000,105000] spawns=[] races=[] sets=[zone.stat.NoLanding=false]
+zone name="synth_cylinder" type="EffectZone" shape="Cylinder" minZ=-200 maxZ=200 rad=1500 nodes=[0,0] spawns=[] races=[] sets=[]
+zone name="synth_npoly" type="ScriptZone" shape="NPoly" minZ=0 maxZ=10 nodes=[10,10 20,10 20,20 10,20] spawns=[] races=[] sets=[]
+zone name="synth_respawn" type="RespawnZone" shape="Cuboid" minZ=50 maxZ=50 nodes=[10,10 20,20] spawns=[-16554,109382,-1799 -81447,152760,-3170:other] races=[HUMAN>talking_island_town] sets=[]
+zone name="synth_unknown" type="MysteryZone" shape="Octagon" minZ=0 maxZ=10 nodes=[0,0 30,0 30,30] spawns=[] races=[] sets=[zone.shape=Octagon]
 `
 	if got != want {
 		t.Errorf("секция NPC/территорий/спавнов отлична от эталона:\n---got---\n%s---want---\n%s", got, want)

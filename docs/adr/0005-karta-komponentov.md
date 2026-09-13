@@ -93,6 +93,7 @@ slog, простота, гайды стиля и производительно�
 | Криптографический блок (блоуфиш/XOR) | `crypto` |
 | Пул буферов Get/Put по бакетам | `pkg/bufpool` |
 | Геодата: canMove/пасфайнд | `geo` |
+| Зоны: point-in-zone | `data` |
 | Enqueue/изъятие ящика (MPSC, водяной знак) | `transport` |
 | Отправка письма (lookup + enqueue) | `transport` |
 | Advisory-чтение (аггро-скан/range-чек, O(1) на пару) | `replica` |

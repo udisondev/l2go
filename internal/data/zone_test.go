@@ -55,7 +55,7 @@ func TestZoneGolden(t *testing.T) {
 	for _, zn := range st.Zones() {
 		names = append(names, zn.Name)
 	}
-	wantOrder := "synth_cuboid,synth_npoly,synth_cylinder,synth_npoly,synth_respawn,synth_unknown,synth_noenabled"
+	wantOrder := "synth_noenabled,synth_cuboid,synth_npoly,synth_cylinder,synth_npoly,synth_respawn,synth_unknown"
 	if got := strings.Join(names, ","); got != wantOrder {
 		t.Errorf("порядок зон = %q; want %q", got, wantOrder)
 	}
@@ -144,7 +144,7 @@ func TestZoneContains(t *testing.T) {
 		{zoneByName(t, st, "synth_cylinder"), 0, 0, 0, true, "цилиндр: центр"},
 		{zoneByName(t, st, "synth_cylinder"), 1500, 0, 0, true, "цилиндр: точка на окружности включена"},
 		{zoneByName(t, st, "synth_cylinder"), 1060, 1060, 0, true, "цилиндр: 1060²+1060² <= 1500²"},
-		{zoneByName(t, st, "synth_cylinder"), 1061, 1060, 0, false, "цилиндр: за окружностью"},
+		{zoneByName(t, st, "synth_cylinder"), 1061, 1061, 0, false, "цилиндр: за окружностью"},
 		{zoneByName(t, st, "synth_cylinder"), 0, 0, 200, true, "цилиндр: z-максимум включён"},
 		{zoneByName(t, st, "synth_cylinder"), 0, 0, 201, false, "цилиндр: z выше"},
 		// int32-переполнение: |Δ| > 46341 — ложное «внутри» запрещено.
@@ -314,7 +314,7 @@ func TestTerritoryRetroEvil(t *testing.T) {
 				<node x="1" y="1" />
 				<node x="2" y="2" />
 			</territory>
-			<npc id="20550" count="1" respawnDelay="30" />
+			<npc id="80000" count="1" respawnDelay="30" />
 		</spawn>
 	</list>`
 	_, rep, err := Load(zoneTerrFS(content))
@@ -345,7 +345,7 @@ func TestTerritoryShapeGuard(t *testing.T) {
 			<territory shape="Cylinder" rad="50" minZ="0" maxZ="100">
 				<node x="10" y="10" />
 			</territory>
-			<npc id="20550" count="1" respawnDelay="30" />
+			<npc id="80000" count="1" respawnDelay="30" />
 		</spawn>
 	</list>`
 	_, rep, err := Load(zoneTerrFS(content))

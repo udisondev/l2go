@@ -145,11 +145,11 @@ func TestPhantomLinks(t *testing.T) {
 func TestTerritoryFirstWins(t *testing.T) {
 	spawnXML := `<list enabled="true">
 	<spawn zone="dup">
-		<territory minZ="0" maxZ="1"><node x="1" y="1"/></territory>
+		<territory minZ="0" maxZ="1"><node x="0" y="0"/><node x="9" y="0"/><node x="9" y="9"/></territory>
 		<npc id="20550" count="1"/>
 	</spawn>
 	<spawn zone="dup">
-		<territory minZ="2" maxZ="3"><node x="2" y="2"/></territory>
+		<territory minZ="2" maxZ="3"><node x="2" y="2"/><node x="5" y="2"/><node x="5" y="5"/></territory>
 		<npc id="20550" count="1"/>
 	</spawn>
 </list>`

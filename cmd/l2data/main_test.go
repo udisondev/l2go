@@ -42,7 +42,7 @@ func TestCheckDirty(t *testing.T) {
 	}
 	// Каталоги остальных категорий обязательны (их отсутствие — фатальная
 	// FS-ошибка, а не ошибка данных).
-	for _, d := range []string{filepath.Join("stats", "npcs"), "spawns"} {
+	for _, d := range []string{filepath.Join("stats", "npcs"), "spawns", "zones"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
@@ -112,7 +112,7 @@ func TestGeoEmptySet(t *testing.T) {
 func TestCheckBrokenLink(t *testing.T) {
 	bin := buildBinary(t)
 	root := t.TempDir()
-	for _, d := range []string{filepath.Join("stats", "items"), filepath.Join("stats", "npcs"), "spawns"} {
+	for _, d := range []string{filepath.Join("stats", "items"), filepath.Join("stats", "npcs"), "spawns", "zones"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}

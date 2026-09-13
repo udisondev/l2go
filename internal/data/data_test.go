@@ -113,8 +113,8 @@ func TestLoadCounters(t *testing.T) {
 	if rep.EmptyValues != 1 {
 		t.Errorf("EmptyValues = %d; want 1 (пустой icon у 9005)", rep.EmptyValues)
 	}
-	if rep.DupKeys != 1 {
-		t.Errorf("DupKeys = %d; want 1 (вес 9005 задан дважды, победил последний)", rep.DupKeys)
+	if rep.DupKeys != 2 {
+		t.Errorf("DupKeys = %d; want 2 (вес 9005 дважды + повтор stat зоны)", rep.DupKeys)
 	}
 }
 

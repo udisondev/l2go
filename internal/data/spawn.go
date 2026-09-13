@@ -276,13 +276,32 @@ func parseTerritory(dec *xml.Decoder, start xml.StartElement, terrName, path str
 		return
 	}
 	t.MinZ, t.MaxZ = int32(minZ), int32(maxZ)
+	if t.MinZ > t.MaxZ {
+		ctx.rep.MinZOverMaxZ++
+	}
 	nodes, ok := readNodes(dec, start, "территории "+terrName, path, ctx)
 	if !ok {
 		return // обрыв XML: ошибка вносится файловым циклом, регистрировать нечего
 	}
 	t.Nodes = nodes
+	// Ретро-валидация геометрии P2.5. Формат SpawnData поддерживает shape/rad
+	// с дефолтом NPoly (в Interlude вхождений нет): форма ≠ NPoly — широта,
+	// узловая валидация не применяется.
+	if v, isShape := t.set["terr.shape"]; isShape && v != "NPoly" {
+		ctx.rep.UnknownTypes["terr.shape."+v]++
+	} else {
+		if bad, msg := degeneratePoly(nodes); bad {
+			ctx.entry(Entry{Category: "spawns", File: path, Line: line,
+				Code: CodeNumber, Message: "территория " + terrName + ": " + msg})
+			return
+		}
+		if dupAdjacent(nodes) {
+			ctx.rep.DupAdjacentNodes++
+		}
+	}
+	t.MinX, t.MaxX, t.MinY, t.MaxY = polyBounds(nodes)
 	// Дубликат имени — ошибка; побеждает первая. Территория без узлов
-	// регистрируется: вырожденность геометрии — валидация P2.5.
+	// регистрируется: вырожденность геометрии — выше.
 	if _, dup := ctx.territories[t.Name]; dup {
 		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
 			Code: CodeDupID, Message: "дубликат имени территории " + t.Name + ", побеждает первая"})
@@ -290,6 +309,29 @@ func parseTerritory(dec *xml.Decoder, start xml.StartElement, terrName, path str
 	}
 	ctx.territories[t.Name] = t
 	ctx.rep.Territories++
+}
+
+// degeneratePoly — вырожденность полигонa территории: менее 3 узлов или
+// нулевая площадь (шнурком; покрывает совпадающие и коллинеарные узлы).
+func degeneratePoly(nodes [][2]int32) (bool, string) {
+	if len(nodes) < 3 {
+		return true, "менее 3 узлов (" + strconv.Itoa(len(nodes)) + ")"
+	}
+	if polyAreaZero(nodes) {
+		return true, "нулевая площадь (коллинеарные или совпадающие узлы)"
+	}
+	return false, ""
+}
+
+// dupAdjacent — повтор соседних узлов полигона (кроссингу безвреден,
+// фиксируется счётчиком широты).
+func dupAdjacent(nodes [][2]int32) bool {
+	for i := range nodes {
+		if nodes[i] == nodes[(i+1)%len(nodes)] {
+			return true
+		}
+	}
+	return false
 }
 
 // parseBanned разбирает территорию-исключение и прикрепляет её к территории
@@ -332,11 +374,25 @@ func parseBanned(dec *xml.Decoder, start xml.StartElement, terrName, path string
 		return
 	}
 	b.MinZ, b.MaxZ = int32(minZ), int32(maxZ)
+	if b.MinZ > b.MaxZ {
+		ctx.rep.MinZOverMaxZ++
+	}
 	nodes, ok := readNodes(dec, start, "banned_territory", path, ctx)
 	if !ok {
 		return // обрыв XML: ошибка вносится файловым циклом
 	}
 	b.Nodes = nodes
+	// Ретро-валидация P2.5 — те же правила, что у территории; форма
+	// banned.shape ≠ NPoly — широта, узловая валидация не применяется.
+	if v, isShape := ter.set["banned.shape"]; terOK && isShape && v != "NPoly" {
+		ctx.rep.UnknownTypes["terr.shape."+v]++
+	} else if bad, msg := degeneratePoly(nodes); bad {
+		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
+			Code: CodeNumber, Message: "banned_territory территории " + terrName + ": " + msg})
+		return
+	} else if dupAdjacent(nodes) {
+		ctx.rep.DupAdjacentNodes++
+	}
 	if !terOK {
 		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
 			Code: CodeAttr, Message: "banned_territory до определения территории " + terrName})
