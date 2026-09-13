@@ -327,3 +327,31 @@ func TestDecodeStaticCraftedEvil(t *testing.T) {
 		})
 	}
 }
+
+// TestDecodeRouteDomainIsolated — домен маршрута изолирован от сверок
+// консистентности: маршрут вне 1..8 при СОГЛАСОВАННОМ числе слайсов уровней
+// отвергается самим домен-гвардом (мутация C раунда-1 не выживала лишь
+// благодаря сверке длин).
+func TestDecodeRouteDomainIsolated(t *testing.T) {
+	section := craftSection(t, func(e *enc) {
+		for i := 0; i < 5; i++ {
+			e.u32(0)
+		}
+		e.u32(1) // skills
+		e.i32(7001)
+		e.str("имя")
+		e.i32(1) // levels
+		e.u32(1) // enchant: один маршрут
+		e.u8(0)  // ...со значением вне домена
+		e.u32(0) // base
+		e.u32(1) // enchantLevels: маршрут согласован
+		e.u32(0) // уровней в маршруте
+		e.u32(0) // tables
+		e.u32(0) // set
+		e.u32(0) // overrides
+		e.u32(0) // raw
+	})
+	if _, err := DecodeStatic(section); err == nil {
+		t.Fatalf("маршрут 0 при согласованном EnchantLevels декодирован без ошибки")
+	}
+}

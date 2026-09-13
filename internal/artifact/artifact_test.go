@@ -221,6 +221,16 @@ func TestDecodeGuards(t *testing.T) {
 			binary.LittleEndian.PutUint32(b[geoOff:geoOff+4], 0xFFFFFFFF)
 			return b
 		}), ""},
+		// Врущий meta с перевычисленной SHA: сверки «декодировано == заявлено»
+		// обязаны отказать (фальсификация F29 — rejection-ветка сверки).
+		{"meta.Items врёт", rehashed(func(b []byte) []byte {
+			binary.LittleEndian.PutUint32(b[124:128], binary.LittleEndian.Uint32(b[124:128])+1)
+			return b
+		}), artifact.CodeDecode},
+		{"meta.Regions врёт", rehashed(func(b []byte) []byte {
+			binary.LittleEndian.PutUint32(b[156:160], binary.LittleEndian.Uint32(b[156:160])+1)
+			return b
+		}), artifact.CodeDecode},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -368,5 +378,25 @@ func TestDecodeRegionIndexOutOfGrid(t *testing.T) {
 	rehash(b)
 	if _, _, _, err := artifact.Decode(b); err == nil {
 		t.Fatalf("регион-индекс вне сетки прошёл декодер")
+	}
+}
+
+// TestLoadFileLyingMeta — злой вход через файл: врущий meta с валидной SHA
+// отказывает и в пути LoadFile (фальсификация F29 на транспортном пути).
+func TestLoadFileLyingMeta(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "a.l2a")
+	buildSynth(t, out)
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	binary.LittleEndian.PutUint32(b[124:128], binary.LittleEndian.Uint32(b[124:128])+1)
+	rehash(b)
+	bad := filepath.Join(t.TempDir(), "bad.l2a")
+	if err := os.WriteFile(bad, b, 0o644); err != nil {
+		t.Fatalf("запись: %v", err)
+	}
+	if _, _, _, _, err := artifact.LoadFile(bad); err == nil {
+		t.Fatalf("врущий meta прошёл LoadFile")
 	}
 }

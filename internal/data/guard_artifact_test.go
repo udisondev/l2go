@@ -56,7 +56,7 @@ func TestTrackedArtifactDetectsCommitted(t *testing.T) {
 	run("commit", "-qm", "x")
 	got := trackedArtifactFiles(t, dir)
 	if len(got) != 1 || got[0] != "a.l2a" {
-		t.Fatalf("заккоммиченный .l2a не найден: %v", got)
+		t.Fatalf("закоммиченный .l2a не найден: %v", got)
 	}
 }
 
