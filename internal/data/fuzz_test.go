@@ -112,3 +112,34 @@ func FuzzLoadZones(f *testing.F) {
 		}
 	})
 }
+
+// FuzzLoadSkills: любые байты как файл скиллов — без паник, отчёт
+// детерминирован.
+func FuzzLoadSkills(f *testing.F) {
+	seed, err := os.ReadFile("testdata/synth/stats/skills/skills.xml")
+	if err != nil {
+		f.Fatalf("чтение seed: %v", err)
+	}
+	f.Add(seed)
+	f.Add([]byte("<list><skill id=\"7001\" levels=\"2\" name=\"A\" enchantGroup1=\"1\"><table name=\"#hit\">1"))
+	f.Add([]byte("<list><skill id=\"-3\" levels=\"x\" ><enchant1 name=\"hitTime\">#"))
+	f.Add([]byte{0x00, 0xff, 0xfe})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		fsys := catFS(map[string]*fstest.MapFile{"stats/skills/x.xml": {Data: data}})
+		_, rep1, err1 := Load(fsys)
+		_, rep2, err2 := Load(fsys)
+		if (err1 == nil) != (err2 == nil) {
+			t.Fatalf("недетерминированная фатальная ошибка: %v vs %v", err1, err2)
+		}
+		if err1 != nil {
+			return
+		}
+		if rep1 == nil || rep2 == nil {
+			t.Fatal("отчёт nil на произвольном входе")
+		}
+		if !reflect.DeepEqual(rep1, rep2) {
+			t.Fatalf("недетерминированный отчёт:\n%+v\n---\n%+v", rep1, rep2)
+		}
+	})
+}

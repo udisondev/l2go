@@ -1,0 +1,390 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<!-- 7001: таблицы на hitTime/reuseDelay, энчант-маршруты 1/2, override
+	     таблицей (маршрут 1) и строковыми литералами (маршрут 2), эффекты. -->
+	<skill id="7001" levels="4" name="Тренировочный удар" enchantGroup1="1" enchantGroup2="2">
+		<table name="#hit">100 200 300 400</table>
+		<table name="#reuse">1000 2000 3000 4000</table>
+		<table name="#ench1Reuse">990 980 970 960 950 940 930 920 910 900 890 880 870 860 850 840 830 820 810 800 790 780 770 760 750 740 730 720 710 700</table>
+		<operateType>A1</operateType>
+		<targetType>ONE</targetType>
+		<hitTime>#hit</hitTime>
+		<reuseDelay>#reuse</reuseDelay>
+		<abnormalTime>60</abnormalTime>
+		<isMagic>0</isMagic>
+		<magicLevel>1</magicLevel>
+		<icon>icon.skill7001</icon>
+		<enchant1 name="reuseDelay">#ench1Reuse</enchant1>
+		<enchant2 name="operateType">A2</enchant2>
+		<enchant2 name="isDebuff">true</enchant2>
+		<effects>
+			<effect name="TestDamage">
+				<power>10</power>
+			</effect>
+			<effect name="TestOverTime" tick="2000" />
+		</effects>
+		<enchant2effects>
+			<effect name="TestEnchDamage" power="20" />
+		</enchant2effects>
+	</skill>
+	<!-- 7002: пассивка; targetType отсутствует (дефолт SELF + счётчик). -->
+	<skill id="7002" levels="1" name="Пассивка новичка">
+		<operateType>P</operateType>
+		<isDebuff>false</isDebuff>
+	</skill>
+	<!-- 7003: предметная ссылка таблицей — свой предмет на каждом уровне. -->
+	<skill id="7003" levels="3" name="Тренировочное зелье">
+		<table name="#itemConsumeId">9001 9002 9003</table>
+		<operateType>A1</operateType>
+		<targetType>SELF</targetType>
+		<hitTime>500</hitTime>
+		<itemConsumeCount>2</itemConsumeCount>
+		<itemConsumeId>#itemConsumeId</itemConsumeId>
+		<conditions msgId="113" addName="1">
+			<player active_effect_id_lvl="5105,3" />
+		</conditions>
+	</skill>
+	<!-- 7004: isDebuff через таблицу. -->
+	<skill id="7004" levels="2" name="Тренировочный дебафф">
+		<table name="#debuff">false true</table>
+		<operateType>A2</operateType>
+		<targetType>ONE</targetType>
+		<isDebuff>#debuff</isDebuff>
+		<abnormalTime>120</abnormalTime>
+		<isMagic>1</isMagic>
+	</skill>
+	<!-- 7005: литеральная предметная ссылка, скилл→скилл поле (raw),
+	     пустой прямой элемент (EmptyValues), self-эффекты. -->
+	<skill id="7005" levels="1" name="Тренировочный свиток">
+		<operateType>CA1</operateType>
+		<targetType>GROUND</targetType>
+		<itemConsumeId>9001</itemConsumeId>
+		<itemConsumeCount>1</itemConsumeCount>
+		<channelingSkillId>7001</channelingSkillId>
+		<isMagic>3</isMagic>
+		<feed></feed>
+		<selfEffects>
+			<effect name="CallSkill" skillId="7001" />
+		</selfEffects>
+	</skill>
+	<skill id="7100" levels="1" name="Филлер 7100" enchantGroup1="1" enchantGroup2="2">
+		<table name="#hit">300</table>
+		<table name="#enchR">500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529</table>
+		<operateType>A1</operateType>
+		<targetType>SELF</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>1</magicLevel>
+		<mpConsume>20</mpConsume>
+		<isDebuff>true</isDebuff>
+		<itemConsumeId>9001</itemConsumeId>
+		<enchant1 name="reuseDelay">#enchR</enchant1>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+		<conditions>
+			<player can_still_attack="true" />
+		</conditions>
+	</skill>
+	<skill id="7101" levels="8" name="Филлер 7101">
+		<table name="#hit">300 310 320 330 340 350 360 370</table>
+		<operateType>A2</operateType>
+		<targetType>ONE</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>2</magicLevel>
+	</skill>
+	<skill id="7102" levels="15" name="Филлер 7102">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440</table>
+		<operateType>P</operateType>
+		<targetType>PARTY</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>3</magicLevel>
+		<itemConsumeId>9001</itemConsumeId>
+	</skill>
+	<skill id="7103" levels="22" name="Филлер 7103">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510</table>
+		<operateType>T</operateType>
+		<targetType>AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>4</magicLevel>
+		<mpConsume>20</mpConsume>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+	</skill>
+	<skill id="7104" levels="29" name="Филлер 7104">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580</table>
+		<operateType>CA1</operateType>
+		<targetType>FRONT_AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>5</magicLevel>
+		<isDebuff>true</isDebuff>
+		<itemConsumeId>9001</itemConsumeId>
+	</skill>
+	<skill id="7105" levels="36" name="Филлер 7105" enchantGroup1="1">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650</table>
+		<table name="#enchR">500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529</table>
+		<operateType>A1</operateType>
+		<targetType>SELF</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>6</magicLevel>
+		<enchant1 name="reuseDelay">#enchR</enchant1>
+	</skill>
+	<skill id="7106" levels="43" name="Филлер 7106">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720</table>
+		<operateType>A2</operateType>
+		<targetType>ONE</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>7</magicLevel>
+		<mpConsume>20</mpConsume>
+		<itemConsumeId>9001</itemConsumeId>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+	</skill>
+	<skill id="7107" levels="50" name="Филлер 7107">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790</table>
+		<operateType>P</operateType>
+		<targetType>PARTY</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>8</magicLevel>
+		<conditions>
+			<player can_still_attack="true" />
+		</conditions>
+	</skill>
+	<skill id="7108" levels="57" name="Филлер 7108">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860</table>
+		<operateType>T</operateType>
+		<targetType>AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>9</magicLevel>
+		<isDebuff>true</isDebuff>
+		<itemConsumeId>9001</itemConsumeId>
+	</skill>
+	<skill id="7109" levels="64" name="Филлер 7109">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930</table>
+		<operateType>CA1</operateType>
+		<targetType>FRONT_AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>10</magicLevel>
+		<mpConsume>20</mpConsume>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+	</skill>
+	<skill id="7110" levels="71" name="Филлер 7110" enchantGroup1="1" enchantGroup2="2">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000</table>
+		<table name="#enchR">500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529</table>
+		<operateType>A1</operateType>
+		<targetType>SELF</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>11</magicLevel>
+		<itemConsumeId>9001</itemConsumeId>
+		<enchant1 name="reuseDelay">#enchR</enchant1>
+	</skill>
+	<skill id="7111" levels="78" name="Филлер 7111">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040 1050 1060 1070</table>
+		<operateType>A2</operateType>
+		<targetType>ONE</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>12</magicLevel>
+	</skill>
+	<skill id="7112" levels="5" name="Филлер 7112">
+		<table name="#hit">300 310 320 330 340</table>
+		<operateType>P</operateType>
+		<targetType>PARTY</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>13</magicLevel>
+		<mpConsume>20</mpConsume>
+		<isDebuff>true</isDebuff>
+		<itemConsumeId>9001</itemConsumeId>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+	</skill>
+	<skill id="7113" levels="12" name="Филлер 7113">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410</table>
+		<operateType>T</operateType>
+		<targetType>AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>14</magicLevel>
+	</skill>
+	<skill id="7114" levels="19" name="Филлер 7114">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480</table>
+		<operateType>CA1</operateType>
+		<targetType>FRONT_AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>15</magicLevel>
+		<itemConsumeId>9001</itemConsumeId>
+		<conditions>
+			<player can_still_attack="true" />
+		</conditions>
+	</skill>
+	<skill id="7115" levels="26" name="Филлер 7115" enchantGroup1="1">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550</table>
+		<table name="#enchR">500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529</table>
+		<operateType>A1</operateType>
+		<targetType>SELF</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>16</magicLevel>
+		<mpConsume>20</mpConsume>
+		<enchant1 name="reuseDelay">#enchR</enchant1>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+	</skill>
+	<skill id="7116" levels="33" name="Филлер 7116">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620</table>
+		<operateType>A2</operateType>
+		<targetType>ONE</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>17</magicLevel>
+		<isDebuff>true</isDebuff>
+		<itemConsumeId>9001</itemConsumeId>
+	</skill>
+	<skill id="7117" levels="40" name="Филлер 7117">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690</table>
+		<operateType>P</operateType>
+		<targetType>PARTY</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>18</magicLevel>
+	</skill>
+	<skill id="7118" levels="47" name="Филлер 7118">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760</table>
+		<operateType>T</operateType>
+		<targetType>AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>19</magicLevel>
+		<mpConsume>20</mpConsume>
+		<itemConsumeId>9001</itemConsumeId>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+	</skill>
+	<skill id="7119" levels="54" name="Филлер 7119">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830</table>
+		<operateType>CA1</operateType>
+		<targetType>FRONT_AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>20</magicLevel>
+	</skill>
+	<skill id="7120" levels="61" name="Филлер 7120" enchantGroup1="1" enchantGroup2="2">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900</table>
+		<table name="#enchR">500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529</table>
+		<operateType>A1</operateType>
+		<targetType>SELF</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>21</magicLevel>
+		<isDebuff>true</isDebuff>
+		<itemConsumeId>9001</itemConsumeId>
+		<enchant1 name="reuseDelay">#enchR</enchant1>
+	</skill>
+	<skill id="7121" levels="68" name="Филлер 7121">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970</table>
+		<operateType>A2</operateType>
+		<targetType>ONE</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>22</magicLevel>
+		<mpConsume>20</mpConsume>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+		<conditions>
+			<player can_still_attack="true" />
+		</conditions>
+	</skill>
+	<skill id="7122" levels="75" name="Филлер 7122">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040</table>
+		<operateType>P</operateType>
+		<targetType>PARTY</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>23</magicLevel>
+		<itemConsumeId>9001</itemConsumeId>
+	</skill>
+	<skill id="7123" levels="2" name="Филлер 7123">
+		<table name="#hit">300 310</table>
+		<operateType>T</operateType>
+		<targetType>AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>24</magicLevel>
+	</skill>
+	<skill id="7124" levels="9" name="Филлер 7124">
+		<table name="#hit">300 310 320 330 340 350 360 370 380</table>
+		<operateType>CA1</operateType>
+		<targetType>FRONT_AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>25</magicLevel>
+		<mpConsume>20</mpConsume>
+		<isDebuff>true</isDebuff>
+		<itemConsumeId>9001</itemConsumeId>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+	</skill>
+	<skill id="7125" levels="16" name="Филлер 7125" enchantGroup1="1">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450</table>
+		<table name="#enchR">500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529</table>
+		<operateType>A1</operateType>
+		<targetType>SELF</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>26</magicLevel>
+		<enchant1 name="reuseDelay">#enchR</enchant1>
+	</skill>
+	<skill id="7126" levels="23" name="Филлер 7126">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520</table>
+		<operateType>A2</operateType>
+		<targetType>ONE</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>27</magicLevel>
+		<itemConsumeId>9001</itemConsumeId>
+	</skill>
+	<skill id="7127" levels="30" name="Филлер 7127">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590</table>
+		<operateType>P</operateType>
+		<targetType>PARTY</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>28</magicLevel>
+		<mpConsume>20</mpConsume>
+		<effects>
+			<effect name="FillerEffect" power="10">
+				<amount>5</amount>
+			</effect>
+		</effects>
+	</skill>
+	<skill id="7128" levels="37" name="Филлер 7128">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660</table>
+		<operateType>T</operateType>
+		<targetType>AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>29</magicLevel>
+		<isDebuff>true</isDebuff>
+		<itemConsumeId>9001</itemConsumeId>
+		<conditions>
+			<player can_still_attack="true" />
+		</conditions>
+	</skill>
+	<skill id="7129" levels="44" name="Филлер 7129">
+		<table name="#hit">300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730</table>
+		<operateType>CA1</operateType>
+		<targetType>FRONT_AURA</targetType>
+		<hitTime>#hit</hitTime>
+		<magicLevel>30</magicLevel>
+	</skill>
+</list>
