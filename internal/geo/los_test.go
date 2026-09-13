@@ -26,6 +26,7 @@ func TestCanSee(t *testing.T) {
 			world: func(w *cellWorld) { w.set(geoX(10), geoY(0), 200, NSWEAll) },
 			from:  at(0, 0, 0),
 			to:    at(20, 0, 0),
+			want:  false,
 		},
 		{
 			// Граница обзора: рост +48 к лучу виден (<=), +49 скрыт —
@@ -204,12 +205,12 @@ func TestCanSeeCornerQuadrants(t *testing.T) {
 			ax, ay := geoX(20), geoY(20)
 			from := at(20, 20, 0)
 			to := atGeo(ax+10*sx, ay+10*sy, 0)
-			// Флаг источника к B=(20+sx,20): S/N-семейство.
+			// Флаг источника к D=(20,20+sy): S/N-семейство.
 			flagY := South
 			if sy < 0 {
 				flagY = North
 			}
-			// Флаг источника к D=(20,20+sy): E/W-семейство.
+			// Флаг источника к B=(20+sx,20): E/W-семейство.
 			flagX := East
 			if sx < 0 {
 				flagX = West
@@ -224,8 +225,11 @@ func TestCanSeeCornerQuadrants(t *testing.T) {
 				corner [2]int
 				want   bool
 			}{
-				{"флаг к B закрыт (S/N)", &flagY, [2]int{ax + sx, ay}, false},
-				{"флаг к D закрыт (E/W)", &flagX, [2]int{ax, ay + sy}, false},
+				// Закрытый флаг к D (S/N) гейтит резолв касательной B:
+				// eastGeoZ идёт через getNextHigherZ(B).
+				{"флаг к D закрыт (S/N), поднята B", &flagY, [2]int{ax + sx, ay}, false},
+				// Закрытый флаг к B (E/W) гейтит резолв касательной D.
+				{"флаг к B закрыт (E/W), поднята D", &flagX, [2]int{ax, ay + sy}, false},
 				{"флаги открыты", nil, [2]int{ax + sx, ay}, true},
 			}
 			for _, tc := range cases {

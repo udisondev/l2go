@@ -7,7 +7,7 @@ import (
 )
 
 // Канон порогов и семантики — GeoEngine канона Mobius Interlude 43ac8878;
-// атрибуция конкретных методов — в комментариях кейс-таблиц и в move.go.
+// атрибуция методов — в комментариях кейсов.
 
 // Якорь тестовых миров: регион (16, 10).
 const (
@@ -616,23 +616,28 @@ func TestValidLocationCornerHeightWall(t *testing.T) {
 	}
 }
 
-// TestValidLocationRegionSeam — шов двух загруженных смежных регионов:
-// каждая ячейка резолвится через собственный регион (у канона касательные
-// за швом читаются зеркальной ячейкой — зарегистрированное расхождение).
+// TestValidLocationRegionSeam — шов двух загруженных смежных регионов с
+// РАЗНЫМИ высотами: каждая ячейка за швом резолвится через собственный
+// регион (зеркальное чтение за швом — как у канона — вернуло бы слой
+// исходного региона, и финальная проверка слоя цели дала бы исходную точку).
 func TestValidLocationRegionSeam(t *testing.T) {
 	m := &Map{}
 	for _, rx := range []int{testRX, testRX + 1} {
-		reg, _, err := decodeRegion(rx, testRY, newCellWorld(rx, testRY).build())
+		w := newCellWorld(rx, testRY)
+		if rx == testRX+1 {
+			w.setFlatBlock(rx*regionCells+8, geoY(0), 16)
+		}
+		reg, _, err := decodeRegion(rx, testRY, w.build())
 		if err != nil {
 			t.Fatalf("decodeRegion(%d): %v", rx, err)
 		}
 		m.regions[rx*regionsY+testRY] = reg
 	}
 	from := atGeo(testRX*regionCells+2040, geoY(0), 0)
-	to := atGeo((testRX+1)*regionCells+8, geoY(0), 0)
+	to := atGeo((testRX+1)*regionCells+8, geoY(0), 16)
 	res, ok := m.ValidLocation(from, to)
-	if !ok || res.X != to.X || res.Y != to.Y {
-		t.Errorf("ValidLocation через шов регионов = %v, %v; want цель, true", res, ok)
+	if !ok || res.X != to.X || res.Y != to.Y || res.Z != 16 {
+		t.Errorf("ValidLocation через шов регионов = %v, %v; want цель z=16, true", res, ok)
 	}
 }
 
