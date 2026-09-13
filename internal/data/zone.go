@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -120,6 +121,9 @@ func bboxHalfOpen(minX, maxX, minY, maxY, x, y int32) bool {
 // горизонталью точки; сравнение без деления, в int64, знак (y2−y1)
 // согласован инвертированием обеих частей. Bbox-предфильтр —
 // поведение-сохраняющая оптимизация канона (промах O(1) вместо O(n) рёбер).
+// Домен: координаты мира датапака (|Δ| ≤ ~590000, произведения ≤ ~3,5·10¹¹
+// — запас до переполнения int64 четыре порядка; экстремальные значения
+// int32 вне домена данных дают ложный результат — осознанная граница).
 func npolyContains(nodes [][2]int32, minX, maxX, minY, maxY, x, y int32) bool {
 	if !bboxHalfOpen(minX, maxX, minY, maxY, x, y) {
 		return false
@@ -164,8 +168,8 @@ func (t *Territory) Contains(x, y, z int32) bool {
 const zonesDir = "zones"
 
 // knownZoneTypes — словарь типов канона: 29 регистрируются
-// ZoneManager.load() плюс NoPvPZone (грузится Class.forName, в данных
-// no_pvp.xml); прочие — широта данных (счётчик zone.type.*).
+// ZoneManager.load() плюс NoPvPZone и TaxZone (грузятся Class.forName; в
+// данных no_pvp.xml и tax.xml); прочие — широта данных (счётчик zone.type.*).
 var knownZoneTypes = map[string]struct{}{
 	"ArenaZone": {}, "BossZone": {}, "CastleZone": {}, "ClanHallZone": {},
 	"ConditionZone": {}, "DamageZone": {}, "DerbyTrackZone": {}, "EffectZone": {},
@@ -174,23 +178,46 @@ var knownZoneTypes = map[string]struct{}{
 	"NoStoreZone": {}, "NoSummonFriendZone": {}, "OlympiadStadiumZone": {},
 	"PeaceZone": {}, "ResidenceHallTeleportZone": {}, "ResidenceTeleportZone": {},
 	"ResidenceZone": {}, "RespawnZone": {}, "ScriptZone": {}, "SiegableHallZone": {},
-	"SiegeZone": {}, "SwampZone": {}, "TownZone": {}, "WaterZone": {},
+	"SiegeZone": {}, "SwampZone": {}, "TaxZone": {}, "TownZone": {}, "WaterZone": {},
 }
 
 // loadZones читает категорию зон: плоский XML-уровень zonesDir; подкаталоги
-// считаются в отчёт и не читаются. Семантика разбора: L2J_Mobius
+// считаются в отчёт и не читаются. Файловый цикл собственный (как у спавнов):
+// счётчик Files растёт только для разбираемых файлов — отключённый файл
+// попадает в DisabledFiles, но не в Files. Семантика разбора: L2J_Mobius
 // ZoneManager.parseDocument (порт, GPLv3).
 func loadZones(fsys fs.FS, ctx *loadCtx) {
-	loadFlatCategory(fsys, ctx, zonesDir, "zones", parseZonesFile)
+	entries, err := fs.ReadDir(fsys, zonesDir)
+	if err != nil {
+		ctx.fatal(fmt.Errorf("data: чтение каталога %s: %w", zonesDir, err))
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			ctx.rep.SkippedDirs[e.Name()] += countXML(fsys, zonesDir+"/"+e.Name())
+			continue
+		}
+		if !strings.EqualFold(filepath.Ext(e.Name()), ".xml") {
+			continue
+		}
+		path := zonesDir + "/" + e.Name()
+		data, ok := ctx.readFileCapped(fsys, path, "zones")
+		if !ok {
+			continue
+		}
+		parseZonesFile(path, data, ctx)
+	}
 }
 
 // parseZonesFile — файловый цикл категории. Семантика enabled корня — порт
 // канона зон и отличие от спавнов: отсутствие атрибута означает «файл
-// грузится» (ZoneManager проверяет только явное false), мусорное значение —
-// ошибка (молчаливая потеря невозможна), false — пропуск с подсчётом.
+// грузится» (ZoneManager проверяет только явное false); присутствующее, но
+// пустое или мусорное значение — ошибка (молчаливая потеря невозможна);
+// false — пропуск с подсчётом.
 func parseZonesFile(path string, data []byte, ctx *loadCtx) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	sawRoot := false
+	haveEnabled := false
 	enabled := ""
 	depth := 0
 	for {
@@ -213,10 +240,11 @@ func parseZonesFile(path string, data []byte, ctx *loadCtx) {
 				}
 				for _, a := range t.Attr {
 					if a.Name.Local == "enabled" {
+						haveEnabled = true
 						enabled = strings.ToLower(strings.TrimSpace(a.Value))
 					}
 				}
-				if enabled != "" && enabled != "true" && enabled != "false" {
+				if haveEnabled && enabled != "true" && enabled != "false" {
 					ctx.entry(Entry{Category: "zones", File: path, Line: lineOf(dec),
 						Code: CodeAttr, Message: "enabled " + enabled + " не разбирается как bool"})
 					return
@@ -226,6 +254,7 @@ func parseZonesFile(path string, data []byte, ctx *loadCtx) {
 					return
 				}
 				sawRoot = true
+				ctx.rep.Files++
 				depth++
 				continue
 			}
@@ -323,7 +352,8 @@ type zoneContent struct {
 }
 
 // readZoneContent читает детей зоны до закрывающего тега; ошибки отдельных
-// элементов — записи отчёта, разбор продолжается (прецедент readNodes).
+// элементов — записи отчёта, разбор продолжается (прецедент readNodes);
+// ошибка XML у детей ловится собственным циклом.
 func readZoneContent(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx) zoneContent {
 	c := zoneContent{bag: map[string]string{}}
 	bad := func(err error) {
@@ -341,21 +371,13 @@ func readZoneContent(dec *xml.Decoder, start xml.StartElement, path string, ctx 
 		case xml.StartElement:
 			switch t.Name.Local {
 			case "node":
-				if !readZoneNode(dec, t, path, ctx, &c) {
-					return c
-				}
+				readZoneNode(dec, t, path, ctx, &c)
 			case "stat":
-				if !readZoneStat(dec, t, path, ctx, c.bag) {
-					return c
-				}
+				readZoneStat(dec, t, path, ctx, c.bag)
 			case "spawn":
-				if !readZoneSpawn(dec, t, path, ctx, &c) {
-					return c
-				}
+				readZoneSpawn(dec, t, path, ctx, &c)
 			case "race":
-				if !readZoneRace(dec, t, path, ctx, &c) {
-					return c
-				}
+				readZoneRace(dec, t, path, ctx, &c)
 			default:
 				ctx.rep.SkippedElements[t.Name.Local]++
 				skipElement(dec, t)
@@ -368,9 +390,9 @@ func readZoneContent(dec *xml.Decoder, start xml.StartElement, path string, ctx 
 	}
 }
 
-// readZoneNode разбирает узел зоны (атрибуты X/Y); отсутствие или неразбор —
-// запись-ошибка, узел пропускается.
-func readZoneNode(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx, c *zoneContent) bool {
+// readZoneNode разбирает узел зоны (атрибуты X/Y); отсутствие — запись-ошибка
+// CodeAttr, неразбор числа — CodeNumber; узел пропускается.
+func readZoneNode(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx, c *zoneContent) {
 	var xRaw, yRaw string
 	for _, a := range start.Attr {
 		switch a.Name.Local {
@@ -384,20 +406,23 @@ func readZoneNode(dec *xml.Decoder, start xml.StartElement, path string, ctx *lo
 	}
 	x, err1 := strconv.ParseInt(xRaw, 10, 32)
 	y, err2 := strconv.ParseInt(yRaw, 10, 32)
-	if xRaw == "" || yRaw == "" || err1 != nil || err2 != nil {
+	switch {
+	case xRaw == "" || yRaw == "":
 		ctx.entry(Entry{Category: "zones", File: path, Line: lineOf(dec),
-			Code: CodeAttr, Message: "узел зоны без X/Y или вне домена"})
-	} else {
+			Code: CodeAttr, Message: "узел зоны без X/Y"})
+	case err1 != nil || err2 != nil:
+		ctx.entry(Entry{Category: "zones", File: path, Line: lineOf(dec),
+			Code: CodeNumber, Message: "координаты узла зоны вне домена (int32)"})
+	default:
 		c.nodes = append(c.nodes, [2]int32{int32(x), int32(y)})
 	}
 	skipElement(dec, start)
-	return true
 }
 
 // readZoneStat разбирает параметр зоны в raw-bag (zone.stat.<name>); дубликат
 // ключа — последний + счётчик (списочная семантика affectedRace/affectedClassId
 // канона не переносится: потребитель фаз 4+, потеря фиксирована реестром F19).
-func readZoneStat(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx, bag map[string]string) bool {
+func readZoneStat(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx, bag map[string]string) {
 	name, val := "", ""
 	for _, a := range start.Attr {
 		switch a.Name.Local {
@@ -405,13 +430,15 @@ func readZoneStat(dec *xml.Decoder, start xml.StartElement, path string, ctx *lo
 			name = strings.TrimSpace(a.Value)
 		case "val":
 			val = strings.TrimSpace(a.Value)
+		default:
+			skipAttr(ctx, "stat", a.Name.Local)
 		}
 	}
 	if name == "" || val == "" {
 		ctx.entry(Entry{Category: "zones", File: path, Line: lineOf(dec),
 			Code: CodeAttr, Message: "stat зоны без name/val"})
 		skipElement(dec, start)
-		return true
+		return
 	}
 	skipElement(dec, start)
 	key := ctx.internKey("zone.stat." + name)
@@ -419,12 +446,11 @@ func readZoneStat(dec *xml.Decoder, start xml.StartElement, path string, ctx *lo
 		ctx.rep.DupKeys++
 	}
 	bag[key] = val
-	return true
 }
 
-// readZoneSpawn разбирает точку возрождения зоны; отсутствие координат или
-// неразбор — запись-ошибка, точка пропускается.
-func readZoneSpawn(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx, c *zoneContent) bool {
+// readZoneSpawn разбирает точку возрождения зоны; отсутствие координат —
+// CodeAttr, неразбор — CodeNumber; точка пропускается.
+func readZoneSpawn(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx, c *zoneContent) {
 	var xRaw, yRaw, zRaw, typ string
 	for _, a := range start.Attr {
 		switch a.Name.Local {
@@ -455,12 +481,11 @@ func readZoneSpawn(dec *xml.Decoder, start xml.StartElement, path string, ctx *l
 		ctx.rep.ZoneSpawns++
 	}
 	skipElement(dec, start)
-	return true
 }
 
 // readZoneRace разбирает точку возрождения расы; отсутствие name/point —
 // запись-ошибка, элемент пропускается.
-func readZoneRace(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx, c *zoneContent) bool {
+func readZoneRace(dec *xml.Decoder, start xml.StartElement, path string, ctx *loadCtx, c *zoneContent) {
 	race, point := "", ""
 	for _, a := range start.Attr {
 		switch a.Name.Local {
@@ -468,17 +493,18 @@ func readZoneRace(dec *xml.Decoder, start xml.StartElement, path string, ctx *lo
 			race = strings.TrimSpace(a.Value)
 		case "point":
 			point = strings.TrimSpace(a.Value)
+		default:
+			skipAttr(ctx, "race", a.Name.Local)
 		}
 	}
 	skipElement(dec, start)
 	if race == "" || point == "" {
 		ctx.entry(Entry{Category: "zones", File: path, Line: lineOf(dec),
 			Code: CodeAttr, Message: "race зоны без name/point"})
-		return true
+		return
 	}
 	c.races = append(c.races, ZoneRacePoint{Race: race, Point: point})
 	ctx.rep.ZoneRacePoints++
-	return true
 }
 
 // buildZone валидирует форму и вырожденность, прекомпьютит bbox/z.
@@ -547,8 +573,8 @@ func buildZone(f zoneFields, c zoneContent, path string, line int, ctx *loadCtx)
 			bad(CodeNumber, who+": NPoly требует не менее 3 узлов, узлов "+strconv.Itoa(len(c.nodes)))
 			return Zone{}, false
 		}
-		if polyAreaZero(c.nodes) {
-			bad(CodeNumber, who+": нулевая площадь (коллинеарные или совпадающие узлы)")
+		if polyCollinear(c.nodes) {
+			bad(CodeNumber, who+": вырожденный полигон (коллинеарные или совпадающие узлы)")
 			return Zone{}, false
 		}
 		zn.MinX, zn.MaxX, zn.MinY, zn.MaxY = polyBounds(c.nodes)
@@ -596,16 +622,22 @@ func polyBounds(nodes [][2]int32) (minX, maxX, minY, maxY int32) {
 	return
 }
 
-// polyAreaZero — нулевая площадь шнурком в int64: покрывает совпадающие и
-// коллинеарные узлы одной проверкой O(n).
-func polyAreaZero(nodes [][2]int32) bool {
-	var area2 int64
-	j := len(nodes) - 1
-	for i := 0; i < len(nodes); i++ {
-		area2 += int64(nodes[j][0])*int64(nodes[i][1]) - int64(nodes[i][0])*int64(nodes[j][1])
-		j = i
+// polyCollinear — вырожденность полигона: все соседние тройки узлов
+// коллинеарны (включая все-узлы-в-точке). В отличие от шнура, не бракует
+// самопересекающиеся полигоны с нулевым алгебраическим полем: bowtie-зоны
+// датапака (boss_area_valakas2) имеют шнурок 0 при ненулевой even-odd
+// площади и функциональны в каноне (java.awt.Polygon.contains корректен на
+// самопересечениях).
+func polyCollinear(nodes [][2]int32) bool {
+	for i := range nodes {
+		p1, p2, p3 := nodes[i], nodes[(i+1)%len(nodes)], nodes[(i+2)%len(nodes)]
+		cross := int64(p2[0]-p1[0])*int64(p3[1]-p1[1]) -
+			int64(p2[1]-p1[1])*int64(p3[0]-p1[0])
+		if cross != 0 {
+			return false
+		}
 	}
-	return area2 == 0
+	return true
 }
 
 func i32min(a, b int32) int32 {

@@ -284,15 +284,27 @@ func parseTerritory(dec *xml.Decoder, start xml.StartElement, terrName, path str
 		return // обрыв XML: ошибка вносится файловым циклом, регистрировать нечего
 	}
 	t.Nodes = nodes
-	// Ретро-валидация геометрии P2.5. Формат SpawnData поддерживает shape/rad
-	// с дефолтом NPoly (в Interlude вхождений нет): форма ≠ NPoly — широта,
-	// узловая валидация не применяется.
+	// Ретро-валидация геометрии P2.5. Пустой набор узлов — ошибка до всех
+	// веток (канон: coords.length == 0 → skip; polyBounds не выносит пустого
+	// слайса). Формат SpawnData поддерживает shape/rad с дефолтом NPoly (в
+	// Interlude вхождений нет): форма ≠ NPoly — широта, узловая валидация
+	// не применяется.
+	if len(nodes) == 0 {
+		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
+			Code: CodeNumber, Message: "территория " + terrName + " без узлов"})
+		return
+	}
 	if v, isShape := t.set["terr.shape"]; isShape && v != "NPoly" {
 		ctx.rep.UnknownTypes["terr.shape."+v]++
 	} else {
-		if bad, msg := degeneratePoly(nodes); bad {
+		if len(nodes) < 3 {
 			ctx.entry(Entry{Category: "spawns", File: path, Line: line,
-				Code: CodeNumber, Message: "территория " + terrName + ": " + msg})
+				Code: CodeNumber, Message: "территория " + terrName + ": менее 3 узлов"})
+			return
+		}
+		if polyCollinear(nodes) {
+			ctx.entry(Entry{Category: "spawns", File: path, Line: line,
+				Code: CodeNumber, Message: "территория " + terrName + ": вырожденный полигон (коллинеарные или совпадающие узлы)"})
 			return
 		}
 		if dupAdjacent(nodes) {
@@ -309,18 +321,6 @@ func parseTerritory(dec *xml.Decoder, start xml.StartElement, terrName, path str
 	}
 	ctx.territories[t.Name] = t
 	ctx.rep.Territories++
-}
-
-// degeneratePoly — вырожденность полигонa территории: менее 3 узлов или
-// нулевая площадь (шнурком; покрывает совпадающие и коллинеарные узлы).
-func degeneratePoly(nodes [][2]int32) (bool, string) {
-	if len(nodes) < 3 {
-		return true, "менее 3 узлов (" + strconv.Itoa(len(nodes)) + ")"
-	}
-	if polyAreaZero(nodes) {
-		return true, "нулевая площадь (коллинеарные или совпадающие узлы)"
-	}
-	return false, ""
 }
 
 // dupAdjacent — повтор соседних узлов полигона (кроссингу безвреден,
@@ -382,13 +382,23 @@ func parseBanned(dec *xml.Decoder, start xml.StartElement, terrName, path string
 		return // обрыв XML: ошибка вносится файловым циклом
 	}
 	b.Nodes = nodes
-	// Ретро-валидация P2.5 — те же правила, что у территории; форма
+	// Ретро-валидация P2.5 — те же правила, что у территории: пустой набор
+	// узлов — ошибка до guard (polyBounds не выносит пустого слайса); форма
 	// banned.shape ≠ NPoly — широта, узловая валидация не применяется.
+	if len(nodes) == 0 {
+		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
+			Code: CodeNumber, Message: "banned_territory территории " + terrName + " без узлов"})
+		return
+	}
 	if v, isShape := ter.set["banned.shape"]; terOK && isShape && v != "NPoly" {
 		ctx.rep.UnknownTypes["terr.shape."+v]++
-	} else if bad, msg := degeneratePoly(nodes); bad {
+	} else if len(nodes) < 3 {
 		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
-			Code: CodeNumber, Message: "banned_territory территории " + terrName + ": " + msg})
+			Code: CodeNumber, Message: "banned_territory территории " + terrName + ": менее 3 узлов"})
+		return
+	} else if polyCollinear(nodes) {
+		ctx.entry(Entry{Category: "spawns", File: path, Line: line,
+			Code: CodeNumber, Message: "banned_territory территории " + terrName + ": вырожденный полигон (коллинеарные или совпадающие узлы)"})
 		return
 	} else if dupAdjacent(nodes) {
 		ctx.rep.DupAdjacentNodes++

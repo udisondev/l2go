@@ -37,7 +37,7 @@ jobs:
           for t in FuzzLoginDecrypt FuzzGameDecrypt; do
             go test -fuzz="^${t}$" -fuzztime=10s ./internal/crypto/
           done
-          for t in FuzzLoadItems FuzzLoadNpcSpawns; do
+          for t in FuzzLoadItems FuzzLoadNpcSpawns FuzzLoadZones; do
             go test -fuzz="^${t}$" -fuzztime=10s ./internal/data/
           done
           for t in FuzzDecodeRegion FuzzValidLocation; do

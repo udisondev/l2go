@@ -39,6 +39,6 @@ zone name="synth_respawn" type="RespawnZone" shape="Cuboid" minZ=50 maxZ=50 node
 zone name="synth_unknown" type="MysteryZone" shape="Octagon" minZ=0 maxZ=10 nodes=[0,0 30,0 30,30] spawns=[] races=[] sets=[zone.shape=Octagon]
 `
 	if got != want {
-		t.Errorf("секция NPC/территорий/спавнов отлична от эталона:\n---got---\n%s---want---\n%s", got, want)
+		t.Errorf("секция NPC/территорий/спавнов/зон отлична от эталона:\n---got---\n%s---want---\n%s", got, want)
 	}
 }

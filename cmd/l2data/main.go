@@ -65,6 +65,22 @@ func usage() {
 func printReport(rep *data.Report) {
 	fmt.Printf("файлов: %d, предметов: %d, NPC: %d, спавнов: %d, территорий: %d, дроп-предметов: %d, манифест: %x\n",
 		rep.Files, rep.Items, rep.Npcs, rep.Spawns, rep.Territories, rep.DropItems, rep.Manifest)
+	if rep.Zones > 0 {
+		fmt.Printf("зон: %d (спавн-точек: %d, рас-точек: %d, с явным id: %d)\n",
+			rep.Zones, rep.ZoneSpawns, rep.ZoneRacePoints, rep.ZonesWithID)
+	}
+	if rep.MinZOverMaxZ > 0 {
+		fmt.Printf("minZ>maxZ (канон нормализует): %d\n", rep.MinZOverMaxZ)
+	}
+	if rep.MinEqMaxZ > 0 {
+		fmt.Printf("тонкослойные зоны (minZ==maxZ): %d\n", rep.MinEqMaxZ)
+	}
+	if rep.DupZoneNames > 0 {
+		fmt.Printf("дублирующиеся имена зон: %d\n", rep.DupZoneNames)
+	}
+	if rep.DupAdjacentNodes > 0 {
+		fmt.Printf("повторы соседних узлов территорий: %d\n", rep.DupAdjacentNodes)
+	}
 	for _, e := range rep.Errors {
 		id := ""
 		if e.ID != 0 {
@@ -110,7 +126,7 @@ func printReport(rep *data.Report) {
 		fmt.Printf("именованные спавн-блоки: %d\n", rep.NamedBlocks)
 	}
 	if rep.DisabledFiles > 0 {
-		fmt.Printf("отключённые файлы спавнов: %d\n", rep.DisabledFiles)
+		fmt.Printf("отключённые файлы (спавны, зоны): %d\n", rep.DisabledFiles)
 	}
 	if rep.TerrOwnName > 0 {
 		fmt.Printf("собственные имена территорий (не читаются): %d\n", rep.TerrOwnName)

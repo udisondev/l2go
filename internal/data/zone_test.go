@@ -102,9 +102,10 @@ func TestZoneGolden(t *testing.T) {
 	if un.Contains(15, 15, 5) {
 		t.Error("Contains неизвестной формы = true; want false")
 	}
-	// Файл без enabled грузится (семантика канона зон).
-	if zoneByName(t, st, "synth_noenabled") == nil {
-		t.Fatal("зона из файла без enabled не загружена")
+	// Файл без enabled грузится (семантика канона зон): первая зона порядка
+	// (second.xml лексикографически раньше zones.xml).
+	if st.Zones()[0].Name != "synth_noenabled" {
+		t.Errorf("зона из файла без enabled не загружена; первая = %q", st.Zones()[0].Name)
 	}
 }
 
@@ -147,6 +148,12 @@ func TestZoneContains(t *testing.T) {
 		{zoneByName(t, st, "synth_cylinder"), 1061, 1061, 0, false, "цилиндр: за окружностью"},
 		{zoneByName(t, st, "synth_cylinder"), 0, 0, 200, true, "цилиндр: z-максимум включён"},
 		{zoneByName(t, st, "synth_cylinder"), 0, 0, 201, false, "цилиндр: z выше"},
+		// Вершина полигона и z-максимум: строгая int64-семантика на нетривиальных
+		// граничных точках (F57).
+		{zoneByName(t, st, "synth_npoly"), 100000, 100000, 300, true, "полигон: вершина (нижне-левый угол) внутри"},
+		{zoneByName(t, st, "synth_npoly"), 115000, 120000, 300, false, "полигон: вершина (верхне-правый угол) вне"},
+		{zoneByName(t, st, "synth_npoly"), 105000, 110000, 500, true, "полигон: zHi включён"},
+		{zoneByName(t, st, "synth_npoly"), 105000, 110000, 501, false, "полигон: z выше zHi"},
 		// int32-переполнение: |Δ| > 46341 — ложное «внутри» запрещено.
 		{zoneByName(t, st, "synth_cylinder"), 300000, 0, 0, false, "цилиндр: dx=300000 — вне (int64)"},
 		{zoneByName(t, st, "synth_cuboid"), -300000, 105000, -750, false, "кубоид: dx=-405000 — вне (int64)"},
@@ -207,6 +214,7 @@ func TestZoneEvilInputs(t *testing.T) {
 		{"обрезанный XML", "<list enabled=\"true\"><zone name=\"a\" ty", CodeXML},
 		{"чужой корневой элемент", "<zones/>", CodeRoot},
 		{"мусорный enabled", "<list enabled=\"yes\"><zone name=\"a\" type=\"PeaceZone\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"0\" Y=\"0\"/><node X=\"1\" Y=\"1\"/></zone></list>", CodeAttr},
+		{"пустой enabled", "<list enabled=\"\"><zone name=\"a\" type=\"PeaceZone\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"0\" Y=\"0\"/><node X=\"1\" Y=\"1\"/></zone></list>", CodeAttr},
 		{"нет type", "<list enabled=\"true\"><zone name=\"a\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"0\" Y=\"0\"/><node X=\"1\" Y=\"1\"/></zone></list>", CodeAttr},
 		{"нет shape", "<list enabled=\"true\"><zone name=\"a\" type=\"PeaceZone\" minZ=\"0\" maxZ=\"1\"><node X=\"0\" Y=\"0\"/><node X=\"1\" Y=\"1\"/></zone></list>", CodeAttr},
 		{"нет minZ", "<list enabled=\"true\"><zone name=\"a\" type=\"PeaceZone\" shape=\"Cuboid\" maxZ=\"1\"><node X=\"0\" Y=\"0\"/><node X=\"1\" Y=\"1\"/></zone></list>", CodeAttr},
@@ -232,7 +240,7 @@ func TestZoneEvilInputs(t *testing.T) {
 		{"spawn без X", "<list enabled=\"true\"><zone name=\"a\" type=\"RespawnZone\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"0\" Y=\"0\"/><node X=\"1\" Y=\"1\"/><spawn Y=\"1\" Z=\"2\"/></zone></list>", CodeAttr},
 		{"spawn Z не число", "<list enabled=\"true\"><zone name=\"a\" type=\"RespawnZone\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"0\" Y=\"0\"/><node X=\"1\" Y=\"1\"/><spawn X=\"1\" Y=\"2\" Z=\"z\"/></zone></list>", CodeNumber},
 		{"race без point", "<list enabled=\"true\"><zone name=\"a\" type=\"RespawnZone\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"0\" Y=\"0\"/><node X=\"1\" Y=\"1\"/><race name=\"HUMAN\"/></zone></list>", CodeAttr},
-		{"узел с X не числом", "<list enabled=\"true\"><zone name=\"a\" type=\"PeaceZone\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"abc\" Y=\"0\"/><node X=\"1\" Y=\"1\"/></zone></list>", CodeAttr},
+		{"узел с X не числом", "<list enabled=\"true\"><zone name=\"a\" type=\"PeaceZone\" shape=\"Cuboid\" minZ=\"0\" maxZ=\"1\"><node X=\"abc\" Y=\"0\"/><node X=\"1\" Y=\"1\"/></zone></list>", CodeNumber},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -363,4 +371,133 @@ func TestTerritoryShapeGuard(t *testing.T) {
 // zoneTerrFS — спавн-файл поверх обязательных каталогов категорий.
 func zoneTerrFS(content string) fstest.MapFS {
 	return catFS(map[string]*fstest.MapFile{"spawns/x.xml": {Data: []byte(content)}})
+}
+
+// TestTerritoryBannedEvil — вырожденный banned_territory: ошибка с местом
+// (F20: ретро-валидация P2.2 без теста слепа).
+func TestTerritoryBannedEvil(t *testing.T) {
+	content := `<list enabled="true">
+		<spawn zone="good_terr">
+			<territory minZ="0" maxZ="100">
+				<node x="0" y="0" />
+				<node x="9" y="0" />
+				<node x="9" y="9" />
+			</territory>
+			<banned_territory minZ="0" maxZ="10">
+				<node x="1" y="1" />
+				<node x="2" y="2" />
+			</banned_territory>
+			<npc id="80000" count="1" respawnDelay="30" />
+		</spawn>
+	</list>`
+	_, rep, err := Load(zoneTerrFS(content))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	found := false
+	for _, e := range rep.Errors {
+		if e.Code == CodeNumber && strings.Contains(e.Message, "banned_territory") {
+			found = true
+			if e.File == "" || e.Line <= 0 {
+				t.Errorf("запись без места: %+v", e)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("вырожденный banned (2 узла) не отмечен; записи: %+v", rep.Errors)
+	}
+}
+
+// TestTerritoryShapeGuardNoNodes — guard-территория без узлов: запись-ошибка,
+// не паника (блокер S8-раунда 1).
+func TestTerritoryShapeGuardNoNodes(t *testing.T) {
+	content := `<list enabled="true">
+		<spawn zone="cyl_empty">
+			<territory shape="Cylinder" rad="50" minZ="0" maxZ="100"></territory>
+			<npc id="80000" count="1" respawnDelay="30" />
+		</spawn>
+	</list>`
+	_, rep, err := Load(zoneTerrFS(content))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	found := false
+	for _, e := range rep.Errors {
+		if e.Code == CodeNumber && strings.Contains(e.Message, "cyl_empty") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("территория без узлов не отмечена; записи: %+v", rep.Errors)
+	}
+}
+
+// TestTerritoryBreadthGreen — широта территорий: minZ>maxZ и повтор соседних
+// узлов — счётчики, сборка зелёная (счётчики P2.5 фальсифицированы).
+func TestTerritoryBreadthGreen(t *testing.T) {
+	content := `<list enabled="true">
+		<spawn zone="wide_terr">
+			<territory minZ="100" maxZ="0">
+				<node x="0" y="0" />
+				<node x="5" y="5" />
+				<node x="5" y="5" />
+				<node x="9" y="0" />
+			</territory>
+			<npc id="80000" count="1" respawnDelay="30" />
+		</spawn>
+	</list>`
+	st, rep, err := Load(zoneTerrFS(content))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if rep.HasErrors() {
+		t.Fatalf("широта территорий не ошибка: %+v", rep.Errors)
+	}
+	if rep.MinZOverMaxZ != 1 {
+		t.Errorf("MinZOverMaxZ = %d; want 1 (территория 100>0)", rep.MinZOverMaxZ)
+	}
+	if rep.DupAdjacentNodes != 1 {
+		t.Errorf("DupAdjacentNodes = %d; want 1 (повтор соседних узлов)", rep.DupAdjacentNodes)
+	}
+	ter, ok := st.Territory("wide_terr")
+	if !ok {
+		t.Fatal("территория wide_terr отсутствует")
+	}
+	if !ter.Contains(4, 4, 50) {
+		t.Error("Territory.Contains(4,4,50) = false; want true (нормализация z 100>0)")
+	}
+	if ter.Contains(4, 4, 101) {
+		t.Error("Territory.Contains z=101 = true; want false")
+	}
+}
+
+// TestZoneBowtieGreen — самопересекающийся полигон с нулевым шнурком, но
+// ненулевой even-odd площадью (bowtie-зоны датапака: boss_area_valakas2) —
+// функциональная зона канона, не вырожденность.
+func TestZoneBowtieGreen(t *testing.T) {
+	content := `<list enabled="true"><zone name="bowtie" type="NoSummonFriendZone" shape="NPoly" minZ="-3753" maxZ="32767">
+		<node X="183634" Y="-115085" />
+		<node X="183634" Y="-114885" />
+		<node X="184000" Y="-115085" />
+		<node X="184000" Y="-114885" />
+	</zone></list>`
+	st, rep, err := Load(zoneFile(content))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if rep.HasErrors() {
+		t.Fatalf("bowtie-зона не вырождена: %+v", rep.Errors)
+	}
+	if rep.Zones != 1 {
+		t.Fatalf("Zones = %d; want 1", rep.Zones)
+	}
+	zn := st.Zones()[0]
+	// Even-odd площадь: левый треугольник (183634..183817) содержит точки
+	// левее диагонали; точка (183634, -115000) — внутри левого крыла.
+	if !zn.Contains(183634, -115000, 0) {
+		t.Error("bowtie.Contains(левое крыло) = false; want true")
+	}
+	if zn.Contains(183817, -114885, 0) {
+		t.Error("bowtie.Contains(за пределами) = true; want false")
+	}
 }

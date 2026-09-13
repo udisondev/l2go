@@ -36,7 +36,7 @@ type Report struct {
 	Errors          []Entry
 	Manifest        [sha256.Size]byte
 	UnknownKeys     map[string]int // ключи с квалификацией категории (npc.key.*, spawn.key.*)
-	UnknownTypes    map[string]int // типы с квалификацией категории (npc.type.*, npc.race.*)
+	UnknownTypes    map[string]int // типы/формы с квалификацией (npc.type.*, npc.race.*, zone.type.*, zone.shape.*, terr.shape.*)
 	SkippedElements map[string]int
 	SkippedDirs     map[string]int
 

@@ -51,15 +51,33 @@ func BenchmarkZoneContains(b *testing.B) {
 	}
 }
 
-// BenchmarkTerritoryContains: территория спавна 3 узла (53% дистрибутива —
-// 4 узла, 5 — 940, хвост до 16; здесь 5 узлов — середина распределения).
+// BenchmarkTerritoryContains: территории 4 узла (мода распределения — 53%)
+// и 5 узлов (940 из 3630), попадание и промах.
 func BenchmarkTerritoryContains(b *testing.B) {
-	t := &Territory{MinZ: -3800, MaxZ: -3400,
+	terr4 := &Territory{MinZ: -3800, MaxZ: -3400,
+		Nodes: [][2]int32{{70780, 125060}, {71852, 124640}, {72660, 125432}, {70900, 125700}}}
+	terr4.MinX, terr4.MaxX, terr4.MinY, terr4.MaxY = polyBounds(terr4.Nodes)
+	terr5 := &Territory{MinZ: -3800, MaxZ: -3400,
 		Nodes: [][2]int32{{70780, 125060}, {71852, 124640}, {72660, 125432}, {71500, 125800}, {70500, 125500}}}
-	t.MinX, t.MaxX, t.MinY, t.MaxY = polyBounds(t.Nodes)
-	b.ReportAllocs()
-	for b.Loop() {
-		benchSink = t.Contains(71764, 125044, -3600)
+	terr5.MinX, terr5.MaxX, terr5.MinY, terr5.MaxY = polyBounds(terr5.Nodes)
+	cases := []struct {
+		name string
+		t    *Territory
+		x, y int32
+	}{
+		{"n4-hit", terr4, 71764, 125350},
+		{"n4-miss", terr4, 0, 0},
+		{"n5-hit", terr5, 71764, 125044},
+		{"n5-miss", terr5, 0, 0},
+	}
+	for _, tt := range cases {
+		b.Run(tt.name, func(b *testing.B) {
+			ter := tt.t
+			b.ReportAllocs()
+			for b.Loop() {
+				benchSink = ter.Contains(tt.x, tt.y, -3600)
+			}
+		})
 	}
 }
 
@@ -105,31 +123,77 @@ func scanZones() []Zone {
 }
 
 // BenchmarkZonesScan: перебор всех зон по точке — единица работы фазы 3 до
-// пространственного индекса; ротация точек трёх классов (z-промах; внутри
-// bbox, но мимо полигона — платит кроссинг; полный промах) — одна
-// константная точка мерила бы везение бранч-предиктора.
+// пространственного индекса. Классы точек вычисляются от самой зоны в
+// итерации (не от фикс-зон): z-промах; угол bbox (внутри bbox, обычно мимо
+// полигона — платит кроссинг); центр bbox (обычно попадание); полный промах.
+// Одна константная точка мерила бы везение бранч-предиктора.
 func BenchmarkZonesScan(b *testing.B) {
 	zones := scanZones()
 	if len(zones) < 1900 {
 		b.Fatalf("скан-набор = %d зон; want ~2000", len(zones))
 	}
-	pts := [][3]int32{
-		{0, 0, 99999},                             // z-промах
-		{-300000, -300000, 0},                     // полный промах
-		{150001, 150001, 99999},                   // z-промах вдали
-		{zones[0].MinX + 1, zones[0].MaxY - 1, 0}, // в bbox первой зоны (верхняя кромка — мимо полигона, платит кроссинг)
-		{zones[3].MinX + 1, zones[3].MinY + 1, 0}, // внутри bbox четвёртой зоны
-	}
 	b.ReportAllocs()
 	for b.Loop() {
 		hit := false
 		for i := range zones {
-			p := pts[i%len(pts)]
-			if zones[i].Contains(p[0], p[1], p[2]) {
+			zn := &zones[i]
+			var x, y, z int32
+			switch i % 4 {
+			case 0: // z-промах
+				x, y, z = zn.MinX+1, zn.MinY+1, 99999
+			case 1: // угол bbox: платит кроссинг, как правило мимо
+				x, y = zn.MinX+1, zn.MinY+1
+			case 2: // центр bbox: как правило попадание
+				x, y = zn.MinX+(zn.MaxX-zn.MinX)/2, zn.MinY+(zn.MaxY-zn.MinY)/2
+			default: // полный промах
+				x, y = -300000, -300000
+			}
+			if zn.Contains(x, y, z) {
 				hit = true
 			}
 		}
 		benchSink = hit
+	}
+}
+
+// TestScanClasses — фальсификация классов скана: каждый класс реально
+// представлен и hit/miss по классам ненулевые (бенчмарк не выродился в
+// один бранч-путь).
+func TestScanClasses(t *testing.T) {
+	zones := scanZones()
+	classHit, classMiss := [4]int{}, [4]int{}
+	for i := range zones {
+		zn := &zones[i]
+		var x, y, z int32
+		class := i % 4
+		switch class {
+		case 0:
+			x, y, z = zn.MinX+1, zn.MinY+1, 99999
+		case 1:
+			x, y = zn.MinX+1, zn.MinY+1
+		case 2:
+			x, y = zn.MinX+(zn.MaxX-zn.MinX)/2, zn.MinY+(zn.MaxY-zn.MinY)/2
+		default:
+			x, y = -300000, -300000
+		}
+		if zn.Contains(x, y, z) {
+			classHit[class]++
+		} else {
+			classMiss[class]++
+		}
+	}
+	for class := 0; class < 4; class++ {
+		if classHit[class] == 0 && classMiss[class] == 0 {
+			t.Errorf("класс %d не представлен", class)
+		}
+	}
+	// Класс кроссинга (угол bbox) обязан давать и промахи (платит полный
+	// кроссинг), и центр bbox — попадания.
+	if classMiss[1] == 0 {
+		t.Errorf("класс угла bbox без кроссинг-промахов: hit=%v", classHit[1])
+	}
+	if classHit[2] == 0 {
+		t.Errorf("класс центра bbox без попаданий: miss=%v", classMiss[2])
 	}
 }
 
