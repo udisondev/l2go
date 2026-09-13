@@ -1,9 +1,11 @@
 package data
 
 import (
+	"cmp"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 )
 
@@ -17,14 +19,14 @@ const (
 	dcStruct = "struct" // несогласованность структуры записи
 )
 
-// DecodeError — ошибка декодирования секции с кодом и офсетом.
-type DecodeError struct {
+// decodeError — ошибка декодирования секции с кодом и офсетом.
+type decodeError struct {
 	Code   string
 	Offset int
 	Msg    string
 }
 
-func (e *DecodeError) Error() string {
+func (e *decodeError) Error() string {
 	return fmt.Sprintf("data: decode %s @%d: %s", e.Code, e.Offset, e.Msg)
 }
 
@@ -32,9 +34,31 @@ func (e *DecodeError) Error() string {
 // парсере, и в декодере секции (парс-зелёное всегда декодируется).
 const maxRawDepth = 64
 
-// minRecBytes — нижняя граница кодированной записи любой коллекции секции
-// (каждая начинается минимум с одного u32-поля); основа потолка счётчиков.
-const minRecBytes = 4
+// Минимальные кодированные размеры записей коллекций (поимённо): основа
+// потолка счётчиков — амплитуда аллокаций по злому счётчику ограничена
+// отношением резидентного размера записи к минимальному кодированному.
+// Дети raw-дерева — исключение: вложенность компаундит усиление (до 64
+// уровней), поэтому их порция не резервируется вовсе (растёт append'ом).
+const (
+	recU32    = 4  // один u32 (счётчик/длина/ID)
+	recStr    = 4  // пустая строка: u32 длина
+	recStrMap = 8  // запись bag: две u32-длины
+	recPair   = 8  // узел: два i32
+	recItem   = 53 // ID+имя+тип+вес+цена+стек+кристаллы×2+материал+слот+bag-счётчик
+	recNpc    = 65
+	recTerr   = 36
+	recSpawn  = 37
+	recZone   = 60
+	recDef    = 40
+	recMinion = 20
+	recDrop   = 20
+	recGroup  = 12
+	recList   = 12
+	recTable  = 8 // имя + счётчик значений
+	recAttr   = 8
+	recRaw    = 16 // имя + атрибуты + текст + дети
+	recSkill  = 36 // три строки + пять i32 + bool (минимум 37 — запас вниз безопасен)
+)
 
 // enc — little-endian кодировщик секции.
 type enc struct{ buf []byte }
@@ -82,12 +106,12 @@ type decoder struct {
 	b    []byte
 	off  int
 	dict map[string]string
-	err  *DecodeError
+	err  *decodeError
 }
 
 func (d *decoder) fail(code, msg string) bool {
 	if d.err == nil {
-		d.err = &DecodeError{Code: code, Offset: d.off, Msg: msg}
+		d.err = &decodeError{Code: code, Offset: d.off, Msg: msg}
 	}
 	return false
 }
@@ -151,13 +175,15 @@ func (d *decoder) str() string {
 }
 
 // count читает счётчик коллекции, ограниченный остатком: порция элементов
-// не может быть длиннее остатка, поделённого на минимальный размер записи.
-func (d *decoder) count() int {
+// не может быть длиннее остатка, поделённого на минимальный размер записи
+// коллекции. Сравнение в uint64 — int(n) на 32-битной цели знаково
+// заворачивается.
+func (d *decoder) count(minRec int) int {
 	n := d.u32()
 	if d.err != nil {
 		return 0
 	}
-	if max := (len(d.b) - d.off) / minRecBytes; int(n) > max {
+	if max := uint64((len(d.b) - d.off) / minRec); uint64(n) > max {
 		d.fail(dcRange, fmt.Sprintf("счётчик %d против потолка %d по остатку", n, max))
 		return 0
 	}
@@ -165,7 +191,7 @@ func (d *decoder) count() int {
 }
 
 func (d *decoder) strMap() map[string]string {
-	n := d.count()
+	n := d.count(recStrMap)
 	m := make(map[string]string, n)
 	for i := 0; i < n && d.err == nil; i++ {
 		k, v := d.str(), d.str()
@@ -196,7 +222,7 @@ func EncodeStatic(s *Static) []byte {
 	e.u32(uint32(len(s.zones)))
 	e.u32(uint32(len(s.skills)))
 
-	for _, id := range sortedItemIDs(s.items) {
+	for _, id := range sortedKeysOf(s.items) {
 		it := s.items[id]
 		e.i32(int32(it.ID))
 		e.str(it.Name)
@@ -211,7 +237,7 @@ func EncodeStatic(s *Static) []byte {
 		e.strMap(it.set)
 	}
 
-	for _, id := range sortedNpcIDs(s.npcs) {
+	for _, id := range sortedKeysOf(s.npcs) {
 		n := s.npcs[id]
 		e.i32(int32(n.ID))
 		e.str(n.Name)
@@ -265,7 +291,7 @@ func EncodeStatic(s *Static) []byte {
 		e.strMap(n.set)
 	}
 
-	for _, name := range sortedTerrNames(s.territories) {
+	for _, name := range sortedKeysOf(s.territories) {
 		t := s.territories[name]
 		e.str(t.Name)
 		e.i32(t.MinZ)
@@ -328,7 +354,7 @@ func EncodeStatic(s *Static) []byte {
 		e.strMap(zn.set)
 	}
 
-	for _, id := range sortedSkillIDs(s.skills) {
+	for _, id := range sortedKeysOf(s.skills) {
 		encSkillDef(e, s.skills[id])
 	}
 	return e.buf
@@ -375,7 +401,7 @@ func encSkillDef(e *enc, d *SkillDef) {
 		}
 	}
 	e.u32(uint32(len(d.tables)))
-	for _, name := range sortedKeys(d.tables) {
+	for _, name := range sortedKeysOf(d.tables) {
 		e.str(name)
 		vals := d.tables[name]
 		e.u32(uint32(len(vals)))
@@ -421,8 +447,8 @@ func encRawNode(e *enc, n RawNode) {
 // операторами: порядок не зависит от порядка вычисления операндов.
 func DecodeStatic(b []byte) (*Static, error) {
 	d := &decoder{b: b, dict: map[string]string{}}
-	nItems, nNpcs, nTerr := d.count(), d.count(), d.count()
-	nSpawns, nZones, nSkills := d.count(), d.count(), d.count()
+	nItems, nNpcs, nTerr := d.count(recItem), d.count(recNpc), d.count(recTerr)
+	nSpawns, nZones, nSkills := d.count(recSpawn), d.count(recZone), d.count(recDef)
 	st := &Static{
 		items:       make(map[ItemID]Item, nItems),
 		npcs:        make(map[NpcID]Npc, nNpcs),
@@ -466,17 +492,17 @@ func DecodeStatic(b []byte) (*Static, error) {
 		n.IsAggressive = d.boolean()
 		n.CollisionRadius = d.f64()
 		n.CollisionHeight = d.f64()
-		nClans := d.count()
+		nClans := d.count(recStr)
 		n.Clans = make([]string, 0, nClans)
 		for j := 0; j < nClans && d.err == nil; j++ {
 			n.Clans = append(n.Clans, d.str())
 		}
-		nIgnore := d.count()
+		nIgnore := d.count(recU32)
 		n.IgnoreNpcIDs = make([]NpcID, 0, nIgnore)
 		for j := 0; j < nIgnore && d.err == nil; j++ {
 			n.IgnoreNpcIDs = append(n.IgnoreNpcIDs, NpcID(d.i32()))
 		}
-		nMinions := d.count()
+		nMinions := d.count(recMinion)
 		n.Minions = make([]MinionRef, 0, nMinions)
 		for j := 0; j < nMinions && d.err == nil; j++ {
 			var m MinionRef
@@ -487,7 +513,7 @@ func DecodeStatic(b []byte) (*Static, error) {
 			m.WeightPoint = d.i32()
 			n.Minions = append(n.Minions, m)
 		}
-		nDrops := d.count()
+		nDrops := d.count(recList)
 		n.DropLists = make([]DropList, 0, nDrops)
 		for j := 0; j < nDrops && d.err == nil; j++ {
 			n.DropLists = append(n.DropLists, decDropList(d))
@@ -513,7 +539,7 @@ func DecodeStatic(b []byte) (*Static, error) {
 		t.MinY = d.i32()
 		t.MaxY = d.i32()
 		t.Nodes = decNodes(d)
-		nBanned := d.count()
+		nBanned := d.count(recList)
 		t.Banned = make([]BannedTerritory, 0, nBanned)
 		for j := 0; j < nBanned && d.err == nil; j++ {
 			var b BannedTerritory
@@ -570,7 +596,7 @@ func DecodeStatic(b []byte) (*Static, error) {
 		zn.HasID = d.boolean()
 		zn.Name = d.str()
 		zn.Type = d.str()
-		nSpawnPts := d.count()
+		nSpawnPts := d.count(recGroup)
 		zn.SpawnPts = make([]ZoneSpawn, 0, nSpawnPts)
 		for j := 0; j < nSpawnPts && d.err == nil; j++ {
 			var p ZoneSpawn
@@ -580,7 +606,7 @@ func DecodeStatic(b []byte) (*Static, error) {
 			p.Type = d.str()
 			zn.SpawnPts = append(zn.SpawnPts, p)
 		}
-		nRacePts := d.count()
+		nRacePts := d.count(recStrMap)
 		zn.RacePts = make([]ZoneRacePoint, 0, nRacePts)
 		for j := 0; j < nRacePts && d.err == nil; j++ {
 			var p ZoneRacePoint
@@ -615,12 +641,12 @@ func DecodeStatic(b []byte) (*Static, error) {
 		return nil, d.err
 	}
 	if d.off != len(d.b) {
-		return nil, &DecodeError{Code: dcTail, Offset: d.off,
+		return nil, &decodeError{Code: dcTail, Offset: d.off,
 			Msg: fmt.Sprintf("непотреблённый остаток секции: %d байт", len(d.b)-d.off)}
 	}
 	if len(st.items) != nItems || len(st.npcs) != nNpcs || len(st.territories) != nTerr ||
 		len(st.spawns) != nSpawns || len(st.zones) != nZones || len(st.skills) != nSkills {
-		return nil, &DecodeError{Code: dcStruct, Offset: 0,
+		return nil, &decodeError{Code: dcStruct, Offset: 0,
 			Msg: "декодировано меньше записей, чем заявлено в заголовке секции"}
 	}
 	return st, nil
@@ -629,19 +655,19 @@ func DecodeStatic(b []byte) (*Static, error) {
 func decDropList(d *decoder) DropList {
 	var dl DropList
 	dl.Type = d.str()
-	nGroups := d.count()
+	nGroups := d.count(recGroup)
 	dl.Groups = make([]DropGroup, 0, nGroups)
 	for j := 0; j < nGroups && d.err == nil; j++ {
 		var g DropGroup
 		g.Chance = d.f64()
-		nItems := d.count()
+		nItems := d.count(recDrop)
 		g.Items = make([]Drop, 0, nItems)
 		for k := 0; k < nItems && d.err == nil; k++ {
 			g.Items = append(g.Items, decDrop(d))
 		}
 		dl.Groups = append(dl.Groups, g)
 	}
-	nItems := d.count()
+	nItems := d.count(recDrop)
 	dl.Items = make([]Drop, 0, nItems)
 	for k := 0; k < nItems && d.err == nil; k++ {
 		dl.Items = append(dl.Items, decDrop(d))
@@ -659,7 +685,7 @@ func decDrop(d *decoder) Drop {
 }
 
 func decNodes(d *decoder) [][2]int32 {
-	n := d.count()
+	n := d.count(recPair)
 	nodes := make([][2]int32, 0, n)
 	for i := 0; i < n && d.err == nil; i++ {
 		x, y := d.i32(), d.i32()
@@ -688,7 +714,7 @@ func decSkillDef(d *decoder) *SkillDef {
 	def.ID = SkillID(d.i32())
 	def.Name = d.str()
 	def.Levels = d.i32()
-	nEnch := d.count()
+	nEnch := d.count(1)
 	def.Enchant = make([]SkillEnchant, 0, nEnch)
 	seenRoute := make(map[int8]bool, nEnch)
 	for j := 0; j < nEnch && d.err == nil; j++ {
@@ -704,15 +730,15 @@ func decSkillDef(d *decoder) *SkillDef {
 		seenRoute[r] = true
 		def.Enchant = append(def.Enchant, SkillEnchant{Route: r})
 	}
-	nBase := d.count()
+	nBase := d.count(recSkill)
 	def.Base = make([]Skill, 0, nBase)
 	for j := 0; j < nBase && d.err == nil; j++ {
 		def.Base = append(def.Base, decSkill(d))
 	}
-	nRoutes := d.count()
+	nRoutes := d.count(recU32)
 	def.EnchantLevels = make([][]Skill, 0, nRoutes)
 	for j := 0; j < nRoutes && d.err == nil; j++ {
-		nLevels := d.count()
+		nLevels := d.count(recSkill)
 		levels := make([]Skill, 0, nLevels)
 		for k := 0; k < nLevels && d.err == nil; k++ {
 			levels = append(levels, decSkill(d))
@@ -724,11 +750,11 @@ func decSkillDef(d *decoder) *SkillDef {
 			len(def.EnchantLevels), len(def.Enchant)))
 		return def
 	}
-	nTables := d.count()
+	nTables := d.count(recTable)
 	def.tables = make(map[string][]string, nTables)
 	for j := 0; j < nTables && d.err == nil; j++ {
 		name := d.str()
-		nVals := d.count()
+		nVals := d.count(recStr)
 		vals := make([]string, 0, nVals)
 		for k := 0; k < nVals && d.err == nil; k++ {
 			vals = append(vals, d.str())
@@ -743,7 +769,7 @@ func decSkillDef(d *decoder) *SkillDef {
 		def.tables[name] = vals
 	}
 	def.set = d.strMap()
-	nOv := d.count()
+	nOv := d.count(recU32)
 	def.enchantOverrides = make(map[int8]map[string]string, nOv)
 	for j := 0; j < nOv && d.err == nil; j++ {
 		r := int8(d.u8())
@@ -757,7 +783,7 @@ func decSkillDef(d *decoder) *SkillDef {
 		}
 		def.enchantOverrides[r] = d.strMap()
 	}
-	nRaw := d.count()
+	nRaw := d.count(recRaw)
 	def.raw = make([]RawNode, 0, nRaw)
 	for j := 0; j < nRaw && d.err == nil; j++ {
 		def.raw = append(def.raw, decRawNode(d, 1))
@@ -772,7 +798,7 @@ func decRawNode(d *decoder, depth int) RawNode {
 	}
 	var n RawNode
 	n.Name = d.str()
-	nAttrs := d.count()
+	nAttrs := d.count(recAttr)
 	n.Attrs = make([]RawAttr, 0, nAttrs)
 	for i := 0; i < nAttrs && d.err == nil; i++ {
 		var a RawAttr
@@ -781,55 +807,22 @@ func decRawNode(d *decoder, depth int) RawNode {
 		n.Attrs = append(n.Attrs, a)
 	}
 	n.Text = d.str()
-	nChildren := d.count()
-	n.Children = make([]RawNode, 0, nChildren)
+	// Дети raw-дерева не резервируются по счётчику: вложенность до 64 уровней
+	// компаундит усиление злого счётчика в аллокации — порция растёт append'ом
+	// по фактически декодированным узлам.
+	nChildren := d.count(recRaw)
 	for i := 0; i < nChildren && d.err == nil; i++ {
 		n.Children = append(n.Children, decRawNode(d, depth+1))
 	}
 	return n
 }
 
-func sortedItemIDs(m map[ItemID]Item) []ItemID {
-	out := make([]ItemID, 0, len(m))
-	for id := range m {
-		out = append(out, id)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
-func sortedNpcIDs(m map[NpcID]Npc) []NpcID {
-	out := make([]NpcID, 0, len(m))
-	for id := range m {
-		out = append(out, id)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
-func sortedTerrNames(m map[string]Territory) []string {
-	out := make([]string, 0, len(m))
-	for name := range m {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedSkillIDs(m map[SkillID]*SkillDef) []SkillID {
-	out := make([]SkillID, 0, len(m))
-	for id := range m {
-		out = append(out, id)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
-func sortedKeys(m map[string][]string) []string {
-	out := make([]string, 0, len(m))
+// sortedKeysOf — отсортированные ключи отображения (детерминизм кодирования).
+func sortedKeysOf[K cmp.Ordered, V any](m map[K]V) []K {
+	out := make([]K, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

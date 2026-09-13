@@ -20,9 +20,9 @@ import (
 	"github.com/udisondev/l2go/internal/geo"
 )
 
-// Version — версия формата контейнера; несовпадение = артефакт устарел,
+// version — версия формата контейнера; несовпадение = артефакт устарел,
 // пересобирается командой build (миграций нет как класса).
-const Version = 1
+const version = 1
 
 // Коды ошибок декодирования контейнера.
 const (
@@ -92,8 +92,16 @@ func Build(outPath string, st *data.Static, drep *data.Report, m *geo.Map, grep 
 	buf, meta := encodeArtifact(st, drep, m, grep)
 	encodeDur := time.Since(t0)
 
-	if existing, err := os.ReadFile(outPath); err == nil && bytes.Equal(existing, buf) {
-		return &BuildResult{Meta: meta, Fresh: false, Encode: encodeDur}, nil
+	// Сравнение с существующим — по отображению, без копирования в кучу
+	// (полный артефакт ~1 ГиБ; сборка идемпотентна и часта).
+	if existing, unmap, err := geo.MapFile(outPath); err == nil {
+		equal := bytes.Equal(existing, buf)
+		if unmapErr := unmap(); unmapErr != nil {
+			return nil, fmt.Errorf("artifact: освобождение отображения %s: %w", outPath, unmapErr)
+		}
+		if equal {
+			return &BuildResult{Meta: meta, Fresh: false, Encode: encodeDur}, nil
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(outPath), ".artifact-*.tmp")
 	if err != nil {
@@ -172,7 +180,7 @@ func encodeArtifact(st *data.Static, drep *data.Report, m *geo.Map, grep *geo.Re
 
 	buf := make([]byte, 0, hdrSize+metaSize+len(dataSec)+len(geoSec))
 	buf = append(buf, magicStr...)
-	buf = binary.LittleEndian.AppendUint32(buf, Version)
+	buf = binary.LittleEndian.AppendUint32(buf, version)
 	buf = append(buf, meta.DataManifest[:]...)
 	buf = append(buf, meta.GeoManifest[:]...)
 	buf = binary.LittleEndian.AppendUint64(buf, meta.DataLen)
@@ -202,8 +210,9 @@ func encodeArtifact(st *data.Static, drep *data.Report, m *geo.Map, grep *geo.Re
 // Decode проверяет заголовок (магия, версия, длины — вычитанием, без
 // суммирования), контрольную сумму (SHA-256 заголовка до поля суммы + payload:
 // порча любого байта файла детектируется) и декодирует категории и гео;
-// байты гео остаются поверх переданного слайса. Сверка: счётчики секции
-// статики против meta, число регионов против индекса и meta.
+// байты гео остаются поверх переданного слайса. Обязательная сверка
+// «декодировано == заявлено» (счётчики секции статики и регионов против meta)
+// — общая для всех путей загрузки (checkDataCounts/checkRegionsCount).
 func Decode(b []byte) (*data.Static, *geo.Map, *Meta, error) {
 	meta, dataSec, geoSec, err := split(b)
 	if err != nil {
@@ -214,20 +223,15 @@ func Decode(b []byte) (*data.Static, *geo.Map, *Meta, error) {
 		return nil, nil, nil, &DecodeError{Code: CodeDecode, Offset: hdrSize + metaSize,
 			Msg: err.Error()}
 	}
-	// Сверка заявленного (meta) с заголовком data-секции: первые шесть u32.
-	for i, want := range []uint32{meta.Items, meta.Npcs, meta.Territories, meta.Spawns, meta.Zones, meta.Skills} {
-		if got := binary.LittleEndian.Uint32(dataSec[i*4:]); got != want {
-			return nil, nil, nil, &DecodeError{Code: CodeDecode, Offset: hdrSize + metaSize + i*4,
-				Msg: fmt.Sprintf("счётчик секции %d = %d против meta %d", i, got, want)}
-		}
+	if err := checkDataCounts(meta, dataSec); err != nil {
+		return nil, nil, nil, err
 	}
 	regs, err := decodeGeoRegions(geoSec)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if uint32(len(regs)) != meta.Regions {
-		return nil, nil, nil, &DecodeError{Code: CodeDecode, Offset: hdrSize + metaSize + int(meta.DataLen),
-			Msg: fmt.Sprintf("регионов декодировано %d против meta %d", len(regs), meta.Regions)}
+	if err := checkRegionsCount(meta, regs); err != nil {
+		return nil, nil, nil, err
 	}
 	m, err := geo.NewMapFromRegions(regs)
 	if err != nil {
@@ -235,6 +239,27 @@ func Decode(b []byte) (*data.Static, *geo.Map, *Meta, error) {
 			Msg: err.Error()}
 	}
 	return st, m, meta, nil
+}
+
+// checkDataCounts сверяет заявленное meta с заголовком data-секции (первые
+// шесть u32) — ворота против тихих потерь и врущего meta.
+func checkDataCounts(meta *Meta, dataSec []byte) error {
+	for i, want := range []uint32{meta.Items, meta.Npcs, meta.Territories, meta.Spawns, meta.Zones, meta.Skills} {
+		if got := binary.LittleEndian.Uint32(dataSec[i*4:]); got != want {
+			return &DecodeError{Code: CodeDecode, Offset: hdrSize + metaSize + i*4,
+				Msg: fmt.Sprintf("счётчик секции %d = %d против meta %d", i, got, want)}
+		}
+	}
+	return nil
+}
+
+// checkRegionsCount сверяет число декодированных регионов с заявленным meta.
+func checkRegionsCount(meta *Meta, regs []*geo.Region) error {
+	if uint32(len(regs)) != meta.Regions {
+		return &DecodeError{Code: CodeDecode, Offset: hdrSize + metaSize + int(meta.DataLen),
+			Msg: fmt.Sprintf("регионов декодировано %d против meta %d", len(regs), meta.Regions)}
+	}
+	return nil
 }
 
 // split проверяет заголовок и режет payload; сверка контрольной суммы —
@@ -248,9 +273,9 @@ func split(b []byte) (*Meta, []byte, []byte, error) {
 		return nil, nil, nil, &DecodeError{Code: CodeMagic, Offset: 0,
 			Msg: fmt.Sprintf("магия %q не %q", b[:4], magicStr)}
 	}
-	if v := binary.LittleEndian.Uint32(b[4:8]); v != Version {
+	if v := binary.LittleEndian.Uint32(b[4:8]); v != version {
 		return nil, nil, nil, &DecodeError{Code: CodeVersion, Offset: 4,
-			Msg: fmt.Sprintf("версия %d не %d — пересобери артефакт", v, Version)}
+			Msg: fmt.Sprintf("версия %d не %d — пересобери артефакт", v, version)}
 	}
 	// Длины — только вычитанием: суммы не вычисляются, переполнение невозможно.
 	avail := uint64(len(b) - hdrSize)
@@ -297,8 +322,8 @@ func split(b []byte) (*Meta, []byte, []byte, error) {
 	return meta, b[hdrSize+metaSize : hdrSize+metaSize+int(dataLen)], b[hdrSize+metaSize+int(dataLen):], nil
 }
 
-// parseHeader проверяет магию, версию и длины и возвращает манифесты и длины
-// секций (счётчики meta не читает).
+// parseHeader делегирует split: полная проверка заголовка, длин и контрольной
+// суммы payload (цена — SHA по всему файлу); возвращает манифесты и длины.
 func parseHeader(b []byte) (*Meta, error) {
 	meta, _, _, err := split(b)
 	return meta, err
@@ -361,7 +386,8 @@ func decodeGeoRegions(geoSec []byte) ([]*geo.Region, error) {
 
 // LoadFile отображает файл артефакта (владение отображением — до конца
 // процесса, как у загрузки каталога геодаты) и декодирует его с временами
-// фаз. Предусловие файла — как у геодаты: не усекать и не править по месту
+// фаз; сверки те же, что у Decode (общие checkDataCounts/checkRegionsCount).
+// Предусловие файла — как у геодаты: не усекать и не править по месту
 // при живом отображении; пересборка build (tmp + rename) безопасна.
 func LoadFile(path string) (*data.Static, *geo.Map, *Meta, Phases, error) {
 	b, _, err := geo.MapFile(path)
@@ -377,13 +403,19 @@ func LoadFile(path string) (*data.Static, *geo.Map, *Meta, Phases, error) {
 	}
 	t1 := time.Now()
 	st, err := data.DecodeStatic(dataSec)
-	ph.DecodeData = time.Since(t1)
 	if err != nil {
 		return nil, nil, nil, ph, &DecodeError{Code: CodeDecode, Offset: hdrSize + metaSize, Msg: err.Error()}
 	}
+	if err := checkDataCounts(meta, dataSec); err != nil {
+		return nil, nil, nil, ph, err
+	}
+	ph.DecodeData = time.Since(t1)
 	t2 := time.Now()
 	regs, err := decodeGeoRegions(geoSec)
 	if err != nil {
+		return nil, nil, nil, ph, err
+	}
+	if err := checkRegionsCount(meta, regs); err != nil {
 		return nil, nil, nil, ph, err
 	}
 	m, err := geo.NewMapFromRegions(regs)

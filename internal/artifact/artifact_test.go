@@ -1,8 +1,10 @@
 package artifact_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -114,11 +116,14 @@ func TestBuildDecodeRoundtrip(t *testing.T) {
 	if meta.Items != 5 || meta.Regions != 2 {
 		t.Errorf("meta: items=%d regions=%d, хочу 5/2", meta.Items, meta.Regions)
 	}
-	type reg struct{ rx, ry, n int }
+	type reg struct {
+		rx, ry int
+		raw    []byte
+	}
 	collect := func(mm *geo.Map) []reg {
 		var out []reg
 		mm.EachRegion(func(rx, ry int, raw []byte) bool {
-			out = append(out, reg{rx, ry, len(raw)})
+			out = append(out, reg{rx, ry, raw})
 			return true
 		})
 		return out
@@ -128,12 +133,21 @@ func TestBuildDecodeRoundtrip(t *testing.T) {
 		t.Fatalf("регионы: %d против %d", len(a), len(c))
 	}
 	for i := range a {
-		if a[i] != c[i] {
-			t.Errorf("регион[%d]: %+v против %+v", i, a[i], c[i])
+		if a[i].rx != c[i].rx || a[i].ry != c[i].ry || !bytes.Equal(a[i].raw, c[i].raw) {
+			t.Errorf("регион[%d] (%d,%d): байты/координаты разошлись с исходной картой", i, c[i].rx, c[i].ry)
 		}
 	}
 	if m2.RegionAt(16*2048, 10*2048) == nil || m2.RegionAt(17*2048, 10*2048) == nil {
 		t.Errorf("лукап регионов артефактной карты пуст")
+	}
+	// Гео-пробы: значения лукапов артефактной карты совпадают с исходной.
+	for _, p := range [][2]int{{16 * 2048, 10 * 2048}, {16*2048 + 7, 10*2048 + 3}, {17 * 2048, 10 * 2048}, {17*2048 + 5, 10*2048 + 6}} {
+		ca, cb := m.RegionAt(p[0], p[1]).CellAt(p[0], p[1]), m2.RegionAt(p[0], p[1]).CellAt(p[0], p[1])
+		za, nswa := ca.Nearest(0)
+		zb, nswb := cb.Nearest(0)
+		if za != zb || nswa != nswb || ca.LowerZ(-500) != cb.LowerZ(-500) || ca.HigherZ(500) != cb.HigherZ(500) {
+			t.Errorf("лукапы ячейки (%d,%d) разошлись: %d/%d против %d/%d", p[0], p[1], za, nswa, zb, nswb)
+		}
 	}
 }
 
@@ -224,35 +238,45 @@ func TestDecodeGuards(t *testing.T) {
 func TestLoadFileAndRenameOverMapping(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "a.l2a")
 	buildSynth(t, out)
-	st, m, _, _, err := artifact.LoadFile(out)
+	dumpBefore, m, _, _, err := artifact.LoadFile(out)
 	if err != nil {
 		t.Fatalf("LoadFile: %v", err)
 	}
-	if st == nil || m == nil {
-		t.Fatalf("LoadFile вернул nil")
+	if m == nil {
+		t.Fatalf("LoadFile вернул nil карту")
 	}
 
-	// Пересборка в тот же путь (CreateTemp + rename поверх живого отображения):
-	// байты под процессом не меняются, старое отображение остаётся консистентным.
+	// Пересборка в тот же путь ДРУГОГО состава (без гео — байты заведомо
+	// отличаются): rename поверх живого отображения не меняет байты под
+	// процессом — старое отображение остаётся консистентным.
 	other := filepath.Join(t.TempDir(), "b.l2a")
 	st2, drep := loadSynthStatic(t)
-	m2, grep := synthGeoMap(t)
-	if _, err := artifact.Build(other, st2, drep, m2, grep); err != nil {
+	if _, err := artifact.Build(other, st2, drep, nil, nil); err != nil {
 		t.Fatalf("Build other: %v", err)
 	}
-	tmp := out + ".swap"
-	data, err := os.ReadFile(other)
+	otherBytes, err := os.ReadFile(other)
 	if err != nil {
 		t.Fatalf("чтение other: %v", err)
 	}
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	first, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("чтение out: %v", err)
+	}
+	if string(otherBytes) == string(first) {
+		t.Fatalf("подготовка теста: составы байт-идентичны, тест слеп")
+	}
+	tmp := out + ".swap"
+	if err := os.WriteFile(tmp, otherBytes, 0o644); err != nil {
 		t.Fatalf("запись tmp: %v", err)
 	}
 	if err := os.Rename(tmp, out); err != nil {
 		t.Fatalf("rename поверх живого отображения: %v", err)
 	}
-	if m.RegionAt(16*2048, 10*2048) == nil {
-		t.Errorf("живое отображение региона потерялось после rename")
+	if m.RegionAt(16*2048, 10*2048) == nil || m.RegionAt(17*2048, 10*2048) == nil {
+		t.Errorf("живое отображение регионов потерялось после rename")
+	}
+	if dumpBefore.Dump() == "" {
+		t.Errorf("живая статика пуста после rename")
 	}
 }
 
@@ -298,5 +322,51 @@ func TestBuildWithoutGeo(t *testing.T) {
 	}
 	if meta.Regions != 0 || m2 == nil {
 		t.Errorf("карта без регионов должна декодироваться пустой")
+	}
+}
+
+// goldenHeaderHex — заголовок+meta (первые 160 байт) артефакта синтетики без
+// гео: фиксация раскладки контейнера. Полная побайтовая фиксация файла —
+// суммой этой фиксации, секционной фиксацией пакета data и детерминизмом
+// кодирования (тесты выше).
+const goldenHeaderHex = "4c3241010100000085623a6dd6931d320cf243b8ad18c9dcf1b4d47611b1c243e380162fa6cace8c00000000000000000000000000000000000000000000000000000000000000007bae010000000000040000000000000048bb517ce314b552b17af2e50609987e558bdaf7df459f2ee913e3181e6806d906000000050000000500000006000000020000000700000023000000880500000800000000000000"
+
+func TestContainerGoldenHeader(t *testing.T) {
+	st, drep := loadSynthStatic(t)
+	out := filepath.Join(t.TempDir(), "a.l2a")
+	if _, err := artifact.Build(out, st, drep, nil, nil); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	want, err := hex.DecodeString(goldenHeaderHex)
+	if err != nil {
+		t.Fatalf("hex: %v", err)
+	}
+	if !bytes.Equal(want, b[:len(want)]) {
+		t.Fatalf("раскладка контейнера дрейфанула; байты:\n%x", b[:160])
+	}
+}
+
+func TestDecodeRegionIndexOutOfGrid(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "a.l2a")
+	buildSynth(t, out)
+	base, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	_, _, meta, err := artifact.Decode(base)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	geoOff := 120 + 40 + meta.DataLen
+	b := clone(base)
+	binary.LittleEndian.PutUint32(b[geoOff+4:], 99) // rx вне 0..31
+	binary.LittleEndian.PutUint32(b[geoOff+8:], 99) // ry
+	rehash(b)
+	if _, _, _, err := artifact.Decode(b); err == nil {
+		t.Fatalf("регион-индекс вне сетки прошёл декодер")
 	}
 }

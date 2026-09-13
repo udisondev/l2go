@@ -75,26 +75,29 @@ func TestBuildCmdRedDoesNotTouchArtifact(t *testing.T) {
 		t.Fatalf("чтение артефакта: %v", err)
 	}
 
-	// Ломаем копию синтетики: дубль предмета.
+	// Ломаем копию синтетики: битая ссылка спавн→несуществующий NPC
+	// (вне диапазона fake players — ошибка, не счётчик).
 	broken := t.TempDir()
 	copyTreeCmd(t, synthRoot(), broken)
-	itemsPath := filepath.Join(broken, "stats", "items", "items.xml")
-	raw, err := os.ReadFile(itemsPath)
+	spawnsPath := filepath.Join(broken, "spawns", "Synth", "spawns.xml")
+	raw, err := os.ReadFile(spawnsPath)
 	if err != nil {
-		t.Fatalf("чтение items.xml: %v", err)
+		t.Fatalf("чтение spawns.xml: %v", err)
 	}
-	idx := strings.LastIndex(string(raw), "</list>")
-	bad := string(raw[:idx]) + `<item id="9001" type="Weapon" name="дубль"/>` + string(raw[idx:])
-	if err := os.WriteFile(itemsPath, []byte(bad), 0o644); err != nil {
-		t.Fatalf("запись items.xml: %v", err)
+	bad := strings.Replace(string(raw), `<npc id="20551"`, `<npc id="77777"`, 1)
+	if bad == string(raw) {
+		t.Fatalf("в синтетике не найден спавн 20551 для поломки")
+	}
+	if err := os.WriteFile(spawnsPath, []byte(bad), 0o644); err != nil {
+		t.Fatalf("запись spawns.xml: %v", err)
 	}
 
 	got, err := runBin(t, bin, "build", broken, synthGeoDirCmd(t), "-o", out)
 	if err == nil {
 		t.Fatalf("красная сборка прошла:\n%s", got)
 	}
-	if !strings.Contains(got, "dup_id") {
-		t.Errorf("вывод без dup_id:\n%s", got)
+	if !strings.Contains(got, "link") {
+		t.Errorf("вывод без ошибки ссылки:\n%s", got)
 	}
 	after, err := os.ReadFile(out)
 	if err != nil {
@@ -176,5 +179,65 @@ func copyTreeCmd(t *testing.T, src, dst string) {
 	})
 	if err != nil {
 		t.Fatalf("копия дерева: %v", err)
+	}
+}
+
+// TestBuildCmdManifestCycle — цикл «изменил один XML → артефакт пересобрался;
+// откат → снова идентичен»: манифест входов виден в байтах артефакта.
+func TestBuildCmdManifestCycle(t *testing.T) {
+	bin := buildBinary(t)
+	geoDir := synthGeoDirCmd(t)
+	root := t.TempDir()
+	copyTreeCmd(t, synthRoot(), root)
+	out := filepath.Join(t.TempDir(), "a.l2a")
+
+	if got, err := runBin(t, bin, "build", root, geoDir, "-o", out); err != nil {
+		t.Fatalf("исходная сборка: %v\n%s", err, got)
+	}
+	before, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+
+	// Правка одного XML: новый валидный предмет.
+	itemsPath := filepath.Join(root, "stats", "items", "items.xml")
+	raw, err := os.ReadFile(itemsPath)
+	if err != nil {
+		t.Fatalf("чтение items.xml: %v", err)
+	}
+	idx := strings.LastIndex(string(raw), "</list>")
+	modified := string(raw[:idx]) + `<item id="9999" type="EtcItem" name="новый"/>` + string(raw[idx:])
+	if err := os.WriteFile(itemsPath, []byte(modified), 0o644); err != nil {
+		t.Fatalf("запись items.xml: %v", err)
+	}
+	got, err := runBin(t, bin, "build", root, geoDir, "-o", out)
+	if err != nil {
+		t.Fatalf("сборка после правки: %v\n%s", err, got)
+	}
+	if !strings.Contains(got, "записан") {
+		t.Fatalf("изменённый состав не перезаписал артефакт:\n%s", got)
+	}
+	after, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	if string(before) == string(after) {
+		t.Fatalf("правка XML не изменила артефакт (манифест не участвует)")
+	}
+
+	// Откат: артефакт снова байт-идентичен исходному (перезапись назад).
+	if err := os.WriteFile(itemsPath, raw, 0o644); err != nil {
+		t.Fatalf("откат items.xml: %v", err)
+	}
+	got, err = runBin(t, bin, "build", root, geoDir, "-o", out)
+	if err != nil {
+		t.Fatalf("сборка после отката: %v\n%s", err, got)
+	}
+	reverted, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	if string(before) != string(reverted) {
+		t.Fatalf("откат не восстановил исходные байты артефакта")
 	}
 }

@@ -22,52 +22,15 @@ var knownOperateTypes = map[string]struct{}{
 
 // knownTargetTypes — словарь TargetType канона, 38 значений (порт, GPLv3).
 var knownTargetTypes = map[string]struct{}{
-	"AREA":            {},
-	"AREA_CORPSE_MOB": {},
-	"AREA_FRIENDLY":   {},
-	"AREA_SUMMON":     {},
-
-	"AREA_UNDEAD":     {},
-	"AURA":            {},
-	"AURA_CORPSE_MOB": {},
-	"AURA_FRIENDLY":   {},
-
-	"BEHIND_AREA": {},
-	"BEHIND_AURA": {},
-	"CLAN":        {},
-	"CLAN_MEMBER": {},
-
-	"COMMAND_CHANNEL": {},
-	"CORPSE":          {},
-	"CORPSE_CLAN":     {},
-	"CORPSE_MOB":      {},
-
-	"ENEMY_SUMMON": {},
-	"FLAGPOLE":     {},
-	"FRONT_AREA":   {},
-	"FRONT_AURA":   {},
-
-	"GROUND":    {},
-	"HOLY":      {},
-	"NONE":      {},
-	"ONE":       {},
-	"OWNER_PET": {},
-
-	"PARTY":        {},
-	"PARTY_CLAN":   {},
-	"PARTY_MEMBER": {},
-	"PARTY_NOTME":  {},
-
-	"PARTY_OTHER": {},
-	"PC_BODY":     {},
-	"PET":         {},
-	"SELF":        {},
-	"SERVITOR":    {},
-
-	"SUMMON":       {},
-	"TARGET_PARTY": {},
-	"UNDEAD":       {},
-	"UNLOCKABLE":   {},
+	"AREA": {}, "AREA_CORPSE_MOB": {}, "AREA_FRIENDLY": {}, "AREA_SUMMON": {},
+	"AREA_UNDEAD": {}, "AURA": {}, "AURA_CORPSE_MOB": {}, "AURA_FRIENDLY": {},
+	"BEHIND_AREA": {}, "BEHIND_AURA": {}, "CLAN": {}, "CLAN_MEMBER": {},
+	"COMMAND_CHANNEL": {}, "CORPSE": {}, "CORPSE_CLAN": {}, "CORPSE_MOB": {},
+	"ENEMY_SUMMON": {}, "FLAGPOLE": {}, "FRONT_AREA": {}, "FRONT_AURA": {},
+	"GROUND": {}, "HOLY": {}, "NONE": {}, "ONE": {}, "OWNER_PET": {},
+	"PARTY": {}, "PARTY_CLAN": {}, "PARTY_MEMBER": {}, "PARTY_NOTME": {},
+	"PARTY_OTHER": {}, "PC_BODY": {}, "PET": {}, "SELF": {}, "SERVITOR": {},
+	"SUMMON": {}, "TARGET_PARTY": {}, "UNDEAD": {}, "UNLOCKABLE": {},
 }
 
 // maxSkillLevels — потолок атрибута levels (максимум дистрибутива 80, запас

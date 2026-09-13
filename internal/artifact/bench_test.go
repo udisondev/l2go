@@ -134,6 +134,7 @@ func BenchmarkBuildReal(b *testing.B) {
 	if err != nil || rep.HasErrors() {
 		b.Fatalf("data.Load: %v", err)
 	}
+	b.ReportAllocs()
 	dir := b.TempDir()
 	b.ResetTimer()
 	for b.Loop() {

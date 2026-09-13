@@ -105,3 +105,29 @@ func TestMapFileNoCeiling(t *testing.T) {
 		t.Fatalf("len(b) = %d, хочу %d", len(b), size)
 	}
 }
+
+// TestLoadDirOversizedRegion — потолок файла региона проверяется до
+// отображения: oversized-файл даёт запись size, регион не читается.
+func TestLoadDirOversizedRegion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "16_10.l2j")
+	if err := os.WriteFile(path, []byte{0}, 0o644); err != nil {
+		t.Fatalf("создание: %v", err)
+	}
+	if err := os.Truncate(path, int64(maxRegionBytes)+8); err != nil {
+		t.Fatalf("усечение: %v", err)
+	}
+	m, rep, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if !rep.HasErrors() {
+		t.Fatalf("oversized-регион не дал ошибку")
+	}
+	if rep.Errors[0].Code != CodeSize {
+		t.Errorf("код = %s, хочу %s", rep.Errors[0].Code, CodeSize)
+	}
+	if rep.Regions != 0 || m.RegionAt(16*2048, 10*2048) != nil {
+		t.Errorf("oversized-регион установлен: regions=%d", rep.Regions)
+	}
+}

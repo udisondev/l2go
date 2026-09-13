@@ -162,7 +162,7 @@ func cmdBuild(args []string) {
 // cmdLoad загружает артефакт (mmap + проверка + декодирование) и печатает
 // манифесты, счётчики и времена фаз.
 func cmdLoad(path string) {
-	st, m, meta, ph, err := artifact.LoadFile(path)
+	_, _, meta, ph, err := artifact.LoadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "l2data: %v\n", err)
 		os.Exit(1)
@@ -172,8 +172,6 @@ func cmdLoad(path string) {
 		meta.Files, meta.Items, meta.Npcs, meta.Spawns, meta.Territories, meta.Zones, meta.Skills, meta.SkillLevels, meta.Regions)
 	fmt.Printf("секция данных: %d байт, гео: %d байт\n", meta.DataLen, meta.GeoLen)
 	fmt.Printf("фазы: verify=%s decode-data=%s decode-geo=%s\n", ph.Verify, ph.DecodeData, ph.DecodeGeo)
-	_ = st
-	_ = m
 }
 
 func printReport(rep *data.Report) {

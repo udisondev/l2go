@@ -177,3 +177,153 @@ func copySynthTree(t *testing.T, src, dst string) {
 		t.Fatalf("копия синтетики: %v", err)
 	}
 }
+
+// craftSection собирает секцию примитивами энкодера — для злых входов,
+// которые не может породить кодирование честной статики (дубли, подделанные
+// счётчики и домены).
+func craftSection(t *testing.T, f func(e *enc)) []byte {
+	t.Helper()
+	e := &enc{}
+	f(e)
+	return e.buf
+}
+
+func craftItem(e *enc, id int32) {
+	e.i32(id)
+	e.str("имя")
+	e.str("Weapon")
+	e.i64(1)
+	e.i64(2)
+	e.boolean(false)
+	e.str("")
+	e.i64(0)
+	e.str("")
+	e.str("")
+	e.u32(0) // set
+}
+
+// craftDef пишет минимальное определение скилла; ench пишет отдельно для
+// вариаций домена маршрутов.
+func craftDef(e *enc, id int32, ench func(e *enc)) {
+	e.i32(id)
+	e.str("имя")
+	e.i32(1) // levels
+	if ench != nil {
+		ench(e)
+	} else {
+		e.u32(0)
+	}
+	e.u32(0) // base
+	e.u32(0) // enchantLevels
+	e.u32(0) // tables
+	e.u32(0) // set
+	e.u32(0) // overrides
+	e.u32(0) // raw
+}
+
+func TestDecodeStaticCraftedEvil(t *testing.T) {
+	cases := []struct {
+		name  string
+		craft func(t *testing.T) []byte
+	}{
+		{
+			"дубль предмета",
+			func(t *testing.T) []byte {
+				return craftSection(t, func(e *enc) {
+					e.u32(2) // items
+					for i := 0; i < 5; i++ {
+						e.u32(0)
+					}
+					craftItem(e, 9001)
+					craftItem(e, 9001)
+				})
+			},
+		},
+		{
+			"строка u32max",
+			func(t *testing.T) []byte {
+				return craftSection(t, func(e *enc) {
+					e.u32(1)
+					for i := 0; i < 5; i++ {
+						e.u32(0)
+					}
+					e.i32(9001)
+					e.u32(0xFFFFFFFF) // длина имени
+				})
+			},
+		},
+		{
+			"маршрут 0",
+			func(t *testing.T) []byte {
+				return craftSection(t, func(e *enc) {
+					for i := 0; i < 5; i++ {
+						e.u32(0)
+					}
+					e.u32(1) // skills
+					craftDef(e, 7001, func(e *enc) {
+						e.u32(1)
+						e.u8(0)
+					})
+				})
+			},
+		},
+		{
+			"маршрут 9",
+			func(t *testing.T) []byte {
+				return craftSection(t, func(e *enc) {
+					for i := 0; i < 5; i++ {
+						e.u32(0)
+					}
+					e.u32(1)
+					craftDef(e, 7001, func(e *enc) {
+						e.u32(1)
+						e.u8(9)
+					})
+				})
+			},
+		},
+		{
+			"дубль маршрута",
+			func(t *testing.T) []byte {
+				return craftSection(t, func(e *enc) {
+					for i := 0; i < 5; i++ {
+						e.u32(0)
+					}
+					e.u32(1)
+					craftDef(e, 7001, func(e *enc) {
+						e.u32(2)
+						e.u8(1)
+						e.u8(1)
+					})
+				})
+			},
+		},
+		{
+			"глубина raw-дерева 65 в декодере",
+			func(t *testing.T) []byte {
+				return craftSection(t, func(e *enc) {
+					for i := 0; i < 5; i++ {
+						e.u32(0)
+					}
+					e.u32(1) // skills
+					craftDef(e, 7001, nil)
+					// заменяем хвост def (raw count) на дерево глубины 65:
+					e.buf = e.buf[:len(e.buf)-4]
+					e.u32(1)
+					node := RawNode{Name: "n"}
+					for i := 1; i < 65; i++ {
+						node = RawNode{Name: "n", Children: []RawNode{node}}
+					}
+					encRawNode(e, node)
+				})
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := DecodeStatic(tc.craft(t)); err == nil {
+				t.Fatalf("крафтовый злой вход декодирован без ошибки")
+			}
+		})
+	}
+}

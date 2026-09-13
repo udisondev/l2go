@@ -1,6 +1,7 @@
 package artifact_test
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,6 +28,7 @@ func FuzzArtifactDecode(f *testing.F) {
 	f.Add(seed)
 	f.Add(seed[:len(seed)/2])
 	f.Add([]byte{})
+	fuzzEvilMutations(f, seed)
 
 	f.Fuzz(func(t *testing.T, b []byte) {
 		_, _ = data.DecodeStatic(b)
@@ -36,4 +38,25 @@ func FuzzArtifactDecode(f *testing.F) {
 			_, _, _, _ = artifact.Decode(c)
 		}
 	})
+}
+
+// fuzzEvilMutations — сиды-мутации из таблицы злых входов: направляют фаззер
+// вглубь гвардов за чексаммой.
+func fuzzEvilMutations(f *testing.F, base []byte) {
+	f.Add(mutateWrapDataLen(base))
+	f.Add(mutateHugeItemCount(base))
+}
+
+func mutateWrapDataLen(base []byte) []byte {
+	b := clone(base)
+	binary.LittleEndian.PutUint64(b[72:80], 0xFFFFFFFFFFFFFFFF)
+	rehash(b)
+	return b
+}
+
+func mutateHugeItemCount(base []byte) []byte {
+	b := clone(base)
+	binary.LittleEndian.PutUint32(b[120+40:], 0xFFFFFFFF)
+	rehash(b)
+	return b
 }
