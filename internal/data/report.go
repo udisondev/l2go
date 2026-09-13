@@ -21,6 +21,7 @@ const (
 	CodeNumber = "number" // число вне домена или неразборчивое значение поля
 	CodeLimit  = "limit"  // файл превышает потолок размера
 	CodeLink   = "link"   // битая ссылка между категориями
+	CodeTable  = "table"  // битая таблица значений (нет или короче требуемой длины)
 )
 
 // Report — итог загрузки: счётчики, перечень ошибок и манифест входов
@@ -71,6 +72,16 @@ type Report struct {
 	DupAdjacentNodes int // территории с повтором соседних узлов
 	DupZoneNames     int // имена зон, встречающиеся более одного раза
 	ZonesWithID      int // зоны с явным id
+
+	// Счётчики категории скиллов P2.6.
+	Skills            int // определения скиллов (defs)
+	SkillLevels       int // материализованные записи уровней (база + энчанты)
+	EnchantedSkills   int // defs хотя бы с одним энчант-маршрутом
+	SkillTables       int // таблицы значений
+	MissingTargetType int // уровни без targetType (дефолт SELF)
+	OrphanEnchants    int // override enchantR без маршрута (канон игнорирует)
+	NestedDirect      int // вложенные дети прямого элемента (текст конкатенируется)
+	DupTables         int // дубликаты имени таблицы внутри скилла
 }
 
 // HasErrors сообщает, есть ли в отчёте ошибки целостности.

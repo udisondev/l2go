@@ -24,6 +24,7 @@ type Static struct {
 	territories map[string]Territory
 	spawns      []NpcSpawn
 	zones       []Zone
+	skills      map[SkillID]*SkillDef
 }
 
 // Item возвращает запись предмета по ID.
@@ -58,6 +59,42 @@ func (s *Static) Zones() []Zone {
 	return s.zones
 }
 
+// Skill возвращает типизированную запись уровня скилла: базовые уровни
+// 1..Levels, энчант-маршруты с номеров 101+40·(r−1). ok=false вне
+// заявленных уровней.
+func (s *Static) Skill(id SkillID, level int32) (Skill, bool) {
+	def, ok := s.skills[id]
+	if !ok {
+		return Skill{}, false
+	}
+	if level >= 1 && level <= def.Levels {
+		return def.Base[level-1], true
+	}
+	if level < 101 {
+		return Skill{}, false
+	}
+	r := (level-101)/40 + 1
+	if r < 1 || int(r) > len(def.EnchLvls) {
+		return Skill{}, false
+	}
+	sub := level - (101 + 40*(r-1))
+	if sub < 0 || int(sub) >= len(def.EnchLvls[r-1]) {
+		return Skill{}, false
+	}
+	return def.EnchLvls[r-1][sub], true
+}
+
+// SkillDef возвращает определение скилла по ID: исходную форму (таблицы,
+// raw-bag, overrides, деревья эффектов) и материализованные уровни. Запись
+// по значению; вложенные мапы и слайсы — только чтение (контракт пакета).
+func (s *Static) SkillDef(id SkillID) (SkillDef, bool) {
+	def, ok := s.skills[id]
+	if !ok {
+		return SkillDef{}, false
+	}
+	return *def, true
+}
+
 // Load читает статику из fsys и возвращает её вместе с отчётом валидации.
 // Возвращённая ошибка — только фатальные условия самой файловой системы
 // (корень или каталог категории не читается); ошибки данных — записи отчёта:
@@ -83,14 +120,16 @@ func Load(fsys fs.FS) (*Static, *Report, error) {
 		}
 	}
 	return &Static{items: ctx.items, npcs: ctx.npcs, territories: ctx.territories,
-		spawns: ctx.spawns, zones: ctx.zones}, ctx.rep, nil
+		spawns: ctx.spawns, zones: ctx.zones, skills: ctx.skills}, ctx.rep, nil
 }
 
 // Dump возвращает канонический текстовый вид статики: предметы по возрастанию
 // ID, NPC по возрастанию ID (включая дроплисты и миньонов), территории по
-// имени, спавны в порядке загрузки; поля в фиксированном порядке, ключи
-// параметров отсортированы. Формат стабилен и служит золотым сравнением и
-// формой сверки эквивалентности скомпилированного артефакта статики.
+// имени, спавны в порядке загрузки, зоны в порядке загрузки, определения
+// скиллов по возрастанию ID и их уровни по возрастанию (id, level); поля в
+// фиксированном порядке, ключи параметров отсортированы. Формат стабилен и
+// служит золотым сравнением и формой сверки эквивалентности скомпилированного
+// артефакта статики.
 func (s *Static) Dump() string {
 	if s == nil {
 		return ""
@@ -101,6 +140,7 @@ func (s *Static) Dump() string {
 	dumpTerritories(&sb, s)
 	dumpSpawns(&sb, s)
 	dumpZones(&sb, s)
+	dumpSkills(&sb, s)
 	return sb.String()
 }
 

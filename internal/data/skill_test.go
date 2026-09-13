@@ -136,14 +136,18 @@ func TestSkillDefAccess(t *testing.T) {
 		t.Fatalf("def.Raw имена = %+v; want [effects enchant2effects]", raw)
 	}
 	eff := raw[0]
-	if len(eff.Children) != 2 || eff.Children[0].Name != "TestDamage" || eff.Children[1].Name != "TestOverTime" {
+	if len(eff.Children) != 2 || eff.Children[0].Name != "effect" || eff.Children[1].Name != "effect" {
 		t.Fatalf("effects.Children = %+v", eff.Children)
+	}
+	if a := eff.Children[0].Attrs; len(a) != 1 || a[0].Name != "name" || a[0].Value != "TestDamage" {
+		t.Errorf("первый effect.Attrs = %+v; want name=TestDamage", a)
 	}
 	if p := eff.Children[0].Children; len(p) != 1 || p[0].Name != "power" || p[0].Text != "10" {
 		t.Errorf("TestDamage.Children = %+v; want power=10", p)
 	}
-	if a := eff.Children[1].Attrs; len(a) != 1 || a[0].Name != "tick" || a[0].Value != "2000" {
-		t.Errorf("TestOverTime.Attrs = %+v; want tick=2000", a)
+	if a := eff.Children[1].Attrs; len(a) != 2 || a[0].Name != "name" || a[0].Value != "TestOverTime" ||
+		a[1].Name != "tick" || a[1].Value != "2000" {
+		t.Errorf("TestOverTime.Attrs = %+v; want name+tick=2000", a)
 	}
 	// Условия 7003: атрибуты отсортированы, вложенный player.
 	def3, _ := st.SkillDef(7003)
@@ -172,14 +176,14 @@ func TestSkillCounters(t *testing.T) {
 	if rep.EnchantedSkills != 7 {
 		t.Errorf("EnchantedSkills = %d; want 7", rep.EnchantedSkills)
 	}
-	if rep.SkillTables != 39 {
-		t.Errorf("SkillTables = %d; want 39", rep.SkillTables)
+	if rep.SkillTables != 41 {
+		t.Errorf("SkillTables = %d; want 41", rep.SkillTables)
 	}
 	if rep.MissingTargetType != 1 {
 		t.Errorf("MissingTargetType = %d; want 1 (7002)", rep.MissingTargetType)
 	}
-	if rep.EmptyValues != 1 {
-		t.Errorf("EmptyValues = %d; want 1 (7005 feed)", rep.EmptyValues)
+	if rep.EmptyValues != 2 {
+		t.Errorf("EmptyValues = %d; want 2 (пустой icon 9005 из предметов + feed 7005)", rep.EmptyValues)
 	}
 	if rep.OrphanEnchants != 0 || rep.NestedDirect != 0 || rep.DupTables != 0 {
 		t.Errorf("OrphanEnchants=%d NestedDirect=%d DupTables=%d; want 0/0/0",
@@ -329,7 +333,8 @@ func TestSkillCountersGreen(t *testing.T) {
 		t.Errorf("DupKeys=%d DupTables=%d; want 1/1 (9804)", rep.DupKeys, rep.DupTables)
 	}
 	// Дубли: побеждает последний; вложенный текст конкатенируется.
-	if v, _ := st.SkillDef(9804).Set("hitTime"); v != "2" {
+	def4, _ := st.SkillDef(9804)
+	if v, _ := def4.Set("hitTime"); v != "2" {
 		t.Errorf("Set(hitTime) 9804 = %q; want 2 (последний)", v)
 	}
 	if s, _ := st.Skill(9803, 1); s.HitTime != 7 {
@@ -370,8 +375,8 @@ func TestSkillOrderOfFile(t *testing.T) {
 	if s, _ := st.Skill(9811, 101); s.HitTime != 50 {
 		t.Errorf("9811 L101 HitTime = %d; want 50 (override позже — побеждает)", s.HitTime)
 	}
-	if s, _ := st.Skill(9811, 130); s.HitTime != 80 {
-		t.Errorf("9811 L130 HitTime = %d; want 80 (подиндекс 29)", s.HitTime)
+	if s, _ := st.Skill(9811, 130); s.HitTime != 79 {
+		t.Errorf("9811 L130 HitTime = %d; want 79 (подиндекс 29)", s.HitTime)
 	}
 }
 

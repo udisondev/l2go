@@ -71,6 +71,7 @@ func TestXMLWhitelist(t *testing.T) {
 	allow := map[string]struct{}{
 		"internal/data/testdata/synth/stats/items/items.xml":   {},
 		"internal/data/testdata/synth/stats/npcs/npcs.xml":     {},
+		"internal/data/testdata/synth/stats/skills/skills.xml": {},
 		"internal/data/testdata/synth/spawns/Synth/spawns.xml": {},
 		"internal/data/testdata/synth/spawns/Synth/off.xml":    {},
 		"internal/data/testdata/synth/zones/zones.xml":         {},
