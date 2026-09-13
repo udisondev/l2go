@@ -19,12 +19,17 @@ type BannedTerritory struct {
 }
 
 // Territory — территория спавна с инлайн-геометрией. Геометрия хранится как
-// данные; принадлежность точки и вырожденность — P2.5. Shape/Rad — raw-bag
-// до появления потребителя форм.
+// данные; MinX/MaxX/MinY/MaxY прекомпутированы при загрузке для Contains.
+// Shape/Rad — raw-bag (terr.shape, terr.rad): формат поддерживает формы с
+// дефолтом NPoly, в Interlude вхождений нет, Contains всегда NPoly.
 type Territory struct {
 	Name   string
 	MinZ   int32
 	MaxZ   int32
+	MinX   int32
+	MaxX   int32
+	MinY   int32
+	MaxY   int32
 	Nodes  [][2]int32
 	Banned []BannedTerritory
 

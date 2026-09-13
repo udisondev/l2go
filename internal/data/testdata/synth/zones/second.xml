@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- файл без атрибута enabled: грузится (семантика канона зон — отличие
+     от спавнов, где отсутствие enabled — ошибка) -->
+<list>
+	<zone name="synth_noenabled" type="TownZone" shape="Cuboid" minZ="-3000" maxZ="-2500">
+		<node X="100000" Y="150000" />
+		<node X="101000" Y="150500" />
+	</zone>
+</list>

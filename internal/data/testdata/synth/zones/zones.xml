@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<list enabled="true">
+	<!-- кубоид с явным id; стат-параметры; x/y из двух узлов (100000..110000) -->
+	<zone name="synth_cuboid" id="70001" type="PeaceZone" shape="Cuboid" minZ="-1000" maxZ="-500">
+		<node X="100000" Y="100000" />
+		<node X="110000" Y="110000" />
+		<stat name="NoBookmark" val="true" />
+		<stat name="reuse" val="5000" />
+	</zone>
+	<!-- полигон 8 узлов; minZ > maxZ — счётчик (канон нормализует);
+	     повтор stat-ключа — DupKeys, побеждает последний -->
+	<zone name="synth_npoly" type="WaterZone" shape="NPoly" minZ="500" maxZ="100">
+		<node X="100000" Y="100000" />
+		<node X="110000" Y="100000" />
+		<node X="115000" Y="105000" />
+		<node X="115000" Y="115000" />
+		<node X="110000" Y="120000" />
+		<node X="100000" Y="120000" />
+		<node X="95000" Y="115000" />
+		<node X="95000" Y="105000" />
+		<stat name="NoLanding" val="true" />
+		<stat name="NoLanding" val="false" />
+	</zone>
+	<!-- цилиндр -->
+	<zone name="synth_cylinder" type="EffectZone" shape="Cylinder" minZ="-200" maxZ="200" rad="1500">
+		<node X="0" Y="0" />
+	</zone>
+	<!-- дубликат имени (имя — не ключ); зона без id -->
+	<zone name="synth_npoly" type="ScriptZone" shape="NPoly" minZ="0" maxZ="10">
+		<node X="10" Y="10" />
+		<node X="20" Y="10" />
+		<node X="20" Y="20" />
+		<node X="10" Y="20" />
+	</zone>
+	<!-- точки возрождения и расы; minZ == maxZ — тонкий слой -->
+	<zone name="synth_respawn" type="RespawnZone" shape="Cuboid" minZ="50" maxZ="50">
+		<node X="10" Y="10" />
+		<node X="20" Y="20" />
+		<spawn X="-16554" Y="109382" Z="-1799" />
+		<spawn X="-81447" Y="152760" Z="-3170" type="other" />
+		<race name="HUMAN" point="talking_island_town" />
+	</zone>
+	<!-- неизвестный тип и форма — широта данных (счётчики), зона в статике -->
+	<zone name="synth_unknown" type="MysteryZone" shape="Octagon" minZ="0" maxZ="10">
+		<node X="0" Y="0" />
+		<node X="30" Y="0" />
+		<node X="30" Y="30" />
+	</zone>
+</list>

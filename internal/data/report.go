@@ -27,15 +27,14 @@ const (
 // (SHA-256 по отсортированному составу фактически прочитанных файлов).
 // Report — единственный источник численности категорий.
 type Report struct {
-	Files       int
-	Items       int
-	Npcs        int
-	Spawns      int // записи спавнов
-	Territories int
-	DropItems   int // предметы во всех дроплистах
-	Errors      []Entry
-	Manifest    [sha256.Size]byte
-
+	Files           int
+	Items           int
+	Npcs            int
+	Spawns          int // записи спавнов
+	Territories     int
+	DropItems       int // предметы во всех дроплистах
+	Errors          []Entry
+	Manifest        [sha256.Size]byte
 	UnknownKeys     map[string]int // ключи с квалификацией категории (npc.key.*, spawn.key.*)
 	UnknownTypes    map[string]int // типы с квалификацией категории (npc.type.*, npc.race.*)
 	SkippedElements map[string]int
@@ -58,9 +57,20 @@ type Report struct {
 	WithoutHeading      int // точечный спавн без heading (дефолт −1)
 	FakePlayersSkipped  int // спавны NPC 80000–89999 без определения
 	NamedBlocks         int // спавн-блоки с атрибутом name
-	DisabledFiles       int // файлы спавнов с enabled="false"
+	DisabledFiles       int // файлы спавнов и зон с enabled="false"
 	TerrOwnName         int // территории с собственным name (не читается)
 	DeepSkips           int // элементы глубже потолка пути raw-bag
+
+	// Счётчики категории зон P2.5.
+	Zones            int // записи зон (в статике)
+	ZoneSpawns       int // точки возрождения зон (элементы spawn)
+	ZoneRacePoints   int // точки возрождения рас (элементы race)
+	MinZOverMaxZ     int // зоны и территории с minZ > maxZ (канон нормализует)
+	MinEqMaxZ        int // зоны с minZ == maxZ (тонкий слой)
+	MissingZoneName  int // зоны без name или с пустым name
+	DupAdjacentNodes int // территории с повтором соседних узлов
+	DupZoneNames     int // имена зон, встречающиеся более одного раза
+	ZonesWithID      int // зоны с явным id
 }
 
 // HasErrors сообщает, есть ли в отчёте ошибки целостности.

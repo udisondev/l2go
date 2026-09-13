@@ -82,8 +82,8 @@ func TestSpawnCounters(t *testing.T) {
 	if got := rep.UnknownKeys["spawn.key.periodOfDay"]; got != 1 {
 		t.Errorf("UnknownKeys[spawn.key.periodOfDay] = %d; want 1", got)
 	}
-	if rep.Files != 3 {
-		t.Errorf("Files = %d; want 3 (items+npcs+spawns; off.xml отключён)", rep.Files)
+	if rep.Files != 5 {
+		t.Errorf("Files = %d; want 5 (items+npcs+spawns+zones×2; off.xml отключён)", rep.Files)
 	}
 }
 

@@ -73,6 +73,8 @@ func TestXMLWhitelist(t *testing.T) {
 		"internal/data/testdata/synth/stats/npcs/npcs.xml":     {},
 		"internal/data/testdata/synth/spawns/Synth/spawns.xml": {},
 		"internal/data/testdata/synth/spawns/Synth/off.xml":    {},
+		"internal/data/testdata/synth/zones/zones.xml":         {},
+		"internal/data/testdata/synth/zones/second.xml":        {},
 	}
 	for _, f := range xmlFiles(t) {
 		if _, ok := allow[f]; !ok {

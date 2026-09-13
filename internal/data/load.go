@@ -26,6 +26,7 @@ var loaders = []loader{
 	{run: loadItems},
 	{run: loadNpcs},
 	{run: loadSpawns},
+	{run: loadZones},
 }
 
 // loadCtx накапливает результаты категорий, отчёт, состав манифеста входов
@@ -37,6 +38,9 @@ type loadCtx struct {
 	npcs        map[NpcID]Npc
 	territories map[string]Territory
 	spawns      []NpcSpawn
+	zones       []Zone
+	zoneIDs     map[ZoneID]string
+	zoneNames   map[string]int
 	inputs      map[string][sha256.Size]byte
 	links       []linkRef
 	keyDict     map[string]string // интернирование путевых ключей raw-bag
@@ -58,6 +62,8 @@ func newLoadCtx() *loadCtx {
 		items:       map[ItemID]Item{},
 		npcs:        map[NpcID]Npc{},
 		territories: map[string]Territory{},
+		zoneIDs:     map[ZoneID]string{},
+		zoneNames:   map[string]int{},
 		inputs:      map[string][sha256.Size]byte{},
 		keyDict:     map[string]string{},
 	}

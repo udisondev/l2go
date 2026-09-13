@@ -23,6 +23,7 @@ type Static struct {
 	npcs        map[NpcID]Npc
 	territories map[string]Territory
 	spawns      []NpcSpawn
+	zones       []Zone
 }
 
 // Item возвращает запись предмета по ID.
@@ -50,6 +51,13 @@ func (s *Static) Spawns() []NpcSpawn {
 	return s.spawns
 }
 
+// Zones возвращает записи зон в детерминированном порядке: путь файла,
+// затем позиция в файле (порядок обхода загрузки). Слайс статики — только
+// чтение; имя — не ключ (в датапаке встречаются дубликаты).
+func (s *Static) Zones() []Zone {
+	return s.zones
+}
+
 // Load читает статику из fsys и возвращает её вместе с отчётом валидации.
 // Возвращённая ошибка — только фатальные условия самой файловой системы
 // (корень или каталог категории не читается); ошибки данных — записи отчёта:
@@ -68,7 +76,14 @@ func Load(fsys fs.FS) (*Static, *Report, error) {
 	}
 	resolveLinks(ctx)
 	ctx.rep.Manifest = manifestOf(ctx.inputs)
-	return &Static{items: ctx.items, npcs: ctx.npcs, territories: ctx.territories, spawns: ctx.spawns}, ctx.rep, nil
+	ctx.rep.Zones = len(ctx.zones)
+	for _, n := range ctx.zoneNames {
+		if n > 1 {
+			ctx.rep.DupZoneNames++
+		}
+	}
+	return &Static{items: ctx.items, npcs: ctx.npcs, territories: ctx.territories,
+		spawns: ctx.spawns, zones: ctx.zones}, ctx.rep, nil
 }
 
 // Dump возвращает канонический текстовый вид статики: предметы по возрастанию
@@ -85,6 +100,7 @@ func (s *Static) Dump() string {
 	dumpNpcs(&sb, s)
 	dumpTerritories(&sb, s)
 	dumpSpawns(&sb, s)
+	dumpZones(&sb, s)
 	return sb.String()
 }
 
