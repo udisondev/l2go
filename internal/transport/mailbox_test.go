@@ -225,8 +225,10 @@ func TestNotifyNoLostWakeup(t *testing.T) {
 	done := make(chan struct{})
 	for p := 0; p < producers; p++ {
 		go func() {
-			for i := 0; i < perProducer; i++ {
-				box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame})
+		for i := 0; i < perProducer; i++ {
+			// reliable: живому не дропается — на быстром железе пачка
+			// продюсеров пробивает FAF-кап и роняет тест классовыми дропами
+			box.enqueue(Envelope{FromID: 1, Kind: KindAggro})
 				sent.Add(1)
 				if i%7 == 0 {
 					time.Sleep(time.Microsecond)
