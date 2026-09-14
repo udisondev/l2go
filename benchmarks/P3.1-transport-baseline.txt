@@ -1,594 +1,385 @@
-# Baseline P3.1 internal/transport, рев. 2 (benchstat-совместимо: -count=10, -benchtime=100ms)
+# Baseline P3.1 internal/transport, рев. 3 (benchstat-совместимо: -count=10, -benchtime=100ms)
 # Окружение: windows/amd64 (машина владельца), 16 потоков, go1.27.0 — НЕ linux, как базлайны
-# P1/P2 (снимались на linux/amd64); межмашинное сравнение запрещено. Числа заголовка — медианы
-# рядов; p99 заменён средним по итерациям benchstat (осознанно, F56 реестра); CV части рядов
-# >15% (тихая машина разработчика) — направления выводов устойчивы, абсолюты — нет.
+# P1/P2; межмашинное сравнение запрещено. Числа заголовка — медианы рядов этого файла,
+# извлечены механически (scripts: grep|sort|sed 5p), не руками; p99 заменён средним benchstat
+# (осознанно, F42/F56); CV рядов на тихой машине 15-20% — направления устойчивы, абсолюты нет.
 #
-# Выбор структуры карты (спека P3.1; решение подкреплено измерениями записи, рев. 2):
-#   sharded RWMutex 64 (ПОСТАВКА): Send Map0 70.4 / Map100 27.6 / Map10k 15.9 / Map50k 15.0 нс
+# Выбор структуры карты (спека P3.1; чтение и запись измерены у всех кандидатов):
+#   sharded RWMutex 64 (ПОСТАВКА): SendParallel Map0 70.0 / Map100 26.7 / Map10k 12.8 / Map50k 15.2 нс
 #     (Map0 — контенция одного ящика 16 потоками, не карта; рабочий профиль — Map10k+.)
-#   COW прямой индекс (1024 слота): Map10k 11.6 / Map50k 13.1 нс — чтение быстрее на ~15-27%.
-#   Запись (измерено, MapWriteCompetitors): рождение COW 1482 нс против 232 нс у шарда (6.4x;
-#     SyncMap 278, один RWMutex 177 — без init ящика); массовый спавн 12k: COW 72.3 мс и
-#     117.7 МБ мусора против 3.05 мс и 4.8 МБ у шарда (24x) — клон 8КБ-сегмента на каждую запись.
-# РЕШЕНИЕ: sharded RWMutex — перевес COW на чтении (единицы процентов ядра при пике 1M/с:
-#   15.9 против 13.1 нс) не стоит цены записи и GC; пересмотр — фаза 4 по измерениям (§11).
+#   COW прямой индекс (1024): Map10k 10.5 / Map50k 13.7 нс — чтение быстрее на ~10-18%;
+#     sync.Map Map10k 13.7; один sync.RWMutex Map10k 24.6 (писатель паркует читателей).
+#   Запись (MapWriteCompetitors): рождение COW 1459 нс против 240 нс у шарда (6.1x; SyncMap
+#     300, Plain 182 — без init ящика); массовый спавн 12k: COW 66.7 мс и 117.7 МБ мусора
+#     против 2.72 мс и 4.84 МБ у шарда (24.5x) — клон 8КБ-сегмента на каждую запись.
+# РЕШЕНИЕ: sharded RWMutex — перевес COW на чтении (доли процента ядра при пике 1M/с)
+#   не стоит цены записи и GC; COW-интерференция под фоновой записью НЕ измерена —
+#   остаточное (F42), решение на неё не опирается; пересмотр структуры — фаза 4 (§11).
 #
-# Miss-путь (измерено, F38): 1321 нс/отправка — RLock + промах + slog (заглушенный хендлер);
-#   мисс — аномалия-по-построению, но лавина миссов = лог-шторм 1.3 мкс/письмо — потребителям
-#   не отправлять по непроверенным id (учтено в P3.6).
+# Miss-путь (измерено): 1323 нс / 32 Б / 3 аллокации — RLock + промах + slog (хендлер в
+#   io.Discard, без I/O); мисс — аномалия-по-построению, но лавина миссов = лог-шторм
+#   1.3 мкс/письмо — потребителям не отправлять по непроверенным id (учтено в P3.6).
 #
 # Бюджеты (машинные тесты): enqueue 0 аллокаций вне роста (64 B/op — амортизация сегмента);
-#   изъятие пустой порции (обе ветки пустоты) и непустой в готовый буфер — 0 аллокаций.
-# Enqueue serial 29.6 нс; Extract/Empty 2.7 нс; интерференция запись→чтение (батчи 12k):
-#   30.7 нс против 15.9 — парковка читателей писателем RWMutex; число для фазы 4.
+#   изъятие пустой порции (обе ветви) и непустой в готовый буфер — 0 аллокаций.
+# Enqueue serial 29.5 нс; EnqueueParallel 59.0 (один ящик, 16 потоков); Extract/Empty 2.8 нс;
+#   интерференция запись→чтение (фиксированный прирост 5x12k): SendUnderWrite 26.8 против
+#   12.8 — парковка читателей писателем RWMutex; число для фазы 4.
 # Send/SendParallel гонят ящики без дрена (профиль «нет читателя», 64 B/op GC-фон) —
-#   равные условия для всех кандидатов, абсолюты слегка отягощены (F60 реестра).
-# Ленивый первый сегмент: MassSpawn 12k — 3.05 мс, ~400 Б и ~2 аллокации на рождение
+#   равные условия кандидатов, абсолюты слегка отягощены (F60).
+# Ленивый первый сегмент: MassSpawn 12k — 2.72 мс, ~403 Б и ~2 аллокации на рождение
 #   (notify-канал + карта) ≈ 20 МБ на 50k сущностей против прикидки §11 5-10 МБ —
 #   зафиксировано (F59), фальсифицируется фазой 4.
 goos: windows
 goarch: amd64
-pkg: github.com/udisondev/l2go/internal/transport
 cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
-BenchmarkEnqueue-16                	 3856338	        31.43 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 4155037	        28.06 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 4578055	        32.96 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 4257024	        29.82 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 4410823	        28.63 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 4002106	        29.59 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 3632103	        30.75 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 4562788	        30.34 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 4057466	        28.85 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueue-16                	 3813118	        28.33 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	2026/09/14 10:38:53 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
- 1894910	        64.30 ns/op	      70 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	2026/09/14 10:38:53 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
-2026/09/14 10:38:54 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
- 1957773	        60.34 ns/op	     105 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	 2188387	        60.88 ns/op	      65 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	2026/09/14 10:38:54 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
- 2084473	        55.75 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	 2058618	        59.59 ns/op	      64 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	2026/09/14 10:38:54 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
- 1913472	        59.79 ns/op	     147 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	2026/09/14 10:38:54 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
-2026/09/14 10:38:54 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
- 2076098	        58.63 ns/op	      76 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	2026/09/14 10:38:55 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
- 1994024	        55.78 ns/op	      67 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	2026/09/14 10:38:55 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
- 2087112	        61.01 ns/op	     183 B/op	       0 allocs/op
-BenchmarkEnqueueParallel-16        	 2049165	        60.37 ns/op	      64 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	46224961	         2.687 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	38304391	         2.747 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	39151712	         2.694 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	46219620	         2.736 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	41041075	         2.668 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	38735917	         2.682 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	44592361	         2.667 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	41554123	         2.713 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	37347109	         2.685 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/Empty-16          	44469267	         2.695 ns/op	       0 B/op	       0 allocs/op
-BenchmarkExtract/DeepCycle-16      	   12930	      9611 ns/op	   12290 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   16962	      6875 ns/op	   12289 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   15693	      7533 ns/op	   12290 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   16994	      7126 ns/op	   12289 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   15036	      8399 ns/op	   12290 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   14517	      7799 ns/op	   12290 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   14914	      7595 ns/op	   12290 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   13938	      8233 ns/op	   12290 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   13622	      8429 ns/op	   12290 B/op	       3 allocs/op
-BenchmarkExtract/DeepCycle-16      	   14794	      8491 ns/op	   12290 B/op	       3 allocs/op
-2026/09/14 10:38:57 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
-BenchmarkSend/Map0-16              	 6327924	        16.95 ns/op	      10 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	11231432	        10.82 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	10746332	        11.01 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	10900468	        10.87 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	11052471	        10.77 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	10875376	        10.96 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	11265912	        10.86 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	11376672	        10.83 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	10116337	        10.89 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map0-16              	11475895	        10.93 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 3291846	        47.03 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 2145554	        55.72 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=2 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=3 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=4 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=5 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=6 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=7 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=8 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=9 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=10 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=11 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=12 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=13 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=14 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=15 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=16 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=17 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=18 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=19 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=20 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=21 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=22 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=23 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=24 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=25 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=26 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=27 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=28 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=29 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=30 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=31 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=32 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=33 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=34 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=35 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=36 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=37 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=38 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=39 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=40 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=41 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=42 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=43 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=44 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=45 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=46 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=47 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=48 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=49 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=50 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=51 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=52 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=53 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=54 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=55 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=56 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=57 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=58 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=59 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=60 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=61 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=62 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=63 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=64 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=65 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=66 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=67 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=68 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=69 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=70 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=71 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=72 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=73 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=74 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=75 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=76 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=77 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=78 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=79 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=80 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=81 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=82 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=83 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=84 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=85 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=86 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=87 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=88 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=89 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=90 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=91 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=92 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=93 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=94 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=95 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=96 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=97 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=98 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=99 depth=65537 threshold=65536
-2026/09/14 10:38:59 ERROR transport: глубина очереди превысила порог (алерт декларации) to=100 depth=65537 threshold=65536
- 2114805	        56.77 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 2148322	        55.97 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 2099564	        55.32 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 2218196	        54.12 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 2251111	        55.95 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 2046321	        55.93 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 2215207	        53.98 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSend/Map100-16            	 2168216	        54.58 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 1630501	        67.97 ns/op	      75 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 1997229	        62.66 ns/op	      61 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 1953525	        59.39 ns/op	      62 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 1987797	        59.11 ns/op	      61 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 2024396	        57.74 ns/op	      67 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 2059275	        57.95 ns/op	      72 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 2119878	        58.00 ns/op	      57 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 1996938	        57.62 ns/op	      61 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 1923120	        59.17 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSend/Map10k-16            	 1833507	        61.22 ns/op	      67 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1243468	        90.95 ns/op	     164 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1692676	        69.90 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1000000	       102.2 ns/op	     204 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1679265	        69.80 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1420840	        79.96 ns/op	     144 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1795946	        67.32 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1414384	        81.59 ns/op	     144 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1728662	        73.95 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1471742	        81.45 ns/op	     139 B/op	       0 allocs/op
-BenchmarkSend/Map50k-16            	 1705344	        69.30 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	2026/09/14 10:39:03 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
- 1988331	        70.45 ns/op	       1 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1695906	        69.64 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1733172	        70.15 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1703185	        71.01 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1641321	        70.40 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1719751	        70.49 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1688157	        70.06 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1672040	        70.92 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1632846	        71.32 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map0-16      	 1677574	        70.79 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=4 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=1 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=6 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=7 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=20 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=8 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=9 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=22 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=23 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=25 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=26 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=27 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=28 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=10 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=2 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=12 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=3 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=33 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=5 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=34 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=35 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=36 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=37 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=38 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=16 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=15 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=39 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=40 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=42 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=43 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=44 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=41 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=47 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=17 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=50 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=18 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=52 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=19 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=21 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=24 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=54 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=29 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=30 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=31 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=32 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=61 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=11 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=62 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=63 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=13 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=65 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=66 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=68 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=67 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=69 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=70 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=71 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=72 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=73 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=75 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=45 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=76 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=46 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=48 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=49 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=78 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=51 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=81 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=83 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=85 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=84 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=86 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=87 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=88 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=89 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=90 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=91 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=92 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=93 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=94 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=95 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=96 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=97 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=98 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=100 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=55 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=57 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=58 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=56 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=59 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=60 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=64 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=14 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=74 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=77 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=79 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=80 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=53 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=82 depth=65537 threshold=65536
-2026/09/14 10:39:06 ERROR transport: глубина очереди превысила порог (алерт декларации) to=99 depth=65537 threshold=65536
- 5854851	        18.62 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 8860468	        22.04 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 3838316	        36.72 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 4314342	        29.14 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 3890646	        28.40 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 4110912	        28.35 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 4422266	        27.66 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 4284703	        27.62 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 4917830	        27.09 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map100-16    	 4521817	        26.75 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	 5588086	        19.38 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	 8827164	        13.55 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	 9750706	        11.86 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	10282952	        11.34 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	10629271	        12.22 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	 5530054	        18.63 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	 6391953	        18.21 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	 6101373	        17.53 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	 6540471	        17.51 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map10k-16    	 6850800	        15.91 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 7850728	        19.18 ns/op	      70 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 8275347	        15.50 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 7707909	        15.29 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 7381980	        14.84 ns/op	      60 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 8089687	        14.99 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 7619337	        15.03 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 8172400	        14.18 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 6863928	        14.81 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 7894896	        20.43 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendParallel/Map50k-16    	 4788258	        20.90 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 3919191	        27.80 ns/op	      90 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 3818551	        27.51 ns/op	      85 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 3477981	        31.44 ns/op	      93 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 2965898	        34.98 ns/op	      94 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 3464954	        29.50 ns/op	      94 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 2728299	        37.33 ns/op	     103 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 3941162	        30.69 ns/op	      90 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 3178329	        33.56 ns/op	      88 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 3523556	        32.88 ns/op	      93 B/op	       0 allocs/op
-BenchmarkSendUnderWrite-16         	 3726307	        29.16 ns/op	      88 B/op	       0 allocs/op
-BenchmarkSendMiss-16               	   91311	      1312 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   93121	      1322 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   87218	      1312 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   93472	      1311 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   84268	      1334 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   80688	      1340 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   89707	      1309 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   95137	      1323 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   90630	      1334 ns/op	      32 B/op	       3 allocs/op
-BenchmarkSendMiss-16               	   88886	      1321 ns/op	      32 B/op	       3 allocs/op
-BenchmarkMapWrite/Birth-16         	  665630	       229.3 ns/op	     407 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  506371	       245.1 ns/op	     425 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  746499	       238.6 ns/op	     401 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  561244	       244.7 ns/op	     418 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  742527	       231.1 ns/op	     402 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  697551	       236.0 ns/op	     405 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  655164	       232.4 ns/op	     408 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  553428	       231.8 ns/op	     419 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  459294	       227.2 ns/op	     423 B/op	       2 allocs/op
-BenchmarkMapWrite/Birth-16         	  452607	       227.1 ns/op	     418 B/op	       2 allocs/op
-BenchmarkMapWrite/Retire-16        	 6617330	        17.25 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 6897105	        17.04 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 7083238	        17.42 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 6919656	        17.10 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 7194330	        17.18 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 6901747	        17.37 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 7182015	        17.19 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 6671299	        17.13 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 7164564	        17.23 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/Retire-16        	 7177504	        17.23 ns/op	       0 B/op	       0 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      48	   2417192 ns/op	 4837618 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      75	   3355603 ns/op	 4837616 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      82	   3356490 ns/op	 4837624 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      73	   2486814 ns/op	 4837620 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      38	   2684911 ns/op	 4837621 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      38	   2785589 ns/op	 4837618 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      49	   3047461 ns/op	 4837620 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      67	   3134858 ns/op	 4837619 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      87	   3616100 ns/op	 4837618 B/op	   24834 allocs/op
-BenchmarkMapWrite/MassSpawn-16     	      80	   3081530 ns/op	 4837623 B/op	   24834 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  591657	       201.4 ns/op	     302 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  783187	       174.5 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  781555	       179.4 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  762030	       177.9 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  769629	       176.2 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  704473	       162.3 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  792654	       177.2 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  791608	       179.4 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  715520	       159.7 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/Birth-16         	  780690	       180.8 ns/op	     240 B/op	       1 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      80	   2230219 ns/op	 3471737 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	     100	   3007399 ns/op	 3471736 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      92	   1957141 ns/op	 3471738 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      72	   2508193 ns/op	 3471739 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      75	   2278056 ns/op	 3471740 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      79	   2083261 ns/op	 3471737 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	     100	   2177772 ns/op	 3471740 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	     100	   2100394 ns/op	 3471741 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      54	   2469961 ns/op	 3471738 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      57	   2044109 ns/op	 3471741 B/op	   12084 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  863432	       324.0 ns/op	     352 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  429289	       277.6 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  415555	       271.8 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  419712	       270.4 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  418000	       269.7 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  424914	       279.3 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  401095	       325.0 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  426090	       265.6 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  423249	       282.2 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  370885	       282.9 ns/op	     296 B/op	       3 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      48	   2390117 ns/op	 4278689 B/op	   40302 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      32	   3676434 ns/op	 4277899 B/op	   40297 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      79	   2932882 ns/op	 4278227 B/op	   40299 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      80	   2773861 ns/op	 4278878 B/op	   40303 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      62	   2528208 ns/op	 4279218 B/op	   40305 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      57	   2752575 ns/op	 4279481 B/op	   40306 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      74	   2188282 ns/op	 4278358 B/op	   40299 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      82	   2454745 ns/op	 4279118 B/op	   40304 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      60	   2612693 ns/op	 4279579 B/op	   40307 allocs/op
-BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      58	   2321940 ns/op	 4279022 B/op	   40304 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   52858	      1987 ns/op	   10122 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   78208	      1554 ns/op	   10433 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   73114	      1541 ns/op	   10888 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   77184	      1486 ns/op	   10888 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   80019	      1482 ns/op	   10888 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   78508	      1484 ns/op	   10888 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   81933	      1460 ns/op	   10888 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   80898	      1468 ns/op	   10888 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   87606	      1446 ns/op	   10888 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/Birth-16           	   89526	      1439 ns/op	   10888 B/op	       4 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  77113350 ns/op	117671960 B/op	   48004 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  74235450 ns/op	117671960 B/op	   48004 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  67808700 ns/op	117672016 B/op	   48004 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  59328650 ns/op	117671960 B/op	   48004 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  75500200 ns/op	117671960 B/op	   48004 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  65999400 ns/op	117671960 B/op	   48004 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       1	 105652100 ns/op	117672408 B/op	   48008 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       1	 115240000 ns/op	117672184 B/op	   48006 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  68953500 ns/op	117672016 B/op	   48004 allocs/op
-BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  72343400 ns/op	117672016 B/op	   48004 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 2189188	        63.38 ns/op	       1 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1885706	        63.17 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1873068	        62.89 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1876779	        63.37 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1900315	        63.91 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1880211	        63.35 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1891598	        62.82 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1895691	        64.51 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1880623	        63.42 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map0-16                     	 1870294	        60.59 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 3069642	        33.51 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4413094	        30.21 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4689129	        25.35 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4712312	        25.31 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4675245	        24.94 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4776746	        25.47 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4691769	        26.60 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4709224	        25.18 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4291706	        26.07 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map100-16                   	 4258383	        27.33 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 3957454	        28.60 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4743326	        24.85 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4782381	        24.72 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4789730	        24.44 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4820612	        24.62 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4744450	        24.55 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4837285	        24.94 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4856902	        24.57 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4807113	        24.23 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map10k-16                   	 4385467	        28.17 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 4669322	        30.53 ns/op	      72 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 4019008	        25.75 ns/op	      55 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 4690467	        26.68 ns/op	      72 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 4485058	        25.47 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 4487910	        24.98 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 4654210	        25.19 ns/op	      66 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 4747098	        25.52 ns/op	      67 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 4771518	        25.11 ns/op	      69 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 3818542	        27.75 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendPlainTable/Map50k-16                   	 3687847	        31.45 ns/op	      61 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2060689	        58.19 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2059141	        57.50 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2067656	        57.35 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2104129	        57.61 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2060223	        57.24 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2066851	        58.00 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2057323	        57.49 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2115170	        57.96 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2072907	        56.91 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map0-16                        	 2092443	        58.74 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 4513008	        24.94 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 7191054	        22.12 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 6684566	        17.60 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 7475330	        15.37 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 7056996	        16.20 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 7246288	        17.58 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 7659801	        15.90 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 4095018	        30.01 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 4096164	        28.18 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map100-16                      	 3950902	        28.31 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 5583652	        18.67 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 9788646	        15.51 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 8754969	        11.67 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 9186602	        11.54 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	10307935	        11.03 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 8712508	        13.89 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 6882234	        17.66 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 6215652	        17.52 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 7097274	        16.43 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map10k-16                      	 7423766	        16.27 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 5946751	        28.54 ns/op	      68 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 5523920	        24.18 ns/op	      67 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 5788627	        24.36 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 4538044	        23.03 ns/op	      57 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 3331981	        31.73 ns/op	      61 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 3884554	        28.44 ns/op	      58 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 3668871	        30.04 ns/op	      67 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 4657239	        27.37 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 3564818	        36.65 ns/op	      67 B/op	       0 allocs/op
-BenchmarkSendSyncMap/Map50k-16                      	 3217442	        34.63 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2247733	        46.50 ns/op	       1 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2540584	        46.67 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2576041	        47.27 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2511704	        46.77 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2542496	        47.12 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2543595	        46.31 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2582355	        46.79 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2581921	        47.02 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2561688	        46.75 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map0-16                            	 2600864	        47.09 ns/op	       0 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 4715534	        22.65 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 8214394	        18.10 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 9777480	        12.08 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 7460876	        14.51 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	10265886	        14.73 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 7883067	        13.99 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 8900030	        13.41 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 8610976	        13.34 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 9196388	        13.28 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map100-16                          	 8846034	        17.81 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	 7242061	        16.36 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	10835703	        11.56 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	11872371	        10.09 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	11299647	         9.991 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	12125371	         9.688 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	11561918	         9.555 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	10793307	        14.30 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	 6586023	        16.95 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	 6684156	        15.71 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map10k-16                          	 7112839	        14.49 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	12896090	        16.10 ns/op	      66 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	 8891984	        14.16 ns/op	      61 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	 9784396	        12.52 ns/op	      62 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	 7677739	        13.08 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	10508800	        13.89 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	 9453582	        13.62 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	 9302865	        12.12 ns/op	      63 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	 8687782	        12.84 ns/op	      65 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	 9360081	        12.82 ns/op	      64 B/op	       0 allocs/op
-BenchmarkSendCOW/Map50k-16                          	 9354390	        15.44 ns/op	      63 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 3849928	        31.18 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 4267120	        30.27 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 4075172	        27.97 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 4192520	        28.14 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 4171706	        29.53 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 4248268	        29.01 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 4034182	        28.28 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 3903771	        30.77 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 3782958	        32.71 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueue-16                	 3971090	        30.33 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 1859590	        63.38 ns/op	      77 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 1806271	        62.10 ns/op	     152 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 1971362	        59.42 ns/op	      96 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 2147254	        58.66 ns/op	      73 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 1972957	        61.74 ns/op	      65 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 2163830	        55.88 ns/op	      64 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 2082042	        58.15 ns/op	     102 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 2072402	        54.83 ns/op	      65 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 2165173	        61.78 ns/op	      87 B/op	       0 allocs/op
+BenchmarkEnqueueParallel-16        	 2178170	        58.98 ns/op	      78 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	44370493	         2.802 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	42639376	         2.802 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	36056608	         2.790 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	42733520	         2.724 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	38257986	         2.693 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	40147206	         2.751 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	43638218	         2.772 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	43483058	         2.776 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	43165467	         2.785 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/Empty-16          	36007921	         2.855 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtract/DeepCycle-16      	   17041	      8145 ns/op	   12289 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   13183	      8672 ns/op	   12290 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   13362	      8591 ns/op	   12290 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   16855	      7124 ns/op	   12289 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   15186	      8284 ns/op	   12290 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   10000	     10627 ns/op	   12291 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   13795	      8346 ns/op	   12290 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   13918	      9853 ns/op	   12290 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   14750	      8434 ns/op	   12290 B/op	       3 allocs/op
+BenchmarkExtract/DeepCycle-16      	   12150	      9357 ns/op	   12290 B/op	       3 allocs/op
+BenchmarkSend/Map0-16              	 6371928	        16.54 ns/op	      10 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11476554	        10.74 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11806839	        10.59 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11852905	        10.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11836537	        10.61 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11100010	        10.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11884834	        10.49 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11138028	        10.53 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11827554	        10.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map0-16              	11905470	        10.76 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 3169237	        45.72 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2371920	        54.70 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2134638	        56.60 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2172314	        56.31 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2150290	        56.08 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2149912	        56.29 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2176072	        55.60 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2100373	        56.44 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2177395	        55.45 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSend/Map100-16            	 2090384	        56.19 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 1512682	        75.96 ns/op	      81 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 1991539	        62.84 ns/op	      61 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 1987431	        59.54 ns/op	      61 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 2042017	        57.38 ns/op	      60 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 2002285	        58.19 ns/op	      61 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 1873910	        60.46 ns/op	      65 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 1948449	        58.47 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 2031402	        58.41 ns/op	      77 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 1675929	        64.60 ns/op	      52 B/op	       0 allocs/op
+BenchmarkSend/Map10k-16            	 2048917	        56.36 ns/op	      59 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1067740	        95.81 ns/op	     191 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1706277	        71.34 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1199641	        95.01 ns/op	     170 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1577948	        72.60 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1411677	        80.32 ns/op	     145 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1652145	        70.50 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1665105	        76.97 ns/op	     122 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1705230	        68.86 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1482462	        81.84 ns/op	     138 B/op	       0 allocs/op
+BenchmarkSend/Map50k-16            	 1690602	        69.23 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 2038191	        71.19 ns/op	       1 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1700576	        69.44 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1696575	        70.25 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1687910	        70.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1767991	        69.97 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1732021	        69.96 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1686316	        70.33 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1731626	        69.29 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1724476	        69.11 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map0-16      	 1722469	        70.16 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 6056956	        19.82 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 8422293	        24.21 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 4449074	        31.98 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 3725828	        30.12 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 4293810	        29.60 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 4814191	        28.37 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 4246328	        27.02 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 4382280	        26.50 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 4396957	        26.74 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map100-16    	 4766026	        25.75 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 5433954	        19.22 ns/op	      62 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 8190231	        12.57 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 9468874	        11.57 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	10596867	        11.34 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 9518370	        11.64 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 9232970	        12.77 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 5543979	        18.92 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 6092637	        17.56 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 6460122	        18.08 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map10k-16    	 6682406	        16.76 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 7613306	        19.48 ns/op	      72 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 6778702	        14.90 ns/op	      61 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 6743163	        15.58 ns/op	      66 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 8914310	        15.76 ns/op	      67 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 9424478	        14.94 ns/op	      66 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 8049152	        15.17 ns/op	      67 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 7214702	        15.08 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 7988887	        14.30 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 6804880	        17.13 ns/op	      65 B/op	       0 allocs/op
+BenchmarkSendParallel/Map50k-16    	 4863931	        22.10 ns/op	      65 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 3740314	        27.87 ns/op	      74 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 4604004	        24.45 ns/op	      76 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 4157794	        25.91 ns/op	      76 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 4422619	        24.92 ns/op	      73 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 3660540	        27.54 ns/op	      75 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 4014381	        26.84 ns/op	      78 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 4042105	        27.77 ns/op	      78 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 3893313	        29.96 ns/op	      74 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 4035789	        26.49 ns/op	      78 B/op	       0 allocs/op
+BenchmarkSendUnderWrite-16         	 4009887	        30.62 ns/op	      78 B/op	       0 allocs/op
+BenchmarkSendMiss-16               	   92755	      1303 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   90711	      1323 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   88910	      1335 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   92697	      1317 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   82398	      1339 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   88777	      1330 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   91809	      1340 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   92617	      1323 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   92038	      1371 ns/op	      32 B/op	       3 allocs/op
+BenchmarkSendMiss-16               	   91248	      1303 ns/op	      32 B/op	       3 allocs/op
+BenchmarkMapWrite/Birth-16         	  733137	       246.3 ns/op	     402 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  566144	       233.9 ns/op	     417 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  723763	       243.5 ns/op	     403 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  752444	       246.2 ns/op	     401 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  656383	       234.9 ns/op	     408 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  599160	       232.4 ns/op	     414 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  459963	       248.2 ns/op	     423 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  562464	       244.7 ns/op	     418 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  635626	       240.2 ns/op	     410 B/op	       2 allocs/op
+BenchmarkMapWrite/Birth-16         	  650335	       234.8 ns/op	     409 B/op	       2 allocs/op
+BenchmarkMapWrite/Retire-16        	 7340571	        17.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 7258825	        17.05 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 6742064	        17.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 6771970	        17.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 7239206	        16.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 6788366	        17.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 6983361	        17.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 7031442	        17.08 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 7292527	        16.96 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/Retire-16        	 7108624	        16.92 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      58	   3175279 ns/op	 4837617 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      88	   2787245 ns/op	 4837621 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      88	   2545344 ns/op	 4837618 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      38	   2688387 ns/op	 4837618 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      54	   3644137 ns/op	 4837622 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      84	   2723611 ns/op	 4837617 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      61	   2859489 ns/op	 4837619 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      60	   2206725 ns/op	 4837625 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      57	   2383956 ns/op	 4837619 B/op	   24834 allocs/op
+BenchmarkMapWrite/MassSpawn-16     	      66	   3286735 ns/op	 4837621 B/op	   24834 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  777201	       198.2 ns/op	     287 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  797288	       182.0 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  643293	       158.8 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  715520	       177.3 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  758888	       179.8 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  773893	       184.2 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  708465	       181.2 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  727227	       187.3 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  791869	       184.0 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/Birth-16         	  761758	       182.9 ns/op	     240 B/op	       1 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      87	   2191078 ns/op	 3471737 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      64	   1927305 ns/op	 3471736 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      68	   2209090 ns/op	 3471747 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      51	   2193622 ns/op	 3471736 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      75	   1913364 ns/op	 3471737 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	     100	   2615560 ns/op	 3471740 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      97	   1663862 ns/op	 3471739 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      85	   2136138 ns/op	 3471741 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      72	   2079424 ns/op	 3471748 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/Plain/MassSpawn-16     	      57	   2428560 ns/op	 3471737 B/op	   12084 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	 1000000	       341.2 ns/op	     353 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  391708	       278.4 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  386821	       292.5 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  395334	       288.6 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  388713	       304.6 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  318470	       351.9 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  370084	       310.0 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  405788	       305.1 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  402994	       300.4 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/Birth-16       	  405097	       297.3 ns/op	     296 B/op	       3 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      48	   2142740 ns/op	 4278047 B/op	   40297 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      81	   2391815 ns/op	 4277480 B/op	   40294 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      57	   2406286 ns/op	 4279618 B/op	   40307 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      70	   2871830 ns/op	 4278452 B/op	   40300 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      66	   2236365 ns/op	 4278542 B/op	   40301 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      72	   2143981 ns/op	 4279822 B/op	   40309 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      62	   2074215 ns/op	 4278962 B/op	   40303 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      75	   2304312 ns/op	 4279601 B/op	   40307 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      51	   2464465 ns/op	 4278304 B/op	   40299 allocs/op
+BenchmarkMapWriteCompetitors/SyncMap/MassSpawn-16   	      64	   2551867 ns/op	 4278267 B/op	   40299 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   52326	      1936 ns/op	   10121 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   90814	      1426 ns/op	   10496 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   82184	      1475 ns/op	   10888 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   84972	      1459 ns/op	   10888 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   80053	      1469 ns/op	   10888 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   86342	      1454 ns/op	   10888 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   85867	      1459 ns/op	   10888 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   83697	      1446 ns/op	   10888 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   85662	      1491 ns/op	   10888 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/Birth-16           	   80991	      1424 ns/op	   10888 B/op	       4 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  67085300 ns/op	117672072 B/op	   48005 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  66731650 ns/op	117672016 B/op	   48004 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  57790500 ns/op	117671960 B/op	   48004 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  76879600 ns/op	117671960 B/op	   48004 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  82028800 ns/op	117671960 B/op	   48004 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  68705950 ns/op	117671960 B/op	   48004 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       3	  55309000 ns/op	117672184 B/op	   48006 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       3	  55287900 ns/op	117672184 B/op	   48006 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  80741950 ns/op	117671960 B/op	   48004 allocs/op
+BenchmarkMapWriteCompetitors/COW/MassSpawn-16       	       2	  50143700 ns/op	117672016 B/op	   48004 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 2069631	        63.49 ns/op	       1 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1943523	        63.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1843153	        63.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1894982	        64.28 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1814091	        63.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1910256	        64.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1853636	        63.76 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1883492	        62.88 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1890820	        64.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map0-16                     	 1872060	        63.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 3741704	        30.38 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 4604334	        25.38 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 4684498	        25.79 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 4685852	        25.70 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 4716664	        24.99 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 4306894	        27.10 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 4412428	        25.04 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 4197829	        26.60 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 3445464	        34.12 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map100-16                   	 3508597	        33.43 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 3605190	        28.59 ns/op	      58 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 4514774	        24.85 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 4732999	        24.59 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 4846663	        24.55 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 4743157	        24.61 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 4809194	        24.27 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 4811720	        24.45 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 4750593	        25.11 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 4809715	        26.01 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map10k-16                   	 3990448	        30.75 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 4632579	        30.65 ns/op	      71 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 3900712	        26.58 ns/op	      54 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 4368306	        25.70 ns/op	      72 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 4535918	        25.44 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 4505637	        27.44 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 4623332	        25.38 ns/op	      69 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 4811238	        25.23 ns/op	      68 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 4128122	        25.10 ns/op	      60 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 4013190	        26.37 ns/op	      67 B/op	       0 allocs/op
+BenchmarkSendPlainTable/Map50k-16                   	 3988777	        28.80 ns/op	      65 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2097486	        56.80 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2114090	        58.30 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2082823	        56.40 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2140429	        57.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2068233	        56.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2113736	        56.97 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2137581	        55.56 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2153022	        55.70 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2106907	        56.67 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map0-16                        	 2131498	        56.91 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 5352808	        20.36 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 6759534	        19.59 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 7735297	        15.39 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 6912242	        14.53 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 7054134	        15.31 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 7531963	        15.98 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 4261015	        27.57 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 4028210	        27.67 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 4319545	        26.69 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map100-16                      	 4527259	        26.48 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 5658274	        19.80 ns/op	      62 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 8991861	        13.65 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 9311564	        11.57 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 8292504	        13.20 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 9527136	        11.59 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	10786524	        12.89 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 5684050	        18.25 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 6330081	        17.11 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 6243236	        17.66 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map10k-16                      	 7411677	        16.28 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 6105081	        26.70 ns/op	      67 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 4680697	        23.18 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 5932194	        23.06 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 6020659	        22.48 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 4901282	        23.09 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 6016417	        20.47 ns/op	      67 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 5195569	        20.23 ns/op	      69 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 6276248	        18.39 ns/op	      66 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 6751773	        17.88 ns/op	      61 B/op	       0 allocs/op
+BenchmarkSendSyncMap/Map50k-16                      	 6956121	        17.30 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2202496	        46.48 ns/op	       1 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2542027	        46.28 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2585220	        46.78 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2612056	        46.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2597368	        48.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2550916	        48.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2520764	        46.20 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2504335	        47.27 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2549822	        47.25 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map0-16                            	 2537866	        46.80 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 5060390	        25.02 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 8177004	        17.16 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 9789524	        15.19 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 8437275	        13.94 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 7402654	        14.54 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 8437453	        13.77 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 7903680	        12.89 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 9495097	        12.66 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 9640953	        12.63 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map100-16                          	 8363942	        23.44 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	 7197538	        16.28 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	 9712981	        11.17 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	10996663	        10.38 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	11154696	        10.17 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	12349236	         9.589 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	10367707	         9.954 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	12501432	        10.51 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	10517181	        13.32 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	 6510062	        17.09 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map10k-16                          	 6799213	        16.28 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	11573678	        19.12 ns/op	      66 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	12888673	        20.27 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	 8513851	        13.63 ns/op	      60 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	 8798334	        13.66 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	 7672830	        13.06 ns/op	      60 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	 9315381	        13.77 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	 9908265	        11.85 ns/op	      64 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	 9360374	        12.33 ns/op	      63 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	 9293751	        17.37 ns/op	      62 B/op	       0 allocs/op
+BenchmarkSendCOW/Map50k-16                          	 6954912	        17.34 ns/op	      65 B/op	       0 allocs/op

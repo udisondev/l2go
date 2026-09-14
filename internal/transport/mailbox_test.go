@@ -68,12 +68,29 @@ func TestMailboxClaimExclusive(t *testing.T) {
 
 func TestMailboxReaderContractPanic(t *testing.T) {
 	box, _ := newClaimedBox(t, 8)
-	defer func() {
-		if recover() == nil {
-			t.Errorf("изъятие чужим токеном обязано паниковать (контракт читателя)")
-		}
-	}()
-	box.Extract(999)
+	for _, bad := range []uint64{999, 0} { // чужой токен и «никто»
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("изъятие токеном %d обязано паниковать (контракт читателя)", bad)
+				}
+			}()
+			box.Extract(bad)
+		}()
+	}
+}
+
+// Неизвестный Kind — дроп на входе с метрикой, не тихо.
+func TestUnknownKindDropped(t *testing.T) {
+	box, _ := newClaimedBox(t, 8)
+	box.enqueue(Envelope{FromID: 1, Kind: Kind(999)})
+	box.enqueue(Envelope{FromID: 1, Kind: KindAggro})
+	if got := box.Extract(42); len(got) != 1 {
+		t.Fatalf("доставлено %d; want 1 (мусор отсеян на enqueue)", len(got))
+	}
+	if st := box.Stats(); st.DroppedUnknown != 1 {
+		t.Errorf("DroppedUnknown = %d; want 1", st.DroppedUnknown)
+	}
 }
 
 func TestFAFCapDropNew(t *testing.T) {

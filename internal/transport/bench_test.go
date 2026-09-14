@@ -148,6 +148,8 @@ func BenchmarkEnqueue(b *testing.B) {
 }
 
 func BenchmarkEnqueueParallel(b *testing.B) {
+	restore := slogDefaultSwapQuiet() // алерт глубины горячего ящика не должен рвать ряды
+	b.Cleanup(restore)
 	r := NewRegistry(1 << 20)
 	box := &Mailbox{}
 	r.Register(box)
@@ -220,6 +222,8 @@ func BenchmarkExtract(b *testing.B) {
 }
 
 func BenchmarkSend(b *testing.B) {
+	restore := slogDefaultSwapQuiet() // Map0: горячий ящик пересекает порог алерта глубины
+	b.Cleanup(restore)
 	for _, sz := range benchSizes {
 		r := fillRegistry(sz.n)
 		b.Run(sz.name, func(b *testing.B) {
@@ -240,6 +244,8 @@ func BenchmarkSend(b *testing.B) {
 }
 
 func BenchmarkSendParallel(b *testing.B) {
+	restore := slogDefaultSwapQuiet() // Map0: горячий ящик пересекает порог алерта глубины
+	b.Cleanup(restore)
 	for _, sz := range benchSizes {
 		r := fillRegistry(sz.n)
 		b.Run(sz.name, func(b *testing.B) {
@@ -262,27 +268,20 @@ func BenchmarkSendParallel(b *testing.B) {
 }
 
 // Интерференция чтение×запись: параллельная отправка по заселённой карте,
-// фон — массовый спавн батчами по 12k (конечный, как P3.10) с паузой между.
+// фон — фиксированный прирост массовым спавном (5 батчей по 12k, как P3.10),
+// затем тишина: и интерференция, и чтение после роста.
 func BenchmarkSendUnderWrite(b *testing.B) {
 	const n = 10_000
+	const batches = 5
 	r := fillRegistry(n)
 	ids := idsUpTo(n)
-	stop := make(chan struct{})
 	spawned := make(chan struct{})
 	go func() {
 		defer close(spawned)
-		base := uint64(n)
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
+		for i := 0; i < batches; i++ {
 			for j := 0; j < 12_000; j++ {
 				r.Register(&Mailbox{})
 			}
-			base += 12_000
-			runtime.Gosched()
 		}
 	}()
 	b.ReportAllocs()
@@ -295,7 +294,6 @@ func BenchmarkSendUnderWrite(b *testing.B) {
 			i++
 		}
 	})
-	close(stop)
 	<-spawned
 }
 
@@ -432,8 +430,8 @@ func fillCompetitor(n int, mk func() (set func(EntityID, *Mailbox), get func(Ent
 	return get
 }
 
-// slogDefaultSwapQuiet заглушает slog на время бенчмарка miss-пути; возвращает
-// восстановитель.
+// slogDefaultSwapQuiet заглушает slog на время бенчмарка (miss-логи, алерт
+// глубины горячего ящика); возвращает восстановитель.
 func slogDefaultSwapQuiet() func() {
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
 	prev := slog.Default()
