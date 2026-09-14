@@ -100,6 +100,7 @@ func TestBurnDummyTiming(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		salt, _ := newSalt()
 		start := time.Now()
+		// ошибка вывода невозможна (валидные константы) и не имеет получателя
 		_, _ = hashPassword("probe", salt)
 		if d := time.Since(start); d < hashMin {
 			hashMin = d

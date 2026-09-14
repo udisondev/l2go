@@ -151,7 +151,7 @@ func TestActorCreateListSnapshot(t *testing.T) {
 	}
 	list = env.ask(Request{Op: OpCharList, Corr: 4, Account: "player1"}, 5*time.Second)
 	if len(list.Chars) != 1 || list.Chars[0].X != HumanFighter.StartX+500 {
-		t.Errorf("после снимка list = %+v", list.Chars)
+		t.Errorf("после снимка list = %+v; want X=%d", list.Chars, HumanFighter.StartX+500)
 	}
 	if list.Chars[0].LastSeenUnix == 0 {
 		t.Error("lastSeen не проставлен пишущей стороной")
@@ -187,10 +187,15 @@ func TestActorCreateListSnapshot(t *testing.T) {
 	if eight.OK {
 		t.Error("8-й персонаж принят")
 	}
-	_ = env.ask(Request{Op: OpCharList, Corr: 100, Account: "../evil"}, 5*time.Second)
+	// злой логин — детерминированный отказ с эхом корреляции
+	evil := env.ask(Request{Op: OpCharList, Corr: 100, Account: "../evil"}, 5*time.Second)
+	if evil.OK || evil.Corr != 100 {
+		t.Errorf("CharList(злой логин) = %+v; want отказ, corr=100", evil)
+	}
 	stats := env.actor.Stats()
 	if stats.Handled < 10 || stats.Replies < 10 {
-		t.Errorf("счётчики актора: %+v", stats)
+		t.Errorf("счётчики актора: Handled=%d Replies=%d; want ≥10/≥10",
+			stats.Handled, stats.Replies)
 	}
 }
 
