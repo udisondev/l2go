@@ -111,11 +111,12 @@ type PortionLog struct {
 	payloads bool
 	maxFile  int64
 
-	seq     int
-	file    *os.File
-	w       *bufio.Writer
-	written int64
-	dead    bool
+	seq       int
+	file      *os.File
+	w         *bufio.Writer
+	written   int64
+	dead      bool
+	headerLen int64 // размер заголовка файла (маркер «файл без кадров»)
 
 	enc    []byte // переиспользуемый буфер тела кадра
 	prefix []byte // переиспользуемый префикс кадра (длина + crc32)
@@ -164,7 +165,8 @@ func (l *PortionLog) openFile() error {
 	l.file = f
 	l.w = bufio.NewWriterSize(f, writeBufSize)
 	hdr := l.encodeHeader()
-	l.written = int64(len(hdr))
+	l.headerLen = int64(len(hdr))
+	l.written = l.headerLen
 	if _, err := l.w.Write(hdr); err != nil {
 		return fmt.Errorf("world: заголовок лога порций: %w", err)
 	}
@@ -213,13 +215,13 @@ func (l *PortionLog) writeFrame(body []byte) error {
 		return errLogDead
 	}
 	frameLen := uvarintLen(uint64(len(body))) + 4 + len(body)
-	if l.written+int64(frameLen) > l.maxFile {
+	// файл из одного заголовка не ротачивается: иначе негабаритный кадр
+	// (крупнее maxFile) давал бы «файл на кадр» — один негабарит допустим
+	if l.written > l.headerLen && l.written+int64(frameLen) > l.maxFile {
 		if err := l.rotate(); err != nil {
 			l.dead = true
 			return err
 		}
-		// кадр крупнее maxFile пишется без повторной ротации: один
-		// негабаритный кадр допустим, «файл на кадр» — деградация
 	}
 	crc := crc32.ChecksumIEEE(body)
 	l.prefix = binary.AppendUvarint(l.prefix[:0], uint64(len(body)))
@@ -353,6 +355,20 @@ func listSeqFiles(dir string, region RegionID) []string {
 	return ordered
 }
 
+// fileSeq — seq из имени файла цепочки.
+func fileSeq(path string) int {
+	base := strings.TrimSuffix(filepath.Base(path), ".log")
+	parts := strings.Split(base, "-")
+	if len(parts) != 3 {
+		return -1
+	}
+	seq, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return -1
+	}
+	return seq
+}
+
 // scanMaxSeq — максимальный seq существующих файлов региона.
 func scanMaxSeq(dir string, region RegionID) int {
 	files := listSeqFiles(dir, region)
@@ -371,7 +387,8 @@ func ReadPortionLogDir(dir string, region RegionID) (FileHeader, []StepRecord, [
 	var hdr FileHeader
 	var steps []StepRecord
 	var panics []PanicRecord
-	for i, path := range files {
+	first := true
+	for _, path := range files {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return hdr, steps, panics, fmt.Errorf("world: чтение лога порций: %w", err)
@@ -379,10 +396,11 @@ func ReadPortionLogDir(dir string, region RegionID) (FileHeader, []StepRecord, [
 		if len(data) == 0 {
 			continue // пустой файл: kill -9 между созданием и первым сбросом буфера
 		}
-		seq := i + 1
+		seq := fileSeq(path)
 		fh, fs, fp, err := parseFile(data)
-		if len(steps) == 0 && len(panics) == 0 && hdr.Region == 0 {
+		if first {
 			hdr = fh
+			first = false
 		} else if err == nil || errors.Is(err, ErrTruncated) {
 			if fh != hdr {
 				return hdr, steps, panics, fmt.Errorf("world: заголовок файла seq=%d расходится с началом цепочки: %+v против %+v", seq, fh, hdr)
@@ -536,7 +554,10 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 	st.Tick = Tick(c.uvarint())
 	st.Delta = c.uvarint()
 	nbu := c.uvarint()
-	if c.err == nil && nbu <= uint64(len(body)) {
+	if c.err == nil && nbu > uint64(len(body)) {
+		c.err = fmt.Errorf("world: лог порций: рождений %d больше тела записи", nbu)
+	}
+	if c.err == nil {
 		nb := int(nbu)
 		st.Births = make([]BirthRecord, 0, nb)
 		for i := 0; i < nb; i++ {
@@ -550,7 +571,10 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 		}
 	}
 	nru := c.uvarint()
-	if c.err == nil && nru <= uint64(len(body)) {
+	if c.err == nil && nru > uint64(len(body)) {
+		c.err = fmt.Errorf("world: лог порций: удалений %d больше тела записи", nru)
+	}
+	if c.err == nil {
 		nr := int(nru)
 		st.Retires = make([]Retire, 0, nr)
 		for i := 0; i < nr; i++ {
@@ -558,7 +582,10 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 		}
 	}
 	npu := c.uvarint()
-	if c.err == nil && npu <= uint64(len(body)) {
+	if c.err == nil && npu > uint64(len(body)) {
+		c.err = fmt.Errorf("world: лог порций: пачек %d больше тела записи", npu)
+	}
+	if c.err == nil {
 		np := int(npu)
 		st.Portions = make([]PortionRecord, 0, np)
 		for i := 0; i < np; i++ {
@@ -594,7 +621,10 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 		}
 	}
 	nau := c.uvarint()
-	if c.err == nil && nau <= uint64(len(body)) {
+	if c.err == nil && nau > uint64(len(body)) {
+		c.err = fmt.Errorf("world: лог порций: advisory-входов %d больше тела записи", nau)
+	}
+	if c.err == nil {
 		na := int(nau)
 		st.Advisory = make([]AdvisoryIn, 0, na)
 		for i := 0; i < na; i++ {

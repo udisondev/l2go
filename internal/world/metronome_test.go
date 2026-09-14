@@ -26,6 +26,10 @@ func TestMetronomeConfigValidation(t *testing.T) {
 		{Hz: 10, HeartbeatTicks: 0, WatchdogTicks: 30},
 		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 0},
 		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, CtrlBudget: 0},
+		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, DrainBudget: 0},
+		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, PhaseBCap: 0},
+		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, FreezePanics: 0},
+		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, LogMaxFileBytes: -1},
 	}
 	for i, cfg := range bad {
 		if _, err := NewMetronome(cfg); err == nil {

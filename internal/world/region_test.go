@@ -226,8 +226,11 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	if st.PhaseB != beforeB.PhaseB || st.PhasePublish != beforeB.PhasePublish || st.PhaseAck != beforeB.PhaseAck {
 		t.Fatalf("паника в B: счётчики B/publish/ack доросли: %+v против %+v", st, beforeB)
 	}
-	r.safeStep() // streak: паника в B (1) + следующая
-	r.safeStep() // 3-я в серии → заморозка
+	r.safeStep() // 2-я в серии: сброс после успеха держит счётчик ниже порога
+	if r.Stats().Frozen {
+		t.Fatalf("заморозка раньше серии порога: сброс streak успехом не работает")
+	}
+	r.safeStep() // 3-я подряд → заморозка
 	st = r.Stats()
 	if !st.Frozen {
 		t.Fatalf("серия паник не заморозила регион")
@@ -257,6 +260,13 @@ func TestRegionPanicDropsBatchAndMarks(t *testing.T) {
 	st := r.ctrl.Stats()
 	if st.FinalReliable != 4 {
 		t.Fatalf("классовый дроп остатка reliable = %d; want 4 (тихая потеря запрещена)", st.FinalReliable)
+	}
+	_, steps, _, err := ReadPortionLogDir(r.log.dir, r.log.region)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(steps) != 0 {
+		t.Fatalf("паник-шаг попал в лог порций: %d записей; want 0", len(steps))
 	}
 	if err := r.log.w.Flush(); err != nil {
 		t.Fatalf("flush: %v", err)
@@ -481,5 +491,27 @@ func TestRegionFreezeOnLogWriteError(t *testing.T) {
 	r.step()
 	if !r.Stats().Frozen {
 		t.Fatalf("ошибка записи лога не заморозила регион")
+	}
+}
+
+// Дизъюнктный покров recover: 20 контрольных при K=16 → FinalReliable ровно 20
+// (излишек не считается дважды), волна перечита не теряется.
+func TestRegionPanicDropCoverDisjoint(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FreezePanics = 100
+	_, r := newTestRegion(t, cfg)
+	spawnResident(t, r, 100)
+	for i := 0; i < 20; i++ {
+		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
+	}
+	r.metro.tick.Add(1)
+	r.forcePanic = phaseFold
+	r.safeStep()
+	r.forcePanic = 0
+	if got := r.ctrl.Stats().FinalReliable; got != 20 {
+		t.Fatalf("FinalReliable = %d; want 20 (излишек сверх K не считается дважды)", got)
+	}
+	if got := r.state.KindCounts[transport.KindEnterWorld-1]; got != 0 {
+		t.Fatalf("письма паник-шага применены: %d; want 0", got)
 	}
 }

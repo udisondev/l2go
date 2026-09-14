@@ -145,7 +145,8 @@ func (r *Region) Stats() RegionStats {
 		Failed:       r.failed.Load(),
 		Frozen:       r.frozenFlag.Load(),
 		Residents:    int(r.resCount.Load()),
-		Backlog:      len(r.outbox), // гонка допустима: индикативная метрика очереди
+		Backlog:      int(r.backlogLen.Load()),
+		DrainOverrun: uint64(r.drainOverrun.Load()),
 		PhaseDrain:   r.phDrain.Load(),
 		PhaseFold:    r.phFold.Load(),
 		PhaseEffects: r.phEffects.Load(),
@@ -164,6 +165,7 @@ type RegionStats struct {
 	Frozen       bool
 	Residents    int
 	Backlog      int
+	DrainOverrun uint64 // кумулятивные письма сверх drainBudget (пачка неделима)
 	PhaseDrain   uint64
 	PhaseFold    uint64
 	PhaseEffects uint64
@@ -290,9 +292,12 @@ func (r *Region) recovered(p any) {
 	// фазы (эффекты/B/publish) письма уже применили — дроп дал бы ложный
 	// reliable-инцидент.
 	if phase <= phaseFold {
+		// дизъюнктный покров шага: ctrlBatch — вся первая волна (приоритет ≤K и
+		// излишек), rereadBuf — волна перечита AckNotify; restBuf не трогаем:
+		// его излишек — копии ctrlBatch (двойной счёт инцидентов)
 		r.ctrl.DropBatch(r.ctrlBatch)
 		r.ctrl.DropBatch(r.entityBuf)
-		r.ctrl.DropBatch(r.restBuf) // излишек контрольных + волна перечита AckNotify
+		r.ctrl.DropBatch(r.rereadBuf)
 	}
 	r.adviseBuf = r.adviseBuf[:0]
 	if err := r.log.LogPanic(r.stepTick, phase); err != nil {
@@ -343,6 +348,7 @@ func (r *Region) step() {
 	}
 
 	r.curPhase = phaseDrain
+	r.resetDrain()
 	r.injectPanic(phaseDrain)
 	r.drain(n)
 	r.phDrain.Add(1)
@@ -404,10 +410,19 @@ func (r *Region) injectPanic(phase byte) {
 // стартом tick mod len под бюджетом drainBudget (остаток ≥1 ⇒ пачка целиком,
 // перерасход метится стопом обхода). После дрена — AckNotify и перечит
 // (протокол читателя P3.1): письмо в окне дрена обязано дать следующий шаг.
-func (r *Region) drain(n Tick) {
+// resetDrain — сброс буферов дрена на старте шага: паника фазы дрена не
+// дропает пачки прошлого успешного шага.
+func (r *Region) resetDrain() {
 	r.portions = r.portions[:0]
 	r.records = r.records[:0]
+	r.ctrlBatch = r.ctrlBatch[:0]
+	r.prioBuf = r.prioBuf[:0]
+	r.restBuf = r.restBuf[:0]
+	r.rereadBuf = r.rereadBuf[:0]
+	r.entityBuf = r.entityBuf[:0]
+}
 
+func (r *Region) drain(n Tick) {
 	// контрольный ящик — первым
 	r.ctrlBatch = r.ctrl.ExtractInto(r.ctrlToken, r.ctrlBatch[:0])
 	r.prioBuf = r.prioBuf[:0]
@@ -428,7 +443,6 @@ func (r *Region) drain(n Tick) {
 
 	// сущностные ящики: кольцевой старт, бюджет писем
 	budget := r.cfg.DrainBudget
-	r.entityBuf = r.entityBuf[:0]
 	if len(r.residents) > 0 {
 		start := int(uint64(n) % uint64(len(r.residents)))
 		for i := 0; i < len(r.residents) && budget > 0; i++ {
