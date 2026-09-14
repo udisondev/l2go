@@ -68,17 +68,22 @@ func TestRegionStressSenders(t *testing.T) {
 			}
 		}(s)
 	}
+	// целевая волна сверх FAF-капа одного ящика (1024): классовый дроп обязателен
+	for i := 0; i < 2048; i++ {
+		reg.Send(transport.Envelope{To: transport.Addr{Entity: ids[0]}, FromID: 5, Kind: transport.KindClientFrame})
+	}
+	sentFAF.Add(2048)
 	swg.Wait()
 
 	// затишье: все глубины нулевые (drainBudget не исчерпывается при таком потоке);
 	// глубины — атомики ящиков, население стабильно (записи закрыты стартом Run)
 	deadline := time.After(5 * time.Second)
-	for r.depthTotal() != 0 {
+	for depthTotal(r) != 0 {
 		select {
 		case <-deadline:
 			cancel()
 			wg.Wait()
-			t.Fatalf("затишье не наступило: глубина %d", r.depthTotal())
+			t.Fatalf("затишье не наступило: глубина %d", depthTotal(r))
 		default:
 			time.Sleep(time.Millisecond)
 		}
@@ -96,8 +101,16 @@ func TestRegionStressSenders(t *testing.T) {
 	}
 	appliedFAF := r.state.KindCounts[transport.KindClientFrame-1]
 	droppedFAF := r.ctrl.Stats().DroppedFAF
+	// FAF-дропы ящиков жителей: кап FAF пробивается целевой волной (одиночные
+	// дропы невозможны — ящики дренятся), метрики собираются после остановки
+	for _, res := range r.residents {
+		droppedFAF += res.box.Stats().DroppedFAF
+	}
 	if got, want := appliedFAF+uint64(droppedFAF), uint64(sentFAF.Load()); got != want {
 		t.Errorf("FAF применено+дропнуто %d; want %d (применено %d, дропнуто %d)", got, want, appliedFAF, droppedFAF)
+	}
+	if droppedFAF == 0 {
+		t.Errorf("классовый FAF-дроп не фальсифицирован: волна сверх капа не дропнулась")
 	}
 	if st := r.ctrl.Stats(); st.FinalReliable != 0 {
 		t.Errorf("финальные дропы reliable = %d (инцидент)", st.FinalReliable)
@@ -105,4 +118,14 @@ func TestRegionStressSenders(t *testing.T) {
 	if st := r.Stats(); st.Failed != 0 || st.Frozen {
 		t.Errorf("регион деградировал: %+v", st)
 	}
+}
+
+// depthTotal — сумма глубин ящиков региона (метрика затишья; население
+// стабильно — записи закрыты стартом Run, глубины — атомики).
+func depthTotal(r *Region) int64 {
+	total := r.ctrl.Depth()
+	for _, res := range r.residents {
+		total += res.box.Depth()
+	}
+	return total
 }

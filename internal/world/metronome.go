@@ -34,7 +34,7 @@ func DefaultConfig() Config {
 		HeartbeatTicks:  10,
 		FreezePanics:    3,
 		LogPayloads:     false,
-		LogMaxFileBytes: 64 << 20,
+		LogMaxFileBytes: defaultMaxFileBytes,
 	}
 }
 
@@ -84,13 +84,9 @@ type Metronome struct {
 	mu        sync.Mutex // записи сетов и подписок (редкие)
 	activePtr atomic.Pointer[[]*Region]
 	allPtr    atomic.Pointer[[]*Region]
-	subsPtr   atomic.Pointer[[]subscriber]
+	subsPtr   atomic.Pointer[[]chan struct{}]
 
 	alerts atomic.Uint64 // счётчик алертов вотчдога
-}
-
-type subscriber struct {
-	ch chan struct{}
 }
 
 // NewMetronome создаёт метроном; конфигурация валидируется (недоверенный вход
@@ -100,11 +96,10 @@ func NewMetronome(cfg Config) (*Metronome, error) {
 		return nil, err
 	}
 	m := &Metronome{cfg: cfg, period: cfg.Period()}
-	emptyActive := []*Region{}
-	emptyAll := []*Region{}
-	emptySubs := []subscriber{}
-	m.activePtr.Store(&emptyActive)
-	m.allPtr.Store(&emptyAll)
+	var emptyRegions []*Region
+	var emptySubs []chan struct{}
+	m.activePtr.Store(&emptyRegions)
+	m.allPtr.Store(&emptyRegions)
 	m.subsPtr.Store(&emptySubs)
 	return m, nil
 }
@@ -142,9 +137,9 @@ func (m *Metronome) Run(ctx context.Context) {
 					}
 				}
 			}
-			for _, s := range *m.subsPtr.Load() {
+			for _, ch := range *m.subsPtr.Load() {
 				select {
-				case s.ch <- struct{}{}:
+				case ch <- struct{}{}:
 				default:
 				}
 			}
@@ -158,9 +153,9 @@ func (m *Metronome) Run(ctx context.Context) {
 // Эпизоды деактивированных регионов сбрасываются (реактивация в лаге алертит
 // заново, «залипших» эпизодов нет).
 func (m *Metronome) watchdog(n Tick, active []*Region, episodes map[*Region]bool) {
-	inActive := make(map[*Region]bool, len(active))
+	// 0 аллокаций на такт: эпизоды — единственный map (живёт весь Run),
+	// принадлежность активным — линейный поиск (регионов десятки)
 	for _, r := range active {
-		inActive[r] = true
 		lag := uint64(n) - r.doneTick.Load()
 		if lag > uint64(m.cfg.WatchdogTicks) {
 			if !episodes[r] {
@@ -174,10 +169,19 @@ func (m *Metronome) watchdog(n Tick, active []*Region, episodes map[*Region]bool
 		}
 	}
 	for r := range episodes {
-		if !inActive[r] {
-			delete(episodes, r)
+		if !containsRegion(active, r) {
+			delete(episodes, r) // деактивация сбрасывает эпизод: реактивация алертит заново
 		}
 	}
+}
+
+func containsRegion(rs []*Region, r *Region) bool {
+	for _, x := range rs {
+		if x == r {
+			return true
+		}
+	}
+	return false
 }
 
 // Activate включает регион в активный сет (no-op при повторной активации).
@@ -194,6 +198,11 @@ func (m *Metronome) Deactivate(r *Region) {
 
 func (m *Metronome) register(r *Region) {
 	m.addSet(&m.allPtr, r)
+}
+
+// unregister выводит регион из все-сета (фолбэк больше не звонит мёртвому).
+func (m *Metronome) unregister(r *Region) {
+	m.removeSet(&m.allPtr, r)
 }
 
 func (m *Metronome) addSet(ptr *atomic.Pointer[[]*Region], r *Region) {
@@ -238,19 +247,18 @@ func (m *Metronome) Subscribe() (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
 	m.mu.Lock()
 	cur := *m.subsPtr.Load()
-	next := make([]subscriber, len(cur), len(cur)+1)
+	next := make([]chan struct{}, len(cur), len(cur)+1)
 	copy(next, cur)
-	s := subscriber{ch: ch}
-	next = append(next, s)
+	next = append(next, ch)
 	m.subsPtr.Store(&next)
 	m.mu.Unlock()
 	unsub := func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		cur := *m.subsPtr.Load()
-		next := make([]subscriber, 0, len(cur))
+		next := make([]chan struct{}, 0, len(cur))
 		for _, x := range cur {
-			if x.ch != ch {
+			if x != ch {
 				next = append(next, x)
 			}
 		}

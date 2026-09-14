@@ -74,11 +74,14 @@ func TestRegionPhaseCounters(t *testing.T) {
 	spawnResident(t, r, 100)
 	r.step()
 	st := r.Stats()
-	if st.PhDrain != 1 || st.PhFold != 1 || st.PhEffects != 1 || st.PhB != 1 || st.PhPublish != 1 || st.PhAck != 1 {
+	if st.PhaseDrain != 1 || st.PhaseFold != 1 || st.PhaseEffects != 1 || st.PhaseB != 1 || st.PhasePublish != 1 || st.PhaseAck != 1 {
 		t.Fatalf("фазовые счётчики после шага: %+v", st)
 	}
 	if st.DoneTick != r.metro.Now() {
 		t.Fatalf("doneTick = %d; want %d", st.DoneTick, r.metro.Now())
+	}
+	if got := r.snapPtr.Load(); got == nil || got.tick != r.metro.Now() {
+		t.Fatalf("снапшот не несёт тик шага: %+v", got)
 	}
 }
 
@@ -87,6 +90,7 @@ func TestRegionPhaseCounters(t *testing.T) {
 func TestRegionCtrlBudgetK(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.CtrlBudget = 16
+	cfg.DrainBudget = 5 // контрольные вне бюджета дрена: применяются всегда
 	_, r := newTestRegion(t, cfg)
 	spawnResident(t, r, 100)
 	for i := 0; i < 20; i++ {
@@ -144,15 +148,17 @@ func TestRegionDrainRingStart(t *testing.T) {
 	for _, id := range ids {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: id}, FromID: 5, Kind: transport.KindAggro})
 	}
+	const n = 7 // 7 mod 3 = 1: обход с жителя[1], не с головы
+	r.metro.tick.Store(n)
 	r.step()
 	if len(r.records) != 3 {
 		t.Fatalf("пачек %d; want 3 (полный оборот)", len(r.records))
 	}
-	start := int(uint64(r.state.Steps-1)+1) % 3 // шаг начался с residents[start]
-	_ = start
-	// порядок пачек — с кольцевой точки, а не с головы
-	if r.records[0].Box == r.records[2].Box {
-		t.Fatalf("порядок пачек не кольцевой")
+	want := []transport.EntityID{ids[1], ids[2], ids[0]} // кольцо c tick mod len
+	for i, rec := range r.records {
+		if rec.Box != want[i] {
+			t.Fatalf("пачка[%d] = ящик %d; want %d (кольцевой старт с tick mod len)", i, rec.Box, want[i])
+		}
 	}
 }
 
@@ -201,15 +207,27 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	if st.Failed != 1 || st.DoneTick != done {
 		t.Fatalf("после паники: failed=%d doneTick=%d; want 1 и %d", st.Failed, st.DoneTick, done)
 	}
-	if st.PhDrain != 2 || st.PhFold != 1 {
-		t.Fatalf("паника в fold: drain = %d (want 2, дорос), fold = %d (want 1, не дорос)", st.PhDrain, st.PhFold)
+	if st.PhaseDrain != 2 || st.PhaseFold != 1 {
+		t.Fatalf("паника в fold: drain = %d (want 2, дорос), fold = %d (want 1, не дорос)", st.PhaseDrain, st.PhaseFold)
 	}
 	r.forcePanic = 0
 	r.safeStep() // успешный шаг — серия сброшена
-	r.forcePanic = phaseB
-	for i := 0; i < cfg.FreezePanics; i++ {
-		r.safeStep()
+	if st := r.Stats(); st.Failed != 1 {
+		t.Fatalf("после успеха серия не сброшена: failed = %d", st.Failed)
 	}
+	// паника в фазе B: drain/fold доросли, B/publish/ack — нет (дельтами)
+	beforeB := r.Stats()
+	r.forcePanic = phaseB
+	r.safeStep()
+	st = r.Stats()
+	if st.PhaseDrain != beforeB.PhaseDrain+1 || st.PhaseFold != beforeB.PhaseFold+1 {
+		t.Fatalf("паника в B: drain/fold не доросли: %+v против %+v", st, beforeB)
+	}
+	if st.PhaseB != beforeB.PhaseB || st.PhasePublish != beforeB.PhasePublish || st.PhaseAck != beforeB.PhaseAck {
+		t.Fatalf("паника в B: счётчики B/publish/ack доросли: %+v против %+v", st, beforeB)
+	}
+	r.safeStep() // streak: паника в B (1) + следующая
+	r.safeStep() // 3-я в серии → заморозка
 	st = r.Stats()
 	if !st.Frozen {
 		t.Fatalf("серия паник не заморозила регион")
@@ -217,7 +235,7 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	r.forcePanic = 0
 	before := r.Stats()
 	r.safeStep() // замороженный не исполняет шаги
-	if r.Stats().PhAck != before.PhAck {
+	if r.Stats().PhaseAck != before.PhaseAck {
 		t.Fatalf("замороженный регион исполняет шаги")
 	}
 }
@@ -351,11 +369,8 @@ func TestRegionHeartbeatFallbackWakes(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}
-	if got := r.state.KindCounts[transport.KindLinkDead-1]; got != 0 {
-		_ = got // state читается только после остановки региона
-	}
 	cancel()
-	wg.Wait()
+	wg.Wait() // state читается только после остановки региона
 	if got := r.state.KindCounts[transport.KindLinkDead-1]; got != 1 {
 		t.Fatalf("письмо применено %d раз; want 1", got)
 	}
@@ -389,5 +404,82 @@ func TestRegionCloseLogOnExit(t *testing.T) {
 	}
 	if len(steps) < 3 {
 		t.Fatalf("записей %d; want ≥3 (каждый шаг пишется)", len(steps))
+	}
+}
+
+// Равное число рождений и удалений в шаге: кэш проекции перестраивается по
+// поколению населения, не по длине (мажор S8: fold ходит по мёртвой проекции).
+func TestRegionPopulationCompensatingStep(t *testing.T) {
+	_, r := newTestRegion(t, DefaultConfig())
+	a := spawnResident(t, r, 100)
+	r.step()
+	res := StepResult{
+		Births:  []Birth{{Ent: Entity{Owner: 1, HP: 55}}},
+		Retires: []Retire{{ID: a}},
+	}
+	r.applyEffects(res)
+	r.metro.tick.Add(1)
+	r.step()
+	if len(r.ents) != 1 || r.ents[0].ID != r.residents[0].ent.ID {
+		t.Fatalf("проекция устарела: ents=%v residents[0]=%d", idsOf(r.ents), r.residents[0].ent.ID)
+	}
+	if r.ents[0].Beat != r.metro.Now() {
+		t.Fatalf("новорождённый без heartbeat: Beat = %d; want %d", r.ents[0].Beat, r.metro.Now())
+	}
+}
+
+func idsOf(ents []*Entity) []transport.EntityID {
+	ids := make([]transport.EntityID, 0, len(ents))
+	for _, e := range ents {
+		ids = append(ids, e.ID)
+	}
+	return ids
+}
+
+// Письмо в окне перечита (между изъятием и AckNotify) + паника fold: волна
+// перечита классово дропнута — тихая потеря reliable запрещена (F3).
+func TestRegionPanicDropsRereadWave(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FreezePanics = 100
+	_, r := newTestRegion(t, cfg)
+	spawnResident(t, r, 100)
+	// дрен вручную: изъятие, письмо в окне, AckNotify-перечит подхватывает
+	r.ctrlBatch = r.ctrl.ExtractInto(r.ctrlToken, r.ctrlBatch[:0])
+	r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
+	r.rereadBuf = r.ctrl.ExtractInto(r.ctrlToken, r.rereadBuf[:0])
+	r.restBuf = append(r.restBuf[:0], r.rereadBuf...)
+	r.stepTick = r.metro.Now()
+	r.curPhase = phaseFold
+	r.recovered("проба окна перечита")
+	st := r.ctrl.Stats()
+	if st.FinalReliable != 1 {
+		t.Fatalf("волна перечита не классово дропнута: FinalReliable = %d; want 1", st.FinalReliable)
+	}
+}
+
+// Ошибка записи лога (не EOF) — заморозка региона + лог-алерт: лог порций —
+// обязательство D5, молчаливая дыра недопустима (F27).
+func TestRegionFreezeOnLogWriteError(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FreezePanics = 100
+	_, r := newTestRegion(t, cfg)
+	spawnResident(t, r, 100)
+	r.step()
+	if err := r.log.file.Close(); err != nil { // писатель сломан: следующий кадр за буфером даст ошибку записи
+		t.Fatalf("close: %v", err)
+	}
+	big := make([]transport.Envelope, 2048) // кадр заведомо больше bufio-буфера (4 КиБ)
+	for i := range big {
+		big[i] = transport.Envelope{FromID: 5, Kind: transport.KindAggro, Payload: make([]byte, 64)}
+	}
+	// шаг с большой волной контрольных (вне бюджета дрена): кадр больше
+	// bufio-буфера выталкивает запись в закрытый файл — ошибка записи
+	for range big {
+		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
+	}
+	r.metro.tick.Add(1)
+	r.step()
+	if !r.Stats().Frozen {
+		t.Fatalf("ошибка записи лога не заморозила регион")
 	}
 }

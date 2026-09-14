@@ -117,7 +117,8 @@ type PortionLog struct {
 	written int64
 	dead    bool
 
-	enc []byte // переиспользуемый буфер кадра
+	enc    []byte // переиспользуемый буфер тела кадра
+	prefix []byte // переиспользуемый префикс кадра (длина + crc32)
 }
 
 // NewPortionLog создаёт писателя в каталоге dir (создаётся при отсутствии).
@@ -128,7 +129,10 @@ func NewPortionLog(dir string, region RegionID, period time.Duration, payloads b
 	if period <= 0 {
 		return nil, fmt.Errorf("world: период метронома для лога порций = %v; want > 0", period)
 	}
-	if maxFileBytes <= 0 {
+	if maxFileBytes < 0 {
+		return nil, fmt.Errorf("world: размер файла лога порций = %d; want ≥ 0", maxFileBytes)
+	}
+	if maxFileBytes == 0 {
 		maxFileBytes = defaultMaxFileBytes
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -159,8 +163,11 @@ func (l *PortionLog) openFile() error {
 	}
 	l.file = f
 	l.w = bufio.NewWriterSize(f, writeBufSize)
-	l.written = int64(len(l.encodeHeader()))
-	l.w.Write(l.encodeHeader())
+	hdr := l.encodeHeader()
+	l.written = int64(len(hdr))
+	if _, err := l.w.Write(hdr); err != nil {
+		return fmt.Errorf("world: заголовок лога порций: %w", err)
+	}
 	return nil
 }
 
@@ -211,16 +218,14 @@ func (l *PortionLog) writeFrame(body []byte) error {
 			l.dead = true
 			return err
 		}
+		// кадр крупнее maxFile пишется без повторной ротации: один
+		// негабаритный кадр допустим, «файл на кадр» — деградация
 	}
-	var hdr [binary.MaxVarintLen64]byte
-	n := binary.PutUvarint(hdr[:], uint64(len(body)))
-	if _, err := l.w.Write(hdr[:n]); err != nil {
-		l.dead = true
-		return fmt.Errorf("world: запись лога порций: %w", err)
-	}
-	var crc [4]byte
-	binary.LittleEndian.PutUint32(crc[:], crc32.ChecksumIEEE(body))
-	if _, err := l.w.Write(crc[:]); err != nil {
+	crc := crc32.ChecksumIEEE(body)
+	l.prefix = binary.AppendUvarint(l.prefix[:0], uint64(len(body)))
+	l.prefix = append(l.prefix,
+		byte(crc), byte(crc>>8), byte(crc>>16), byte(crc>>24))
+	if _, err := l.w.Write(l.prefix); err != nil {
 		l.dead = true
 		return fmt.Errorf("world: запись лога порций: %w", err)
 	}
@@ -319,34 +324,11 @@ func appendEnvelope(buf []byte, env transport.Envelope, payloads bool) []byte {
 	return buf
 }
 
-// scanMaxSeq — максимальный seq существующих файлов региона.
-func scanMaxSeq(dir string, region RegionID) int {
-	files, _ := filepath.Glob(filepath.Join(dir, fmt.Sprintf("portion-%d-*.log", region)))
-	max := 0
-	for _, f := range files {
-		base := strings.TrimSuffix(filepath.Base(f), ".log")
-		parts := strings.Split(base, "-")
-		if len(parts) != 3 {
-			continue
-		}
-		seq, err := strconv.Atoi(parts[2])
-		if err != nil || seq <= 0 {
-			continue
-		}
-		if seq > max {
-			max = seq
-		}
-	}
-	return max
-}
-
-// ReadPortionLogDir читает сессию региона: цепочку файлов по возрастанию seq.
-// Заголовки файлов обязаны совпадать; оборванный хвост даёт ErrTruncated
-// после валидных записей.
-func ReadPortionLogDir(dir string, region RegionID) (FileHeader, []StepRecord, []PanicRecord, error) {
+// listSeqFiles — файлы сессии региона по возрастанию seq.
+func listSeqFiles(dir string, region RegionID) []string {
 	files, err := filepath.Glob(filepath.Join(dir, fmt.Sprintf("portion-%d-*.log", region)))
 	if err != nil {
-		return FileHeader{}, nil, nil, fmt.Errorf("world: glob лога порций: %w", err)
+		return nil // glob по шаблону не ошибается иначе как по I/O; пусто — нет сессии
 	}
 	seqs := make([]int, 0, len(files))
 	bySeq := make(map[int]string, len(files))
@@ -364,16 +346,42 @@ func ReadPortionLogDir(dir string, region RegionID) (FileHeader, []StepRecord, [
 		bySeq[seq] = f
 	}
 	sort.Ints(seqs)
+	ordered := make([]string, 0, len(seqs))
+	for _, seq := range seqs {
+		ordered = append(ordered, bySeq[seq])
+	}
+	return ordered
+}
+
+// scanMaxSeq — максимальный seq существующих файлов региона.
+func scanMaxSeq(dir string, region RegionID) int {
+	files := listSeqFiles(dir, region)
+	if len(files) == 0 {
+		return 0
+	}
+	seq, _ := strconv.Atoi(strings.Split(strings.TrimSuffix(filepath.Base(files[len(files)-1]), ".log"), "-")[2])
+	return seq
+}
+
+// ReadPortionLogDir читает сессию региона: цепочку файлов по возрастанию seq.
+// Заголовки файлов обязаны совпадать; оборванный хвост даёт ErrTruncated
+// после валидных записей.
+func ReadPortionLogDir(dir string, region RegionID) (FileHeader, []StepRecord, []PanicRecord, error) {
+	files := listSeqFiles(dir, region)
 	var hdr FileHeader
 	var steps []StepRecord
 	var panics []PanicRecord
-	for i, seq := range seqs {
-		data, err := os.ReadFile(bySeq[seq])
+	for i, path := range files {
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return hdr, steps, panics, fmt.Errorf("world: чтение лога порций: %w", err)
 		}
+		if len(data) == 0 {
+			continue // пустой файл: kill -9 между созданием и первым сбросом буфера
+		}
+		seq := i + 1
 		fh, fs, fp, err := parseFile(data)
-		if i == 0 {
+		if len(steps) == 0 && len(panics) == 0 && hdr.Region == 0 {
 			hdr = fh
 		} else if err == nil || errors.Is(err, ErrTruncated) {
 			if fh != hdr {
@@ -427,7 +435,6 @@ func parseFile(data []byte) (FileHeader, []StepRecord, []PanicRecord, error) {
 		if n <= 0 || bodyLen > uint64(len(data)) {
 			return hdr, steps, panics, ErrTruncated
 		}
-		frameStart := pos
 		pos += n
 		if pos+4 > len(data) {
 			return hdr, steps, panics, ErrTruncated
@@ -461,7 +468,6 @@ func parseFile(data []byte) (FileHeader, []StepRecord, []PanicRecord, error) {
 		default:
 			return hdr, steps, panics, fmt.Errorf("world: лог порций: неизвестный тип записи %d", body[0])
 		}
-		_ = frameStart
 	}
 	return hdr, steps, panics, nil
 }
@@ -529,8 +535,9 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 	st := StepRecord{}
 	st.Tick = Tick(c.uvarint())
 	st.Delta = c.uvarint()
-	nb := int(c.uvarint())
-	if c.err == nil && nb <= len(body) {
+	nbu := c.uvarint()
+	if c.err == nil && nbu <= uint64(len(body)) {
+		nb := int(nbu)
 		st.Births = make([]BirthRecord, 0, nb)
 		for i := 0; i < nb; i++ {
 			var b BirthRecord
@@ -542,24 +549,27 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 			st.Births = append(st.Births, b)
 		}
 	}
-	nr := int(c.uvarint())
-	if c.err == nil && nr <= len(body) {
+	nru := c.uvarint()
+	if c.err == nil && nru <= uint64(len(body)) {
+		nr := int(nru)
 		st.Retires = make([]Retire, 0, nr)
 		for i := 0; i < nr; i++ {
 			st.Retires = append(st.Retires, Retire{ID: transport.EntityID(c.uvarint())})
 		}
 	}
-	np := int(c.uvarint())
-	if c.err == nil && np <= len(body) {
+	npu := c.uvarint()
+	if c.err == nil && npu <= uint64(len(body)) {
+		np := int(npu)
 		st.Portions = make([]PortionRecord, 0, np)
 		for i := 0; i < np; i++ {
 			var p PortionRecord
 			p.Box = transport.EntityID(c.uvarint())
 			p.Mark = c.uvarint()
-			ne := int(c.uvarint())
-			if c.err != nil || ne > len(body) {
+			neu := c.uvarint()
+			if c.err != nil || neu > uint64(len(body)) {
 				break
 			}
+			ne := int(neu)
 			p.Envs = make([]transport.Envelope, 0, ne)
 			for j := 0; j < ne; j++ {
 				var env transport.Envelope
@@ -583,8 +593,9 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 			st.Portions = append(st.Portions, p)
 		}
 	}
-	na := int(c.uvarint())
-	if c.err == nil && na <= len(body) {
+	nau := c.uvarint()
+	if c.err == nil && nau <= uint64(len(body)) {
+		na := int(nau)
 		st.Advisory = make([]AdvisoryIn, 0, na)
 		for i := 0; i < na; i++ {
 			st.Advisory = append(st.Advisory, AdvisoryIn{
@@ -634,13 +645,14 @@ func parseEntity(c *parseCursor) (Entity, error) {
 		e.Servants[i].Pos.Y = int32(int64(c.uvarint()))
 		e.Servants[i].Pos.Z = int32(int64(c.uvarint()))
 	}
-	nt := int(c.uvarint())
+	ntu := c.uvarint()
 	if c.err != nil {
 		return e, c.err
 	}
-	if nt > len(c.data) {
-		return e, fmt.Errorf("world: лог порций: transfer-записей %d больше тела", nt)
+	if ntu > uint64(len(c.data)) {
+		return e, fmt.Errorf("world: лог порций: transfer-записей %d больше тела", ntu)
 	}
+	nt := int(ntu)
 	if nt > 0 {
 		e.Transfers = make([]TransferRecord, 0, nt)
 		for i := 0; i < nt; i++ {

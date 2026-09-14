@@ -34,14 +34,19 @@ func newBenchRegion(b *testing.B, cfg Config, population int) *Region {
 	return r
 }
 
-// deliverLoad — доставка per писем каждому жителю (входит в стоимость шага:
-// реальный дрен измеряется вместе с доставкой).
+// deliverLoad — доставка per писем каждому жителю плюс контрольная смесь
+// (каждое 16-е письмо — контрольное в ящик региона; приоритетная ветвь K и
+// общий список в цене) — по критерию F7.
 func deliverLoad(r *Region, per int) {
+	n := 0
 	for _, res := range r.residents {
 		for j := 0; j < per; j++ {
-			r.reg.Send(transport.Envelope{
-				To: transport.Addr{Entity: res.ent.ID}, FromID: 5, Kind: transport.KindAggro,
-			})
+			if n%16 == 0 {
+				r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
+			} else {
+				r.reg.Send(transport.Envelope{To: transport.Addr{Entity: res.ent.ID}, FromID: 5, Kind: transport.KindAggro})
+			}
+			n++
 		}
 	}
 }
@@ -121,10 +126,11 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 		m.tick.Add(1)
 		r.step()
 	})
-	// фактическая раскладка Idle-шага: rand.New+PCG ≈ 2, snapshot ≈ 1;
-	// бюджет 6 — с запасом на runtime-мелочь, но без «плюс-минус лапоть»
-	t.Logf("Idle-шаг: %.0f аллокаций (бюджет ≤ 6)", allocs)
-	if allocs > 6 {
-		t.Fatalf("аллокаций на Idle-шаг = %.0f; want ≤ 6 (RNG+снапшот — единственные допустимые)", allocs)
+	t.Logf("Idle-шаг: %.0f аллокаций", allocs)
+	// точная раскладка: rand.New(PCG) = 1, публикация снапшота = 1; всё прочее
+	// (дрен, лог-кадр) — 0 по построению; изменение числа — regress или
+	// осознанная правка бюджета
+	if allocs != 2 {
+		t.Fatalf("аллокаций на Idle-шаг = %.0f; want 2 (rand.New + снапшот)", allocs)
 	}
 }

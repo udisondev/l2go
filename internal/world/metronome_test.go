@@ -50,9 +50,9 @@ func TestMetronomeSubscribe(t *testing.T) {
 		t.Fatalf("подписчик не получил звонка")
 	}
 	unsub()
-	// после отписки звонки подписчику не идут (канал не переполняется и не блокирует метроном)
-	for i := 0; i < 100 && len(ch) < cap(ch); i++ {
-		time.Sleep(time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	if len(ch) != 0 { // после отписки звонки подписчику не идут
+		t.Fatalf("отписанный канал получает звонки: %d", len(ch))
 	}
 }
 
@@ -95,4 +95,29 @@ func TestMetronomeWatchdog(t *testing.T) {
 	if m.Alerts() != before {
 		t.Fatalf("деактивированный регион продолжает получать алерты (эпизод не сброшен)")
 	}
+}
+
+// Метрика dropped: регион в сете не читает звонок — метроном коалесинг-дропает.
+func TestMetronomeDroppedMetric(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Hz = 1000
+	m, err := NewMetronome(cfg)
+	if err != nil {
+		t.Fatalf("NewMetronome: %v", err)
+	}
+	r := &Region{metro: m, ringCh: make(chan struct{}, 1), fbCh: make(chan struct{}, 1)}
+	m.Activate(r)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.Run(ctx)
+	deadline := time.After(3 * time.Second)
+	for r.dropped.Load() == 0 { // канал не вычитается: регион «занят», звонок в буфере
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatalf("дроп звонка не посчитан")
+		default:
+		}
+	}
+	m.Deactivate(r)
 }

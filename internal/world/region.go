@@ -62,15 +62,20 @@ type Region struct {
 	ringCh chan struct{} // дверной звонок метронома (cap-1)
 	fbCh   chan struct{} // heartbeat-фолбэк (cap-1)
 
-	doneTick atomic.Uint64
-	dropped  atomic.Uint64
-	failed   atomic.Uint64
-	frozenF  atomic.Bool
-	resCount atomic.Int64
+	doneTick     atomic.Uint64
+	dropped      atomic.Uint64
+	failed       atomic.Uint64
+	frozenFlag   atomic.Bool
+	resCount     atomic.Int64
+	backlogLen   atomic.Int64
+	drainOverrun atomic.Int64 // кумулятивные письма сверх drainBudget (пачка неделима)
 
 	// Только горутина региона:
 	residents    []*resident // сортированный по ent.ID слайс (обход — D3)
 	ents         []*Entity   // кэш проекции для fold
+	popVersion   uint64      // поколение населения: инкремент на Spawn/Remove
+	entsVer      uint64      // поколение, на котором построен кэш
+	stepTick     Tick        // номер текущего шага (для маркера паники)
 	state        *State
 	lastStep     Tick
 	slept        bool // регион деактивирован: первый шаг после сна — delta=0
@@ -135,46 +140,36 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 // принадлежит горутине региона, наружу — через Dump после остановки).
 func (r *Region) Stats() RegionStats {
 	return RegionStats{
-		DoneTick:  Tick(r.doneTick.Load()),
-		Dropped:   r.dropped.Load(),
-		Failed:    r.failed.Load(),
-		Frozen:    r.frozenF.Load(),
-		Residents: int(r.resCount.Load()),
-		Backlog:   len(r.outbox), // гонка допустима: индикативная метрика очереди
-		PhDrain:   r.phDrain.Load(),
-		PhFold:    r.phFold.Load(),
-		PhEffects: r.phEffects.Load(),
-		PhB:       r.phB.Load(),
-		PhPublish: r.phPublish.Load(),
-		PhAck:     r.phAck.Load(),
+		DoneTick:     Tick(r.doneTick.Load()),
+		Dropped:      r.dropped.Load(),
+		Failed:       r.failed.Load(),
+		Frozen:       r.frozenFlag.Load(),
+		Residents:    int(r.resCount.Load()),
+		Backlog:      len(r.outbox), // гонка допустима: индикативная метрика очереди
+		PhaseDrain:   r.phDrain.Load(),
+		PhaseFold:    r.phFold.Load(),
+		PhaseEffects: r.phEffects.Load(),
+		PhaseB:       r.phB.Load(),
+		PhasePublish: r.phPublish.Load(),
+		PhaseAck:     r.phAck.Load(),
 	}
 }
 
 // RegionStats — снимок метрик региона: dropped/doneTick читаемы, фазовые
 // счётчики наблюдаемы после шага.
 type RegionStats struct {
-	DoneTick  Tick
-	Dropped   uint64
-	Failed    uint64
-	Frozen    bool
-	Residents int
-	Backlog   int
-	PhDrain   uint64
-	PhFold    uint64
-	PhEffects uint64
-	PhB       uint64
-	PhPublish uint64
-	PhAck     uint64
-}
-
-// depthTotal — сумма глубин ящиков региона (метрика затишья для тестов;
-// население стабильно — записи закрыты стартом Run).
-func (r *Region) depthTotal() int64 {
-	total := r.ctrl.Depth()
-	for _, res := range r.residents {
-		total += res.box.Depth()
-	}
-	return total
+	DoneTick     Tick
+	Dropped      uint64
+	Failed       uint64
+	Frozen       bool
+	Residents    int
+	Backlog      int
+	PhaseDrain   uint64
+	PhaseFold    uint64
+	PhaseEffects uint64
+	PhaseB       uint64
+	PhasePublish uint64
+	PhaseAck     uint64
 }
 
 // Spawn рождает жителя: аллокация ящика (Register + Claim, токен = ID),
@@ -194,6 +189,7 @@ func (r *Region) Spawn(ent Entity) (transport.EntityID, error) {
 	copy(r.residents[idx+1:], r.residents[idx:])
 	r.residents[idx] = res
 	r.resCount.Add(1)
+	r.popVersion++
 	r.syncMembership()
 	return res.ent.ID, nil
 }
@@ -210,6 +206,7 @@ func (r *Region) Remove(id transport.EntityID) {
 	r.reg.Retire(id)
 	r.residents = append(r.residents[:idx], r.residents[idx+1:]...)
 	r.resCount.Add(-1)
+	r.popVersion++
 	r.syncMembership()
 }
 
@@ -219,28 +216,39 @@ func (r *Region) Remove(id transport.EntityID) {
 // закрыто тик-звонком), замороженный не шагает. На выходе по ctx горутина
 // сама закрывает лог порций.
 func (r *Region) Run(ctx context.Context) {
+	defer r.shutdown()
 	defer r.closeLog()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-r.ctrl.Notify():
-			if r.frozenF.Load() {
+			if r.frozenFlag.Load() {
 				continue
 			}
 			r.safeStep()
 		case <-r.ringCh:
-			if r.frozenF.Load() {
+			if r.frozenFlag.Load() {
 				continue
 			}
 			r.safeStep()
 		case <-r.fbCh:
-			if r.frozenF.Load() || r.activeFlag || r.ctrl.Depth() == 0 {
+			if r.frozenFlag.Load() || r.activeFlag || r.ctrl.Depth() == 0 {
 				continue
 			}
 			r.safeStep()
 		}
 	}
+}
+
+// shutdown — выход региона из сетов метронома (мёртвый регион не звонит
+// вотчдогу и не удерживается всеми-сетом).
+func (r *Region) shutdown() {
+	if r.activeFlag {
+		r.activeFlag = false
+		r.metro.Deactivate(r)
+	}
+	r.metro.unregister(r)
 }
 
 // closeLog — закрытие лога на выходе; recover со slog: паника Close не уронит
@@ -257,7 +265,7 @@ func (r *Region) closeLog() {
 }
 
 func (r *Region) safeStep() {
-	if r.frozenF.Load() {
+	if r.frozenFlag.Load() {
 		return
 	}
 	defer func() {
@@ -277,9 +285,17 @@ func (r *Region) recovered(p any) {
 	r.failed.Add(1)
 	r.panicStreak++
 	phase := r.curPhase
-	r.ctrl.DropBatch(r.ctrlBatch)
-	r.ctrl.DropBatch(r.entityBuf)
-	if err := r.log.LogPanic(r.metro.Now(), phase); err != nil {
+	// Консервативный классовый дроп пачек шага (учёт — на контрольном ящике
+	// региона): до фазы эффектов применение могло быть частичным. Поздние
+	// фазы (эффекты/B/publish) письма уже применили — дроп дал бы ложный
+	// reliable-инцидент.
+	if phase <= phaseFold {
+		r.ctrl.DropBatch(r.ctrlBatch)
+		r.ctrl.DropBatch(r.entityBuf)
+		r.ctrl.DropBatch(r.restBuf) // излишек контрольных + волна перечита AckNotify
+	}
+	r.adviseBuf = r.adviseBuf[:0]
+	if err := r.log.LogPanic(r.stepTick, phase); err != nil {
 		slog.Error("world: маркер паники не записан", "region", r.id, "err", err)
 	}
 	slog.Error("world: паника в шаге региона — тик провален",
@@ -298,7 +314,7 @@ func (r *Region) recovered(p any) {
 // freeze — заморозка региона: шаги не исполняются, письма копятся; разморозка
 // вне фазы 3 (рестарт процесса — надзор let-it-crash).
 func (r *Region) freeze(reason string) {
-	if r.frozenF.Swap(true) {
+	if r.frozenFlag.Swap(true) {
 		return
 	}
 	if r.activeFlag {
@@ -314,6 +330,7 @@ func (r *Region) freeze(reason string) {
 // сбрасываются (non-blocking перечит).
 func (r *Region) step() {
 	n := r.metro.Now()
+	r.stepTick = n
 	select {
 	case <-r.ringCh:
 	default:
@@ -422,7 +439,10 @@ func (r *Region) drain(n Tick) {
 			if took == 0 {
 				continue
 			}
-			budget -= took // перерасход допускается: пачка неделима
+			if took > budget {
+				r.drainOverrun.Add(int64(took - budget)) // перерасход метрится: пачка неделима
+			}
+			budget -= took
 			envs := r.entityBuf[from:]
 			r.portions = append(r.portions, Portion{Region: r.id, Tick: n, Envs: envs})
 			r.records = append(r.records, PortionRecord{Box: res.ent.ID, Mark: res.box.Mark(), Envs: envs})
@@ -442,11 +462,12 @@ func (r *Region) drain(n Tick) {
 // entsProj — кэш проекции residents для fold: перестраивается при изменении
 // населения (0 аллокаций на стабильном населении).
 func (r *Region) entsProj() []*Entity {
-	if len(r.ents) != len(r.residents) {
+	if r.entsVer != r.popVersion || len(r.ents) != len(r.residents) { // поколение, не длина: равные Births+Retires меняют состав
 		r.ents = make([]*Entity, len(r.residents))
 		for i, res := range r.residents {
 			r.ents[i] = res.ent
 		}
+		r.entsVer = r.popVersion
 	}
 	return r.ents
 }
@@ -458,12 +479,14 @@ func (r *Region) entsProj() []*Entity {
 func (r *Region) applyEffects(res StepResult) []AppliedBirth {
 	births := make([]AppliedBirth, 0, len(res.Births))
 	for _, b := range res.Births {
-		id, err := r.Spawn(b.Ent)
+		ent := b.Ent
+		id, err := r.Spawn(ent)
 		if err != nil {
 			slog.Error("world: рождение жителя не удалось", "region", r.id, "err", err)
 			continue
 		}
-		births = append(births, AppliedBirth{ID: id, Ent: &b.Ent})
+		ent.ID = id
+		births = append(births, AppliedBirth{ID: id, Ent: &ent})
 	}
 	for _, rt := range res.Retires {
 		r.Remove(rt.ID)
@@ -485,6 +508,7 @@ func (r *Region) phaseB() {
 		n := copy(r.outbox, r.outbox[sent:])
 		r.outbox = r.outbox[:n]
 	}
+	r.backlogLen.Store(int64(len(r.outbox)))
 	if len(r.outbox) > outboxAlertThreshold {
 		if !r.backlogNoted {
 			r.backlogNoted = true

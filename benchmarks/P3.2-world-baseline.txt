@@ -1,153 +1,157 @@
-# Baseline P3.2 internal/world, рев. 1 (benchstat-совместимо: -count=10, -benchtime=100ms)
+# Baseline P3.2 internal/world, рев. 2 (benchstat-совместимо: -count=10, -benchtime=100ms)
 # Окружение: linux/amd64, AMD Ryzen 9 PRO 8945HS, 16 потоков, go1.27.1 — машина агента
 # (CI-машина отличается; межмашинное сравнение запрещено). Числа шапки — медианы рядов
 # этого файла, извлечены механически (python statistics.median), не руками.
 #
 # Реестр ADR-0005 «Тик региона / SoA-проход»; раскладка фазы 3 — AoS []*resident с
 # встраиваемым Mailbox (слайс значений невозможен: карта держит &box навечно); SoA —
-# фаза 3.9 по измерениям. Idle-шаг: 4 аллокации (RNG шага rand.New(PCG) + публикация
-# снапшота — единственные допустимые; тест TestRegionStepIdleAllocBudget, бюджет ≤ 6).
-# Стоимость шага включает доставку нагрузки (reg.Send) — реальный дрен измеряется
-# вместе с enqueue; load=10 при pop=10000 — перегрузочный профиль (drainBudget 4096:
-# излишек переносится, глубины растут) —方向ный ориентир, не рабочий режим.
+# фаза 3.9 по измерениям. Idle-шаг: 2 аллокации (rand.New(PCG) + публикация снапшота —
+# единственные допустимые; тест TestRegionStepIdleAllocBudget, бюджет ровно 2).
+# Стоимость шага включает доставку нагрузки (reg.Send) с контрольной смесью (каждое
+# 16-е письмо — контрольное в ящик региона: приоритетная ветвь K и общий список в цене,
+# F7/S8-М7) — реальный дрен измеряется вместе с enqueue.
+#
+# ПЕРЕГРУЗНЫЕ кейсы (писем/шаг > drainBudget=4096): pop=1000/load=10 (10k),
+# pop=10000/load=1 (10k), pop=10000/load=10 (100k) — глубины растут всю длину прогона,
+# allocs/B/op зависят от -benchtime: направленный ориентир, не рабочий режим.
 #
 # Медианы (us/op | KiB/op | allocs/op):
-#   pop=100  / idle        0.6 us    0 KiB    4
-#   pop=100  / load=1      8.8 us    6 KiB    5      payloads=true: 9.1 us / 5 allocs
-#   pop=100  / load=10    56.8 us   63 KiB   19
-#   pop=1000 / idle        4.6 us    0 KiB    4
-#   pop=1000 / load=1    108.4 us   64 KiB   19      payloads=true: 111.3 us / 20 allocs
-#   pop=1000 / load=10   554.5 us  640 KiB  162
-#   pop=10000/ idle       54.2 us    0 KiB    4
-#   pop=10000/ load=1   1119.6 us  813 KiB  203      payloads=true: 1120.4 us / 206 allocs
-#   pop=10000/ load=10  6139.6 us 7583 KiB 1882      (перегруз: излишек вне бюджета)
+#   pop=100  / idle        0.5 us    0 KiB    2
+#   pop=100  / load=1      8.5 us    6 KiB    3      payloads=true: 8.7 us / 3 allocs
+#   pop=100  / load=10    56.4 us   63 KiB   17
+#   pop=1000 / idle        4.4 us    0 KiB    2
+#   pop=1000 / load=1    108.6 us   65 KiB   18      payloads=true: 109.2 us / 18 allocs
+#   pop=1000 / load=10   554.7 us  642 KiB  161     (перегруз)
+#   pop=10000/ idle       54.9 us    0 KiB    2
+#   pop=10000/ load=1   1130.9 us  880 KiB  216     (перегруз)
+#   pop=10000/ load=10  6986.3 us 6938 KiB 1684     (перегруз)
 #
-# Read: idle ≈ 5.4 нс/сущность (AoS двойная индирекция); нагрузка доминируется
+# Read: idle ≈ 5.5 нс/сущность (AoS двойная индирекция); нагрузка доминируется
 # доставкой+дреном (~110 нс/письмо при load=1), лог порций в цене (payloads ±2%).
-# Тюнинг — фаза 4 по профилю; basline до оптимизаций (perf.md §0).
+# Тюнинг — фаза 4 по профилю; baseline до оптимизаций (perf.md §0).
 goos: linux
 goarch: amd64
 pkg: github.com/udisondev/l2go/internal/world
 cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  218781	       576.4 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  215311	       554.0 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  226880	       563.0 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  214014	       566.6 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  199180	       542.0 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  195760	       546.0 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  219483	       526.2 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  213535	       542.8 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  224668	       534.4 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  230598	       559.1 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13988	      8629 ns/op	    6470 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13762	      8730 ns/op	    6485 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13459	      8810 ns/op	    6478 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13756	      8807 ns/op	    6458 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13982	      8478 ns/op	    6473 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13830	      8719 ns/op	    6484 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13105	      9064 ns/op	    6464 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13432	      9080 ns/op	    6460 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13051	      9111 ns/op	    6459 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13888	      8761 ns/op	    6457 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   12906	      9342 ns/op	    6468 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13652	      8796 ns/op	    6478 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   14014	      9103 ns/op	    6458 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13461	      9111 ns/op	    6478 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13504	      8950 ns/op	    6458 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   12770	      9200 ns/op	    6473 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13131	      9284 ns/op	    6483 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13040	      9072 ns/op	    6465 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   12812	      9224 ns/op	    6484 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13282	      8885 ns/op	    6472 B/op	       5 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2318	     57110 ns/op	   64302 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    1896	     57676 ns/op	   64334 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    1945	     54962 ns/op	   64192 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2323	     55843 ns/op	   64164 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2086	     57625 ns/op	   64177 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2011	     57594 ns/op	   64328 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    1932	     54546 ns/op	   64201 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2130	     56575 ns/op	   64201 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2044	     56810 ns/op	   64293 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2043	     56888 ns/op	   64323 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   25478	      4592 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   27244	      4401 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   26460	      4454 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   25692	      4531 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   24609	      4693 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   23361	      5245 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   24974	      4580 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   26743	      4513 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   26347	      4649 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   23710	      4866 ns/op	      48 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1006	    123801 ns/op	   65634 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1083	    102600 ns/op	   64737 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1077	    105718 ns/op	   65093 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1152	    108984 ns/op	   64420 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1219	    108637 ns/op	   67606 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1149	    105558 ns/op	   64584 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1369	    112297 ns/op	   66193 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1159	    112149 ns/op	   67568 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1214	    108123 ns/op	   64510 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1138	    108252 ns/op	   65210 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1206	    109150 ns/op	   64944 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1040	    109323 ns/op	   67412 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1104	    109756 ns/op	   67221 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1154	    102741 ns/op	   67860 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1231	    115129 ns/op	   66953 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1034	    111331 ns/op	   67805 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1156	    111236 ns/op	   67745 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1213	    111753 ns/op	   64574 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1123	    112093 ns/op	   66087 B/op	      20 allocs/op
-BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1209	    113724 ns/op	   64783 B/op	      19 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     192	    603227 ns/op	  649254 B/op	     160 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     265	    544537 ns/op	  656171 B/op	     163 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     232	    571109 ns/op	  660946 B/op	     164 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     248	    539270 ns/op	  651599 B/op	     161 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     259	    532381 ns/op	  655556 B/op	     162 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     229	    581945 ns/op	  651728 B/op	     161 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     232	    591981 ns/op	  660969 B/op	     164 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     252	    527182 ns/op	  657512 B/op	     163 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     247	    542546 ns/op	  654235 B/op	     162 allocs/op
-BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     223	    564521 ns/op	  650883 B/op	     161 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2252	     56102 ns/op	      84 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2238	     52847 ns/op	      84 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2287	     53116 ns/op	      83 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2252	     54049 ns/op	      84 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2276	     63782 ns/op	      84 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2072	     58023 ns/op	      87 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2126	     56516 ns/op	      86 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2199	     54393 ns/op	      85 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2364	     53944 ns/op	      82 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2210	     53832 ns/op	      85 B/op	       4 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      90	   1364411 ns/op	  934027 B/op	     227 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     103	   1110043 ns/op	  816190 B/op	     199 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     100	   1118896 ns/op	  840629 B/op	     205 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     105	   1082031 ns/op	  800645 B/op	     195 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      99	   1134910 ns/op	  849122 B/op	     207 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     103	   1060217 ns/op	  816190 B/op	     199 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     102	   1120308 ns/op	  824192 B/op	     201 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     100	   1127921 ns/op	  840629 B/op	     205 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      98	   1151544 ns/op	  857784 B/op	     209 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     104	   1089042 ns/op	  808343 B/op	     197 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     109	   1031180 ns/op	  771265 B/op	     188 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      97	   1054615 ns/op	  866675 B/op	     211 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     105	   1083256 ns/op	  800643 B/op	     195 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      94	   1178603 ns/op	  894332 B/op	     217 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     102	   1119317 ns/op	  824192 B/op	     201 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      99	   1130022 ns/op	  849166 B/op	     207 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      88	   1174950 ns/op	  955255 B/op	     232 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     100	   1121539 ns/op	  840675 B/op	     205 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      98	   1133571 ns/op	  857833 B/op	     209 allocs/op
-BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     112	   1019524 ns/op	  750608 B/op	     183 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      16	   6595354 ns/op	 7765431 B/op	    1882 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      18	   5735692 ns/op	 6902598 B/op	    1673 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      16	   6274217 ns/op	 7765424 B/op	    1882 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      18	   5840116 ns/op	 6902610 B/op	    1673 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      18	   5872089 ns/op	 6902604 B/op	    1673 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      16	   6642790 ns/op	 7765417 B/op	    1882 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      16	   6370642 ns/op	 7765417 B/op	    1882 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      16	   6445708 ns/op	 7765424 B/op	    1882 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      24	   5862402 ns/op	 6883627 B/op	    1673 allocs/op
-BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      20	   6004892 ns/op	 8260348 B/op	    2006 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  209400	       528.9 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  228302	       517.1 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  201595	       515.4 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  238395	       512.7 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  242607	       503.7 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  221120	       523.2 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  243523	       502.9 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  234666	       500.7 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  240247	       500.6 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=0/payloads=false-16         	  215364	       559.1 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13628	      8719 ns/op	    6435 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   14077	      8621 ns/op	    6434 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   14002	      8455 ns/op	    6438 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   14280	      8476 ns/op	    6456 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13926	      8530 ns/op	    6444 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   14161	      8419 ns/op	    6452 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   14821	      8170 ns/op	    6444 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13868	      8697 ns/op	    6441 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   14312	      8819 ns/op	    6443 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=false-16         	   13874	      8539 ns/op	    6438 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13861	      8613 ns/op	    6445 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13473	      8712 ns/op	    6447 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13916	      8471 ns/op	    6449 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13852	      8728 ns/op	    6449 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13629	      8881 ns/op	    6434 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13690	      8738 ns/op	    6436 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   12952	      9197 ns/op	    6452 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13840	      8645 ns/op	    6454 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13657	      8551 ns/op	    6450 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=1/payloads=true-16          	   13310	      8926 ns/op	    6434 B/op	       3 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    1977	     57441 ns/op	   64293 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    1818	     56204 ns/op	   64291 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    1848	     54762 ns/op	   64201 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    1834	     56517 ns/op	   64213 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2163	     55440 ns/op	   64250 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2208	     57398 ns/op	   64204 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2127	     55332 ns/op	   64305 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2197	     56102 ns/op	   64202 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    2070	     58178 ns/op	   64305 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=100/load=10/payloads=false-16        	    1856	     58433 ns/op	   64160 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   26901	      4639 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   27380	      4319 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   27598	      4343 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   25664	      4480 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   27740	      4331 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   27751	      4326 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   27219	      4403 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   26272	      4445 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   27076	      4389 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=0/payloads=false-16        	   27372	      4381 ns/op	      24 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1069	    111736 ns/op	   65514 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1041	    108109 ns/op	   67160 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1114	    110728 ns/op	   66474 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1246	    104792 ns/op	   66032 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1168	    112609 ns/op	   66872 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1082	    112184 ns/op	   64766 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1226	    106907 ns/op	   67038 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1070	    109184 ns/op	   65451 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1123	    103805 ns/op	   65972 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=false-16        	    1221	    103346 ns/op	   67294 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1222	    112437 ns/op	   67248 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1198	    108312 ns/op	   65308 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1236	    108626 ns/op	   66532 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1173	    109808 ns/op	   66606 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1093	    115463 ns/op	   67668 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1026	    110377 ns/op	   68086 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1149	    106237 ns/op	   64577 B/op	      17 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1257	    114768 ns/op	   65487 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1190	    107804 ns/op	   65715 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=1/payloads=true-16         	    1221	    106484 ns/op	   67297 B/op	      18 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     202	    576309 ns/op	  661174 B/op	     161 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     224	    558524 ns/op	  655060 B/op	     160 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     223	    563069 ns/op	  657802 B/op	     161 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     236	    550795 ns/op	  658503 B/op	     161 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     230	    550664 ns/op	  656841 B/op	     160 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     238	    539550 ns/op	  659767 B/op	     161 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     223	    568444 ns/op	  657790 B/op	     161 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     229	    549263 ns/op	  659527 B/op	     161 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     246	    523285 ns/op	  656261 B/op	     160 allocs/op
+BenchmarkRegionTick/pop=1000/load=10/payloads=false-16       	     210	    593458 ns/op	  657047 B/op	     160 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    1975	     54946 ns/op	      65 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2132	     54673 ns/op	      62 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2272	     54274 ns/op	      60 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    1970	     55340 ns/op	      65 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    1825	     55329 ns/op	      68 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2104	     57172 ns/op	      62 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2145	     53476 ns/op	      62 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2116	     54782 ns/op	      62 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    1926	     55158 ns/op	      66 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=0/payloads=false-16       	    2182	     54863 ns/op	      61 B/op	       2 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      86	   1418509 ns/op	  965747 B/op	     231 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      85	   1180197 ns/op	  976672 B/op	     233 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      90	   1129714 ns/op	  924627 B/op	     221 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      99	   1126869 ns/op	  844233 B/op	     202 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     102	   1124854 ns/op	  820609 B/op	     196 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      94	   1152316 ns/op	  887002 B/op	     212 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      91	   1155683 ns/op	  914889 B/op	     219 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     102	   1127344 ns/op	  820608 B/op	     196 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	      90	   1132004 ns/op	  924599 B/op	     221 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=false-16       	     100	   1128824 ns/op	  836200 B/op	     200 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     102	   1123869 ns/op	  820608 B/op	     196 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     102	   1127571 ns/op	  820607 B/op	     196 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     102	   1118934 ns/op	  820608 B/op	     196 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      99	   1153411 ns/op	  844234 B/op	     202 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      86	   1165638 ns/op	  965797 B/op	     231 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      87	   1253066 ns/op	  955168 B/op	     228 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	      86	   1186643 ns/op	  965797 B/op	     231 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     104	   1101252 ns/op	  805576 B/op	     193 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     103	   1110867 ns/op	  812999 B/op	     195 allocs/op
+BenchmarkRegionTick/pop=10000/load=1/payloads=true-16        	     100	   1139835 ns/op	  836200 B/op	     200 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      15	   8178366 ns/op	 8870561 B/op	    2106 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      19	   7040941 ns/op	 7104117 B/op	    1684 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      18	   7043421 ns/op	 7476098 B/op	    1771 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      19	   6861260 ns/op	 7104123 B/op	    1684 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      19	   6497439 ns/op	 7104122 B/op	    1684 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      19	   6927948 ns/op	 7104118 B/op	    1684 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      19	   6953270 ns/op	 7104129 B/op	    1684 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      19	   7019351 ns/op	 7104117 B/op	    1684 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      19	   6874970 ns/op	 7104117 B/op	    1684 allocs/op
+BenchmarkRegionTick/pop=10000/load=10/payloads=false-16      	      19	   7049112 ns/op	 7104123 B/op	    1684 allocs/op
 PASS
-ok  	github.com/udisondev/l2go/internal/world	14.813s
+ok  	github.com/udisondev/l2go/internal/world	14.724s
