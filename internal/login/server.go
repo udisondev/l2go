@@ -153,14 +153,20 @@ func (s *Server) untrackConn(cc *clientConn) {
 	s.connCount--
 }
 
-// registerAuthed связывает authed-коннект с аккаунтом; вытесняемый предшественник
-// (живой коннект с умершей сессией) возвращается вызывающему.
-func (s *Server) registerAuthed(norm string, cc *clientConn) (old *clientConn) {
+// beginAuthed атомарно (одна критсекция с Put стора — против TOCTOU гонки
+// двойного логина): кладёт loginOk-пару и связывает authed-коннект с аккаунтом.
+// ok=false — живая сессия занята: стор уже удалил её, old — коннект-владелец
+// для кика; ok=true — связка установлена, old — прежний коннект с умершей
+// сессией (TTL), не кикается: его следующий кадр отвергнет checkLoginPair.
+func (s *Server) beginAuthed(account string, cc *clientConn, k1, k2 int32) (old *clientConn, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	old = s.authed[norm]
-	s.authed[norm] = cc
-	return old
+	old = s.authed[account]
+	if err := s.sessions.Put(account, k1, k2); err != nil {
+		return old, false
+	}
+	s.authed[account] = cc
+	return old, true
 }
 
 // forgetAuthed снимает связку, если она принадлежит коннекту.
@@ -187,10 +193,9 @@ func (s *Server) Close(drain time.Duration) {
 		if ln != nil {
 			_ = ln.Close()
 		}
-		past := time.Now().Add(-time.Second)
-		for _, cc := range conns {
-			cc.wake(past)
-		}
+		// Дрен: окно drainTimeout на штатное завершение коннектов; по
+		// истечении — дедлайн в прошлом растормошит зависшие Read/Write,
+		// затем жёсткое закрытие (F32).
 		drained := make(chan struct{})
 		go func() {
 			s.wg.Wait()
@@ -200,7 +205,9 @@ func (s *Server) Close(drain time.Duration) {
 		case <-drained:
 		case <-time.After(drain):
 			slog.Warn("login: дрен коннектов исчерпан — жёсткое закрытие")
+			past := time.Now().Add(-time.Second)
 			for _, cc := range conns {
+				cc.wake(past)
 				cc.close()
 			}
 		}

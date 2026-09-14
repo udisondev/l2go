@@ -414,7 +414,7 @@ func TestLoginViewsTruncated(t *testing.T) {
 		{"REQUEST_AUTH_LOGIN_PLAIN", 124, func(b []byte) bool { _, ok := NewRequestAuthLoginPlainView(b); return ok }},
 		{"REQUEST_SERVER_LIST", RequestServerListSize, func(b []byte) bool { _, ok := NewRequestServerListView(b); return ok }},
 		{"REQUEST_SERVER_LOGIN", RequestServerLoginSize, func(b []byte) bool { _, ok := NewRequestServerLoginView(b); return ok }},
-		{"AUTH_GAME_GUARD", 5, func(b []byte) bool { _, ok := NewAuthGameGuardView(b); return ok }},
+		{"AUTH_GAME_GUARD", AuthGameGuardSize, func(b []byte) bool { _, ok := NewAuthGameGuardView(b); return ok }},
 	}
 	wireFix := loginFixtures(t)["INIT"]
 	for _, tt := range tests {

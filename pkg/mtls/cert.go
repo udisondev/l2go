@@ -134,18 +134,23 @@ func randomSerial() *big.Int {
 // WriteMaterial раскладывает материал по каталогу (0700/0600); существующие
 // файлы не перезаписываются — ротация осознанным удалением каталога.
 func WriteMaterial(dir string, m *Material) error {
+	// chmod поверх MkdirAll: существующий каталог MkdirAll не трогает
+	// (прецедент P3.3 F25 — предсозданный 0755 не должен остаться).
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("mtls: каталог %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("mtls: права каталога %s: %w", dir, err)
 	}
 	files := []struct {
 		name string
 		data []byte
 	}{
-		{CAFile, m.CA},
-		{ServerCertFile, m.ServerCert},
-		{ServerKeyFile, m.ServerKey},
-		{ClientCertFile, m.ClientCert},
-		{ClientKeyFile, m.ClientKey},
+		{name: CAFile, data: m.CA},
+		{name: ServerCertFile, data: m.ServerCert},
+		{name: ServerKeyFile, data: m.ServerKey},
+		{name: ClientCertFile, data: m.ClientCert},
+		{name: ClientKeyFile, data: m.ClientKey},
 	}
 	for _, f := range files {
 		path := filepath.Join(dir, f.name)

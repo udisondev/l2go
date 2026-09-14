@@ -10,14 +10,14 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-// Пары keepalive стыка (F26): клиент пингует каждые KeepaliveTime, сервер
-// режет пингующее чаще KeepaliveMinPing. Односторонний клиентский пинг против
+// Пары keepalive стыка (F26): клиент пингует каждые keepaliveTime, сервер
+// режет пингующее чаще keepaliveMinPing. Односторонний клиентский пинг против
 // дефолтного сервера дал бы флап too_many_pings; без пинга half-open TCP
 // (power loss/NAT) держал бы ghost-запись реестра 2ч20м…∞.
 const (
-	KeepaliveTime    = 30 * time.Second
-	KeepaliveTimeout = 15 * time.Second
-	KeepaliveMinPing = 10 * time.Second
+	keepaliveTime    = 30 * time.Second
+	keepaliveTimeout = 15 * time.Second
+	keepaliveMinPing = 10 * time.Second
 )
 
 // Server — серверная половина стыка: gRPC-сервис над стором сессий и реестром
@@ -47,11 +47,11 @@ func GRPCServerOptions(tlsCfg *tls.Config) []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    KeepaliveTime,
-			Timeout: KeepaliveTimeout,
+			Time:    keepaliveTime,
+			Timeout: keepaliveTimeout,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime: KeepaliveMinPing,
+			MinTime: keepaliveMinPing,
 		}),
 	}
 }

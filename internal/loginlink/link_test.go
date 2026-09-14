@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -281,5 +283,52 @@ func TestClientValidateUnreachable(t *testing.T) {
 	defer cancel()
 	if _, err := c.ValidateSession(ctx, "sergei", 1, 2, 3, 4); err == nil {
 		t.Fatal("ValidateSession на недоступном LS: want err")
+	}
+}
+
+func TestLinkParallelRegistrations(t *testing.T) {
+	// Реестр под параллельными регистрациями разных hexID (стресс для -race):
+	// все регистрируются, список содержит все записи с уникальными ID.
+	stack := newTestMaterial(t)
+	srv, _, addr := startLink(t, stack)
+	const n = 8
+	// Run штатно держит регистрацию, пока жив ctx: после проверок ctx
+	// отменяется явно, дожидаться без отмены — дедлок.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			c, err := Dial(ClientConfig{
+				Addr: addr, HexID: []byte(fmt.Sprintf("hex-%02d", i)),
+				Host: "10.1.2.3", Port: 7777, Name: "Bartz", TLS: stack.client,
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer c.Close()
+			if err := c.Run(ctx); err != nil {
+				errs <- err
+			}
+		})
+	}
+	waitFor(t, 10*time.Second, "все GS регистрируются", func() bool {
+		return len(srv.Servers()) == n
+	})
+	entries := srv.Servers()
+	ids := make(map[byte]bool, len(entries))
+	for _, e := range entries {
+		if ids[e.ID] {
+			t.Fatalf("дубль ID=%d в ServerList", e.ID)
+		}
+		ids[e.ID] = true
+	}
+	cancel()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
 	}
 }

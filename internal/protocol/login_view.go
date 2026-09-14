@@ -322,10 +322,11 @@ func (v RequestServerLoginView) ServerID() byte { return v[9] }
 // байт после sessionID не читаются.
 type AuthGameGuardView []byte
 
-// NewAuthGameGuardView проверяет минимальную длину 5 (опкод + sessionID) и
-// возвращает представление.
+// NewAuthGameGuardView проверяет полный размер пакета (опкод + sessionID +
+// 16 резервных байт: усечённая проба отбрасывается, как канон
+// AuthGameGuard.readImpl при remaining() < 20) и возвращает представление.
 func NewAuthGameGuardView(b []byte) (AuthGameGuardView, bool) {
-	if len(b) < 5 {
+	if len(b) < AuthGameGuardSize {
 		return nil, false
 	}
 	return AuthGameGuardView(b), true

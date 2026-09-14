@@ -69,8 +69,8 @@ func Dial(cfg ClientConfig) (*Client, error) {
 	conn, err := grpc.NewClient(cfg.Addr,
 		grpc.WithTransportCredentials(credentials.NewTLS(cfg.TLS)),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                KeepaliveTime,
-			Timeout:             KeepaliveTimeout,
+			Time:                keepaliveTime,
+			Timeout:             keepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
 		grpc.WithConnectParams(grpc.ConnectParams{
@@ -94,19 +94,16 @@ func Dial(cfg ClientConfig) (*Client, error) {
 }
 
 // Run держит регистрацию: поток → обрыв → пауза → повтор; ErrDisplaced —
-// терминально (без реконнекта); отмена ctx завершает цикл.
+// терминально (без реконнекта); отмена ctx — штатная остановка, nil.
 func (c *Client) Run(ctx context.Context) error {
 	for {
 		err := c.registerOnce(ctx)
-		switch {
-		case errors.Is(err, ErrDisplaced):
+		if errors.Is(err, ErrDisplaced) {
 			return err
-		case ctx.Err() != nil:
-			return ctx.Err()
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		case <-time.After(ReRegisterPause):
 		}
 	}

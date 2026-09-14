@@ -74,6 +74,13 @@ func TestWriteMaterial(t *testing.T) {
 	if err := WriteMaterial(dir, m); err == nil {
 		t.Fatal("повторная WriteMaterial: want отказ — файлы существуют")
 	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("права каталога = %o; want 700", perm)
+	}
 	for _, name := range []string{CAFile, ServerCertFile, ServerKeyFile, ClientCertFile, ClientKeyFile} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {

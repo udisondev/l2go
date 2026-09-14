@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -166,6 +167,18 @@ func (e *env) banAccount(login string) {
 	}
 }
 
+// waitFor поллит cond до timeout: замена sleep-ожиданиям асинхронных событий.
+func waitFor(t *testing.T, timeout time.Duration, desc string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("условие не наступило за %s: %s", timeout, desc)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func dial(t *testing.T, addr string) *l2client.LoginClient {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -199,9 +212,9 @@ func TestHappyPath(t *testing.T) {
 		t.Fatalf("запись = %+v; want ID=1 IP=127.0.0.1 port=7777", s)
 	}
 	// Дефолты записи — канон (F20): status up, тип Free, pvp.
-	if !s.PvP || s.Status != serverStatusUp || s.ServerType != serverTypeFree || s.Brackets {
-		t.Fatalf("дефолты записи = pvp=%v status=%d type=0x%X brackets=%v; want pvp/up/free/false",
-			s.PvP, s.Status, s.ServerType, s.Brackets)
+	if !s.PvP || s.Status != serverStatusUp || s.ServerType != serverTypeFree || s.Brackets || s.AgeLimit != 0 {
+		t.Fatalf("дефолты записи = pvp=%v status=%d type=0x%X brackets=%v age=%d; want pvp/up/free/false/0",
+			s.PvP, s.Status, s.ServerType, s.Brackets, s.AgeLimit)
 	}
 	ep, err := lc.SelectServer(servers[0].ID)
 	if err != nil {
@@ -325,7 +338,7 @@ func TestEvilInputs(t *testing.T) {
 	if _, err := conn.Write(rec[:]); err != nil {
 		t.Fatalf("запись мусора: %v", err)
 	}
-	if err := expectEOF(conn, 3*time.Second); err != nil {
+	if _, err := expectClose(conn, 3*time.Second); err != nil {
 		t.Fatalf("мусорный кадр: %v", err)
 	}
 
@@ -341,7 +354,7 @@ func TestEvilInputs(t *testing.T) {
 	if _, err := conn2.Write([]byte{0xFF, 0xFF}); err != nil {
 		t.Fatalf("запись кэп-нарушения: %v", err)
 	}
-	if err := expectEOF(conn2, 3*time.Second); err != nil {
+	if _, err := expectClose(conn2, 3*time.Second); err != nil {
 		t.Fatalf("кадр сверх кэпа: %v", err)
 	}
 
@@ -370,7 +383,7 @@ func TestHandshakeAbsoluteDeadline(t *testing.T) {
 	if _, err := conn.Write(half); err != nil {
 		t.Fatalf("запись dribble: %v", err)
 	}
-	if err := expectEOF(conn, 3*time.Second); err != nil {
+	if _, err := expectClose(conn, 3*time.Second); err != nil {
 		t.Fatal("dribble-коннект не закрыт по абсолютному дедлайну")
 	}
 }
@@ -387,11 +400,12 @@ func TestConnLimit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	third, err := l2client.DialLogin(ctx, e.addr, l2client.Options{Timeout: time.Second})
-	if err == nil {
-		defer third.Close()
-		if err := third.Handshake(); err == nil {
-			t.Fatal("третий коннект сверх лимита обслужен: want отказ")
-		}
+	if err != nil {
+		t.Fatalf("третий коннект: диал упал неожиданно: %v", err)
+	}
+	defer third.Close()
+	if err := third.Handshake(); err == nil {
+		t.Fatal("третий коннект сверх лимита обслужен (Init получен): want отказ до Init")
 	}
 }
 
@@ -418,7 +432,11 @@ func TestParallelLogins(t *testing.T) {
 				errs <- fmt.Errorf("%s: %w", account, err)
 				return
 			}
-			if valid, err := e.linkClient.ValidateSession(t.Context(), account, 1, 2, 3, 4); err == nil && valid {
+			valid, err := e.linkClient.ValidateSession(t.Context(), account, 1, 2, 3, 4)
+			switch {
+			case err != nil:
+				errs <- fmt.Errorf("%s: стык недоступен: %w", account, err)
+			case valid:
 				errs <- fmt.Errorf("%s: валидация левыми ключами прошла", account)
 			}
 		})
@@ -436,6 +454,8 @@ type rawClient struct {
 	conn      net.Conn
 	lc        *crypto.LoginCrypt
 	sessionID int32
+	loginOk1  int32
+	loginOk2  int32
 	pub       *rsa.PublicKey
 }
 
@@ -508,24 +528,48 @@ func (rc *rawClient) read() []byte {
 	return frame
 }
 
-// expectClose требует EOF в пределах within; данные до EOF (отказный пакет)
-// легитимны — close-after-fail пишет до закрытия.
-func (rc *rawClient) expectClose(within time.Duration) {
+// expectFailClose требует отказный пакет (опкод+причина) и закрытие коннекта
+// за within: close-after-fail пишет до EOF, оракул строгий.
+func (rc *rawClient) expectFailClose(within time.Duration, wantOp, wantReason byte) {
 	rc.t.Helper()
-	if err := expectEOF(rc.conn, within); err != nil {
+	raw, err := expectClose(rc.conn, within)
+	if err != nil {
 		rc.t.Fatal(err)
+	}
+	frame, err := protocol.NextFrame(raw)
+	if err != nil {
+		rc.t.Fatalf("отказный кадр до закрытия не получен: %v", err)
+	}
+	if err := rc.lc.Decrypt(frame); err != nil {
+		rc.t.Fatalf("расшифровка отказного кадра: %v", err)
+	}
+	if frame[0] != wantOp {
+		rc.t.Fatalf("отказный опкод = 0x%02X; want 0x%02X", frame[0], wantOp)
+	}
+	v, ok := protocol.NewLoginFailView(frame)
+	if !ok || byte(v.Reason()) != wantReason {
+		rc.t.Fatalf("причина = %#v; want 0x%02X", v, wantReason)
 	}
 }
 
-// expectEOF читает до ошибки; всё, что до неё — данные, не нарушение.
-func expectEOF(conn net.Conn, within time.Duration) error {
+// expectClose читает до EOF и возвращает данные, полученные до него
+// (отказный пакет при close-after-fail); таймаут чтения без EOF — провал
+// «коннект не закрыт», оракул закрытия строгий.
+func expectClose(conn net.Conn, within time.Duration) ([]byte, error) {
 	if err := conn.SetReadDeadline(time.Now().Add(within)); err != nil {
-		return err
+		return nil, err
 	}
+	var got []byte
 	buf := make([]byte, 512)
 	for {
-		if _, err := conn.Read(buf); err != nil {
-			return nil // EOF/таймаут-как-закрытие: ожидаем конец потока
+		n, err := conn.Read(buf)
+		got = append(got, buf[:n]...)
+		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				return nil, fmt.Errorf("коннект не закрыт за %s", within)
+			}
+			return got, nil // EOF/RST: закрытие состоялось
 		}
 	}
 }
@@ -567,6 +611,11 @@ func (rc *rawClient) login(user, pass string) {
 	if reply[0] != protocol.OpLoginOk {
 		rc.t.Fatalf("Login: опкод ответа 0x%02X; want LoginOk", reply[0])
 	}
+	v, ok := protocol.NewLoginOkView(reply)
+	if !ok {
+		rc.t.Fatal("LoginOkView")
+	}
+	rc.loginOk1, rc.loginOk2 = v.LoginOkID1(), v.LoginOkID2()
 }
 
 func TestGGWrongSessionID(t *testing.T) {
@@ -575,7 +624,7 @@ func TestGGWrongSessionID(t *testing.T) {
 	var wire [protocol.AuthGameGuardSize]byte
 	protocol.WriteAuthGameGuard(wire[:], rc.sessionID+1)
 	rc.send(wire[:])
-	rc.expectClose(3 * time.Second)
+	rc.expectFailClose(3*time.Second, protocol.OpLoginFail, byte(protocol.ReasonAccessFailed))
 }
 
 func TestWrongLoginPair(t *testing.T) {
@@ -587,7 +636,7 @@ func TestWrongLoginPair(t *testing.T) {
 	var req [protocol.RequestServerListSize]byte
 	protocol.WriteRequestServerList(req[:], 12345, 67890)
 	rc.send(req[:])
-	rc.expectClose(3 * time.Second)
+	rc.expectFailClose(3*time.Second, protocol.OpLoginFail, byte(protocol.ReasonAccessFailed))
 }
 
 func TestPacketAfterPlayOk(t *testing.T) {
@@ -635,4 +684,221 @@ func newTLSStack(t *testing.T) tlsStack {
 		t.Fatalf("ClientConfig: %v", err)
 	}
 	return stack
+}
+
+func TestEvilAuthLogin(t *testing.T) {
+	// Не-расшифровываемый AuthLogin: мусорный RSA-блок → расшифровка даёт
+	// мусор → null-путь вердикта (0x02) и закрытие; обрыв посреди блоба —
+	// закрытие по абсолютному дедлайну фазы.
+	e := startEnv(t, nil)
+
+	rc := dialRaw(t, e.addr)
+	var gg [protocol.AuthGameGuardSize]byte
+	protocol.WriteAuthGameGuard(gg[:], rc.sessionID)
+	rc.send(gg[:])
+	rc.read() // GGAuth
+	nonce := make([]byte, 128)
+	for i := range nonce {
+		nonce[i] = byte(0xA5 ^ i) // детерминированный не-нулевой мусор
+	}
+	var wire [protocol.RequestAuthLoginSize]byte
+	protocol.WriteRequestAuthLogin(wire[:], nonce)
+	rc.send(wire[:])
+	rc.expectFailClose(3*time.Second, protocol.OpLoginFail, byte(protocol.ReasonUserOrPassWrong))
+
+	// Обрыв посреди RSA-блоба: половина кадра и тишина — дедлайн фазы.
+	e2 := startEnv(t, func(cfg *Config) { cfg.HandshakeTimeout = 400 * time.Millisecond })
+	rc2 := dialRaw(t, e2.addr)
+	protocol.WriteAuthGameGuard(gg[:], rc2.sessionID)
+	rc2.send(gg[:])
+	rc2.read()
+	half := make([]byte, 40)
+	half[0], half[1] = protocol.RequestAuthLoginSize, 0 // заявлен полный размер
+	for i := 2; i < len(half); i++ {
+		half[i] = 0x5A
+	}
+	if _, err := rc2.conn.Write(half); err != nil {
+		t.Fatalf("запись обрыва: %v", err)
+	}
+	if _, err := expectClose(rc2.conn, 3*time.Second); err != nil {
+		t.Fatalf("обрыв посреди RSA-блоба: %v", err)
+	}
+}
+
+func TestEmptyLogin(t *testing.T) {
+	// Пустой/пробельный логин — null-путь (0x02) до авто-создания, файла нет.
+	e2 := startEnv(t, nil)
+	rc2 := dialRaw(t, e2.addr)
+	var gg [protocol.AuthGameGuardSize]byte
+	protocol.WriteAuthGameGuard(gg[:], rc2.sessionID)
+	rc2.send(gg[:])
+	rc2.read()
+	var plain [protocol.RequestAuthLoginPlainSize]byte
+	if err := protocol.WriteRequestAuthLoginPlain(plain[:], "  ", "pass123"); err != nil {
+		t.Fatalf("plain-блок: %v", err)
+	}
+	ct, err := crypto.RSAEncryptNoPadding(rc2.pub, plain[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire [protocol.RequestAuthLoginSize]byte
+	protocol.WriteRequestAuthLogin(wire[:], ct)
+	rc2.send(wire[:])
+	rc2.expectFailClose(3*time.Second, protocol.OpLoginFail, byte(protocol.ReasonUserOrPassWrong))
+	if _, err := os.Stat(filepath.Join(e2.root, "accounts", ".json")); !os.IsNotExist(err) {
+		t.Fatalf("файл пустого логина создан: %v", err)
+	}
+}
+
+func TestWrongLoginPairServerLogin(t *testing.T) {
+	// F9, вторая ветка: RequestServerLogin с неверной парой loginOk → 0x15.
+	e := startEnv(t, nil)
+	rc := dialRaw(t, e.addr)
+	rc.login("sergei", "pass123")
+	var req [protocol.RequestServerLoginSize]byte
+	protocol.WriteRequestServerLogin(req[:], 111, 222, 1)
+	rc.send(req[:])
+	rc.expectFailClose(3*time.Second, protocol.OpLoginFail, byte(protocol.ReasonAccessFailed))
+}
+
+func TestMixedCaseLogin(t *testing.T) {
+	// F24 на живом флоу: вход «SerGei», валидация стыка «sergei» — одна сессия.
+	e := startEnv(t, nil)
+	lc := dial(t, e.addr)
+	if err := lc.Login("SerGei", "pass123"); err != nil {
+		t.Fatalf("Login(SerGei): %v", err)
+	}
+	if _, _, err := lc.ServerList(); err != nil {
+		t.Fatalf("ServerList: %v", err)
+	}
+	ep, err := lc.SelectServer(1)
+	if err != nil {
+		t.Fatalf("SelectServer: %v", err)
+	}
+	valid, err := e.linkClient.ValidateSession(t.Context(), "sergei",
+		ep.LoginOk1, ep.LoginOk2, ep.PlayOk1, ep.PlayOk2)
+	if err != nil || !valid {
+		t.Fatalf("ValidateSession(sergei после входа SerGei) = (%v, %v); want (true, nil)", valid, err)
+	}
+}
+
+func TestIdleFullFrameDeadline(t *testing.T) {
+	// F25, idle-семантика: дедлайн перезаводится только полным кадром —
+	// частичный прогресс байтами после LoginOk не продлевает жизнь коннекта.
+	e := startEnv(t, func(cfg *Config) { cfg.IdleTimeout = 400 * time.Millisecond })
+	rc := dialRaw(t, e.addr)
+	rc.login("sergei", "pass123")
+	var req [protocol.RequestServerListSize]byte
+	protocol.WriteRequestServerList(req[:], rc.loginOk1, rc.loginOk2)
+	// Полный кадр в половине окна — обслуживается (перезавод).
+	time.Sleep(150 * time.Millisecond)
+	rc.send(req[:])
+	reply := rc.read()
+	if reply[0] != protocol.OpServerList {
+		t.Fatalf("ServerList после перезавода: опкод 0x%02X", reply[0])
+	}
+	// Частичный кадр (заголовок) и тишина — закрытие по idle.
+	time.Sleep(150 * time.Millisecond)
+	if _, err := rc.conn.Write([]byte{protocol.RequestServerListSize, 0}); err != nil {
+		t.Fatalf("запись частичного кадра: %v", err)
+	}
+	if _, err := expectClose(rc.conn, 3*time.Second); err != nil {
+		t.Fatalf("частичный кадр не закрыт по idle-дедлайну: %v", err)
+	}
+}
+
+func TestSessionLiveness(t *testing.T) {
+	// Канон LoginClient.onDisconnection: сессия умирает вместе с коннектом,
+	// если клиент не ушёл на GS; после PlayOk — переживает закрытие LS.
+	e := startEnv(t, nil)
+
+	lc := dial(t, e.addr)
+	if err := lc.Login("sergei", "pass123"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	_ = lc.Close() // до PlayOk
+	waitFor(t, 3*time.Second, "сессия умирает с коннектом до PlayOk", func() bool {
+		return e.sessions.Len() == 0
+	})
+
+	lc2 := dial(t, e.addr)
+	if err := lc2.Login("sergei", "pass123"); err != nil {
+		t.Fatalf("Login(повторный): %v", err)
+	}
+	if _, _, err := lc2.ServerList(); err != nil {
+		t.Fatalf("ServerList: %v", err)
+	}
+	ep, err := lc2.SelectServer(1)
+	if err != nil {
+		t.Fatalf("SelectServer: %v", err)
+	}
+	_ = lc2.Close() // после PlayOk: сессия нужна GS для ValidateSession
+	valid, err := e.linkClient.ValidateSession(t.Context(), "sergei",
+		ep.LoginOk1, ep.LoginOk2, ep.PlayOk1, ep.PlayOk2)
+	if err != nil || !valid {
+		t.Fatalf("ValidateSession после закрытия LS-коннекта (ушёл на GS) = (%v, %v); want (true, nil)", valid, err)
+	}
+}
+
+func TestParallelDoubleLogin(t *testing.T) {
+	// М1-регресс: гонка двойного логина одного аккаунта — ровно один вход
+	// успешен, проигравший вытесняет сессию (канон F5), двух валидируемых
+	// сессий не остаётся никогда; следующая попытка проходит.
+	e := startEnv(t, nil)
+	for range 10 {
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		alive := make([]*l2client.LoginClient, 0, 2)
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Go(func() {
+				lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 5 * time.Second})
+				if err != nil {
+					results <- err
+					return
+				}
+				mu.Lock()
+				alive = append(alive, lc)
+				mu.Unlock()
+				if err := lc.Handshake(); err != nil {
+					results <- err
+					return
+				}
+				<-start
+				results <- lc.Login("dupe", "pass123")
+			})
+		}
+		time.Sleep(50 * time.Millisecond) // оба коннекта дошли до фазы Auth
+		close(start)
+		wg.Wait()
+		close(results)
+		defer func() {
+			for _, lc := range alive {
+				_ = lc.Close()
+			}
+		}()
+		wins, fails := 0, 0
+		for err := range results {
+			switch {
+			case err == nil:
+				wins++
+			case strings.Contains(err.Error(), "0x07"):
+				fails++
+			default:
+				t.Fatalf("неожиданная ошибка двойного входа: %v", err)
+			}
+		}
+		if wins != 1 || fails != 1 {
+			t.Fatalf("двойной вход: успехов %d, отказов 0x07 %d; want 1/1", wins, fails)
+		}
+		if n := e.sessions.Len(); n != 0 {
+			t.Fatalf("живых сессий после гонки = %d; want 0 (вытеснение)", n)
+		}
+	}
+	// Замена со следующей попытки.
+	lc := dial(t, e.addr)
+	if err := lc.Login("dupe", "pass123"); err != nil {
+		t.Fatalf("Login после гонки: %v", err)
+	}
 }

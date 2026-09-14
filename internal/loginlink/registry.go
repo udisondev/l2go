@@ -2,6 +2,7 @@ package loginlink
 
 import (
 	"errors"
+	"log/slog"
 	"sort"
 	"sync"
 )
@@ -20,11 +21,11 @@ type GameServerEntry struct {
 	Name  string
 }
 
-// gsRecord — регистрация: поколение отличает владельца записи (guard
-// принадлежности: выход старого потока после замены не удаляет чужую запись).
+// gsRecord — регистрация; идентичность записи — сам указатель (guard
+// принадлежности: выход старого потока после замены не удаляет чужую запись —
+// unregister сверяет cur == rec).
 type gsRecord struct {
 	entry     GameServerEntry
-	gen       uint64
 	displaced chan struct{} // закрыт при вытеснении новой регистрацией
 	kick      chan kickMsg
 }
@@ -35,12 +36,15 @@ type kickMsg struct {
 
 const kickQueue = 8
 
+// maxServers — потолок записей реестра: ID записи — byte провода ServerList
+// (1..255), переполнение не допускается.
+const maxServers = 255
+
 // registry — реестр зарегистрированных GS (мьютекс-сервис).
 type registry struct {
 	mu        sync.Mutex
 	byHex     map[string]*gsRecord
-	nextID    byte
-	gen       uint64
+	nextID    int
 	closed    bool
 	shutdownC chan struct{} // закрыт при остановке стыка (клиент реконнектится)
 }
@@ -61,10 +65,11 @@ func (r *registry) register(hexID, host string, port int32, name string) (*gsRec
 	if r.closed {
 		return nil, ErrLinkClosed
 	}
-	r.gen++
+	if _, exists := r.byHex[hexID]; !exists && r.nextID > maxServers {
+		return nil, errors.New("loginlink: реестр GS полон (лимит записей ServerList)")
+	}
 	rec := &gsRecord{
 		entry:     GameServerEntry{HexID: hexID, Host: host, Port: port, Name: name},
-		gen:       r.gen,
 		displaced: make(chan struct{}),
 		kick:      make(chan kickMsg, kickQueue),
 	}
@@ -72,7 +77,7 @@ func (r *registry) register(hexID, host string, port int32, name string) (*gsRec
 		rec.entry.ID = old.entry.ID // ID стабилен при замене
 		close(old.displaced)
 	} else {
-		rec.entry.ID = r.nextID
+		rec.entry.ID = byte(r.nextID)
 		r.nextID++
 	}
 	r.byHex[hexID] = rec
@@ -80,7 +85,7 @@ func (r *registry) register(hexID, host string, port int32, name string) (*gsRec
 }
 
 // unregister убирает запись, только если она принадлежит вызывающему потоку
-// (сверка gen): выход старого потока после замены не трогает новую запись.
+// (сверка указателя): выход старого потока после замены не трогает новую запись.
 func (r *registry) unregister(rec *gsRecord) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -105,10 +110,14 @@ func (r *registry) list() []GameServerEntry {
 func (r *registry) kickAll(account, reason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	sent := 0
 	for _, rec := range r.byHex {
 		select {
-		case rec.kick <- kickMsg{account, reason}:
-		default: // переполнение очереди — дроп, журнал у вызывающего
+		case rec.kick <- kickMsg{account: account, reason: reason}:
+			sent++
+		default:
+			slog.Warn("loginlink: kick-очередь GS переполнена — дроп",
+				"account", account, "reason", reason)
 		}
 	}
 }

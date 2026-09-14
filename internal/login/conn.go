@@ -38,6 +38,7 @@ type clientConn struct {
 	lc   *crypto.LoginCrypt
 
 	writeMu sync.Mutex // сериализация записей: kick из чужой горутины (F5)
+	kicked  bool       // под writeMu: коннект закрыт отказом — новые записи запрещены
 
 	sessionID int32
 	state     connState
@@ -87,10 +88,17 @@ func (cc *clientConn) handle() {
 	}
 }
 
-// forgetAccount снимает связку authed-коннект ↔ аккаунт.
+// forgetAccount снимает связку authed-коннект ↔ аккаунт; сессия, не ушедшая
+// на GS (коннект закрыт до PlayOk), умирает вместе с коннектом — канон
+// LoginClient.onDisconnection (Mobius CT_0_Interlude: removeAuthedLoginClient
+// при !_joinedGS).
 func (cc *clientConn) forgetAccount() {
-	if cc.account != "" {
-		cc.srv.forgetAuthed(cc.account, cc)
+	if cc.account == "" {
+		return
+	}
+	cc.srv.forgetAuthed(cc.account, cc)
+	if cc.state < statePlayed {
+		cc.srv.sessions.Drop(cc.account)
 	}
 }
 
@@ -153,10 +161,14 @@ func (cc *clientConn) readFrame(buf []byte) ([]byte, error) {
 	return frame, nil
 }
 
-// writeRecord пишет кадр с рамкой; writeMu — от интерливинга с kick-записью.
+// writeRecord пишет кадр с рамкой; writeMu — от интерливинга с kick-записью
+// (после кика любые записи отвергаются — клиент не получит кадры поверх 0x07).
 func (cc *clientConn) writeRecord(frame []byte) bool {
 	cc.writeMu.Lock()
 	defer cc.writeMu.Unlock()
+	if cc.kicked {
+		return false
+	}
 	var header [2]byte
 	binary.LittleEndian.PutUint16(header[:], uint16(len(frame)+2))
 	headerAndFrame := make([]byte, 0, len(frame)+2)
@@ -181,29 +193,46 @@ func (cc *clientConn) sendPacket(payload []byte) bool {
 	return cc.writeRecord(frame[:n])
 }
 
-// failClose — close-after-fail (канон): отказ клиенту и закрытие коннекта.
-func (cc *clientConn) failClose(write func(dst []byte) int, reason string) {
-	var payload [8]byte
-	n := write(payload[:])
-	_ = cc.sendPacket(payload[:n])
-	slog.Warn("login: вход отклонён", "login", cc.masked(), "reason", reason,
+// failClose — close-after-fail (канон Mobius CT_0_Interlude
+// RequestAuthLogin/RequestServerList: client.close(LoginFailReason)):
+// отказный пакет и закрытие коннекта вызывающей горутиной.
+func (cc *clientConn) failClose(payload []byte, reason string) {
+	_ = cc.sendPacket(payload)
+	slog.Warn("login: вход отклонён", "login", cc.loginForLog(), "reason", reason,
 		"addr", cc.conn.RemoteAddr().String())
 }
 
-// masked — логин для журнала (F18): без пароля; пустой до фазы Auth — прочерк.
-func (cc *clientConn) masked() string {
+// loginForLog — логин для журнала (F18): пароль не пишется никогда; до фазы
+// Auth — прочерк.
+func (cc *clientConn) loginForLog() string {
 	if cc.account == "" {
 		return "-"
 	}
 	return cc.account
 }
 
-// closeWithFail — отказ из чужой горутины (kick старого коннекта, F5).
+// closeWithFail — отказ из чужой горутины (kick старого коннекта, F5):
+// атомарно под writeMu — отказная запись, пометка kicked, закрытие.
 func (cc *clientConn) closeWithFail(reason protocol.LoginFailReason) {
+	cc.writeMu.Lock()
+	defer cc.writeMu.Unlock()
+	if cc.kicked {
+		return
+	}
 	var payload [protocol.LoginFailSize]byte
 	n := protocol.WriteLoginFail(payload[:], reason)
-	_ = cc.sendPacket(payload[:n])
-	cc.close()
+	frame := make([]byte, protocol.LoginFailSize+crypto.MaxFrameOverhead)
+	fn, err := cc.lc.Encrypt(frame, payload[:n])
+	if err == nil {
+		var header [2]byte
+		binary.LittleEndian.PutUint16(header[:], uint16(fn+2))
+		_, _ = cc.conn.Write(append(header[:], frame[:fn]...))
+	}
+	cc.kicked = true
+	_ = cc.conn.Close()
+	slog.Warn("login: вход отклонён (кик владельца сессии)",
+		"login", cc.loginForLog(), "reason", "account_in_use",
+		"addr", cc.conn.RemoteAddr().String())
 }
 
 func (cc *clientConn) close() {
@@ -222,9 +251,9 @@ func (cc *clientConn) handleGG(frame []byte) bool {
 	}
 	v, ok := protocol.NewAuthGameGuardView(frame)
 	if !ok || v.SessionID() != cc.sessionID {
-		cc.failClose(func(dst []byte) int {
-			return protocol.WriteLoginFail(dst, protocol.ReasonAccessFailed)
-		}, "authgameguard: чужой sessionID")
+		var fail [protocol.LoginFailSize]byte
+		cc.failClose(fail[:protocol.WriteLoginFail(fail[:], protocol.ReasonAccessFailed)],
+			"authgameguard: чужой sessionID")
 		return false
 	}
 	var payload [protocol.GGAuthSize]byte
@@ -264,14 +293,16 @@ func (cc *clientConn) handleAuth(frame []byte) bool {
 	case persist.VerdictOK:
 		return cc.issueLoginOk()
 	case persist.VerdictBanned:
-		cc.failClose(func(dst []byte) int {
-			return protocol.WriteAccountKicked(dst, protocol.KickPermanentlyBanned)
-		}, "banned")
+		var kick [protocol.AccountKickedSize]byte
+		cc.failClose(kick[:protocol.WriteAccountKicked(kick[:], protocol.KickPermanentlyBanned)], "banned")
 		return false
-	default: // NoAccount/BadPassword: null-путь канона, существование не раскрывается
-		cc.failClose(func(dst []byte) int {
-			return protocol.WriteLoginFail(dst, protocol.ReasonUserOrPassWrong)
-		}, "user_or_pass_wrong")
+	default:
+		// NoAccount/BadPassword/пустой логин: null-путь канона (Mobius
+		// CT_0_Interlude LoginController.retriveAccountInfo == null →
+		// REASON_USER_OR_PASS_WRONG) — существование аккаунта не раскрывается.
+		var fail [protocol.LoginFailSize]byte
+		cc.failClose(fail[:protocol.WriteLoginFail(fail[:], protocol.ReasonUserOrPassWrong)],
+			"user_or_pass_wrong")
 		return false
 	}
 }
@@ -280,16 +311,19 @@ func (cc *clientConn) handleAuth(frame []byte) bool {
 // отклоняет обоих (канон ALREADY_ON_LS: замена со следующей попытки).
 func (cc *clientConn) issueLoginOk() bool {
 	k1, k2 := randInt32(), randInt32()
-	if err := cc.srv.sessions.Put(cc.account, k1, k2); err != nil {
-		if old := cc.srv.registerAuthed(cc.account, cc); old != nil {
+	// Put и связка authed атомарны в одной критсекции сервера: в гонке
+	// двойного логина проигравший обязательно находит победителя для кика
+	// (F5 «обоим» без TOCTOU-окна).
+	old, ok := cc.srv.beginAuthed(cc.account, cc, k1, k2)
+	if !ok {
+		if old != nil {
 			old.closeWithFail(protocol.ReasonAccountInUse)
 		}
-		cc.failClose(func(dst []byte) int {
-			return protocol.WriteLoginFail(dst, protocol.ReasonAccountInUse)
-		}, "account_in_use")
+		var fail [protocol.LoginFailSize]byte
+		cc.failClose(fail[:protocol.WriteLoginFail(fail[:], protocol.ReasonAccountInUse)],
+			"account_in_use")
 		return false
 	}
-	cc.srv.registerAuthed(cc.account, cc)
 	cc.loginOk1, cc.loginOk2 = k1, k2
 	var payload [protocol.LoginOkSize]byte
 	n := protocol.WriteLoginOk(payload[:], k1, k2)
@@ -311,18 +345,18 @@ func (cc *clientConn) handleAuthed(frame []byte) bool {
 	case protocol.OpRequestServerList:
 		v, ok := protocol.NewRequestServerListView(frame)
 		if !ok || !cc.srv.sessions.CheckLoginPair(cc.account, v.LoginOkID1(), v.LoginOkID2()) {
-			cc.failClose(func(dst []byte) int {
-				return protocol.WriteLoginFail(dst, protocol.ReasonAccessFailed)
-			}, "server_list: неверная пара loginOk")
+			var fail [protocol.LoginFailSize]byte
+			cc.failClose(fail[:protocol.WriteLoginFail(fail[:], protocol.ReasonAccessFailed)],
+				"server_list: неверная пара loginOk")
 			return false
 		}
 		return cc.sendServerList()
 	case protocol.OpRequestServerLogin:
 		v, ok := protocol.NewRequestServerLoginView(frame)
 		if !ok || !cc.srv.sessions.CheckLoginPair(cc.account, v.LoginOkID1(), v.LoginOkID2()) {
-			cc.failClose(func(dst []byte) int {
-				return protocol.WriteLoginFail(dst, protocol.ReasonAccessFailed)
-			}, "server_login: неверная пара loginOk")
+			var fail [protocol.LoginFailSize]byte
+			cc.failClose(fail[:protocol.WriteLoginFail(fail[:], protocol.ReasonAccessFailed)],
+				"server_login: неверная пара loginOk")
 			return false
 		}
 		return cc.issuePlayOk(v.ServerID())
@@ -373,9 +407,9 @@ func (cc *clientConn) issuePlayOk(serverID byte) bool {
 		p1, p2 := randInt32(), randInt32()
 		if !cc.srv.sessions.SetPlayKeys(cc.account, p1, p2) {
 			// Сессия умерла (TTL) — протокольный отказ.
-			cc.failClose(func(dst []byte) int {
-				return protocol.WriteLoginFail(dst, protocol.ReasonAccessFailed)
-			}, "server_login: сессия истекла")
+			var fail [protocol.LoginFailSize]byte
+			cc.failClose(fail[:protocol.WriteLoginFail(fail[:], protocol.ReasonAccessFailed)],
+				"server_login: сессия истекла")
 			return false
 		}
 		var payload [protocol.PlayOkSize]byte
@@ -386,9 +420,9 @@ func (cc *clientConn) issuePlayOk(serverID byte) bool {
 		cc.state = statePlayed // окно ожиданий закрыто (F11)
 		return true
 	}
-	cc.failClose(func(dst []byte) int {
-		return protocol.WritePlayFail(dst, protocol.ReasonServerOverloaded)
-	}, "server_login: неизвестный сервер")
+	var fail [protocol.PlayFailSize]byte
+	cc.failClose(fail[:protocol.WritePlayFail(fail[:], protocol.ReasonServerOverloaded)],
+		"server_login: неизвестный сервер")
 	return false
 }
 

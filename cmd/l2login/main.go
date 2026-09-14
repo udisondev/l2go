@@ -70,9 +70,22 @@ func runServer(args []string) error {
 	sessionTTL := fs.Duration("session-ttl", 5*time.Minute, "TTL сессий стыка")
 	drain := fs.Duration("drain", 10*time.Second, "таймаут дрена коннектов при остановке")
 	grpcGrace := fs.Duration("grpc-grace", 5*time.Second, "таймаут GracefulStop стыка")
-	verbose := fs.Bool("v", false, "подробный журнал")
 	fs.Parse(args)
-	setupLog(*verbose)
+	setupLog(false)
+
+	// «0 = без лимита» запрещён (F32): нулевые значения — ошибка старта.
+	for _, zero := range []struct {
+		name string
+		d    time.Duration
+	}{
+		{"-drain", *drain},
+		{"-grpc-grace", *grpcGrace},
+		{"-session-ttl", *sessionTTL},
+	} {
+		if zero.d <= 0 {
+			return fmt.Errorf("%s = %s: нулевые таймауты запрещены", zero.name, zero.d)
+		}
+	}
 
 	tlsCfg, err := mtls.ServerConfig(
 		filepath.Join(*tlsDir, mtls.CAFile),
@@ -205,19 +218,28 @@ var demoHexID = []byte("demo-gs")
 
 func runGS(args []string) error {
 	fs := flag.NewFlagSet("l2login gs", flag.ExitOnError)
-	link := fs.String("link", "127.0.0.1:9011", "адрес стыка LS")
-	host := fs.String("host", "127.0.0.1", "адрес GS для ServerList")
+	link := fs.String("link", "127.0.0.1:9011", "адрес стыка LS (хост сверяется с SAN серверного сертификата)")
+	host := fs.String("host", "127.0.0.1", "адрес GS для ServerList: IP-литерал (имена не резолвятся)")
 	port := fs.Int("port", 7777, "порт GS для ServerList")
 	name := fs.String("name", "Bartz", "имя мира (журналы)")
 	tlsDir := fs.String("tls", "var/tls", "каталог mTLS-материала (клиентские креды)")
 	fs.Parse(args)
 	setupLog(false)
 
+	// Имя сервера TLS = хост стыка: пиннинг следует за адресом (для remote-GS
+	// серт генерится с -server-name тем же именем).
+	linkHost, _, err := net.SplitHostPort(*link)
+	if err != nil {
+		return fmt.Errorf("адрес стыка %s: %w", *link, err)
+	}
+	if linkHost == "" {
+		linkHost = "localhost"
+	}
 	tlsCfg, err := mtls.ClientConfig(
 		filepath.Join(*tlsDir, mtls.CAFile),
 		filepath.Join(*tlsDir, mtls.ClientCertFile),
 		filepath.Join(*tlsDir, mtls.ClientKeyFile),
-		"localhost")
+		linkHost)
 	if err != nil {
 		return fmt.Errorf("mTLS-материал стыка: %w (генерация: l2login cert -out %s)", err, *tlsDir)
 	}
