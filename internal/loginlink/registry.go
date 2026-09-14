@@ -110,11 +110,9 @@ func (r *registry) list() []GameServerEntry {
 func (r *registry) kickAll(account, reason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	sent := 0
 	for _, rec := range r.byHex {
 		select {
 		case rec.kick <- kickMsg{account: account, reason: reason}:
-			sent++
 		default:
 			slog.Warn("loginlink: kick-очередь GS переполнена — дроп",
 				"account", account, "reason", reason)

@@ -78,9 +78,9 @@ func runServer(args []string) error {
 		name string
 		d    time.Duration
 	}{
-		{"-drain", *drain},
-		{"-grpc-grace", *grpcGrace},
-		{"-session-ttl", *sessionTTL},
+		{name: "-drain", d: *drain},
+		{name: "-grpc-grace", d: *grpcGrace},
+		{name: "-session-ttl", d: *sessionTTL},
 	} {
 		if zero.d <= 0 {
 			return fmt.Errorf("%s = %s: нулевые таймауты запрещены", zero.name, zero.d)

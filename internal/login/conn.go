@@ -226,6 +226,7 @@ func (cc *clientConn) closeWithFail(reason protocol.LoginFailReason) {
 	if err == nil {
 		var header [2]byte
 		binary.LittleEndian.PutUint16(header[:], uint16(fn+2))
+		_ = cc.conn.SetWriteDeadline(time.Now().Add(writeStageTimeout))
 		_, _ = cc.conn.Write(append(header[:], frame[:fn]...))
 	}
 	cc.kicked = true

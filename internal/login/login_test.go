@@ -588,34 +588,48 @@ func readRecord(conn net.Conn) ([]byte, error) {
 	return body, nil
 }
 
-// login — полный флоу raw-клиента до LoginOk.
+// login — полный флоу raw-клиента до LoginOk; отказ — фаталь.
 func (rc *rawClient) login(user, pass string) {
 	rc.t.Helper()
-	var gg [protocol.AuthGameGuardSize]byte
-	protocol.WriteAuthGameGuard(gg[:], rc.sessionID)
-	rc.send(gg[:])
-	rc.read() // GGAuth
+	rc.gg()
+	if err := rc.auth(user, pass); err != nil {
+		rc.t.Fatalf("Login: %v", err)
+	}
+}
 
+// gg — фаза AuthGameGuard.
+func (rc *rawClient) gg() {
+	rc.t.Helper()
+	var wire [protocol.AuthGameGuardSize]byte
+	protocol.WriteAuthGameGuard(wire[:], rc.sessionID)
+	rc.send(wire[:])
+	rc.read() // GGAuth
+}
+
+// auth — RequestAuthLogin без фатали: (nil — LoginOk, ключи сохранены).
+func (rc *rawClient) auth(user, pass string) error {
+	rc.t.Helper()
 	var plain [protocol.RequestAuthLoginPlainSize]byte
 	if err := protocol.WriteRequestAuthLoginPlain(plain[:], user, pass); err != nil {
-		rc.t.Fatalf("plain-блок: %v", err)
+		return err
 	}
 	ct, err := crypto.RSAEncryptNoPadding(rc.pub, plain[:])
 	if err != nil {
-		rc.t.Fatalf("RSA: %v", err)
+		return err
 	}
 	var wire [protocol.RequestAuthLoginSize]byte
 	protocol.WriteRequestAuthLogin(wire[:], ct)
 	rc.send(wire[:])
 	reply := rc.read()
 	if reply[0] != protocol.OpLoginOk {
-		rc.t.Fatalf("Login: опкод ответа 0x%02X; want LoginOk", reply[0])
+		return fmt.Errorf("опкод ответа 0x%02X", reply[0])
 	}
 	v, ok := protocol.NewLoginOkView(reply)
 	if !ok {
-		rc.t.Fatal("LoginOkView")
+		return errors.New("LoginOkView")
 	}
 	rc.loginOk1, rc.loginOk2 = v.LoginOkID1(), v.LoginOkID2()
+	return nil
 }
 
 func TestGGWrongSessionID(t *testing.T) {
@@ -889,8 +903,12 @@ func TestParallelDoubleLogin(t *testing.T) {
 				t.Fatalf("неожиданная ошибка двойного входа: %v", err)
 			}
 		}
-		if wins != 1 || fails != 1 {
-			t.Fatalf("двойной вход: успехов %d, отказов 0x07 %d; want 1/1", wins, fails)
+		// Допустимы 1/1 и 0/2: победитель может быть вытеснен до отправки
+		// LoginOk (kicked-флаг отвергает запись) — эквивалент последовательного
+		// канона. Инвариант: не более одного успеха, отказы только 0x07,
+		// живых сессий после гонки нет (F70).
+		if wins > 1 || wins+fails != 2 {
+			t.Fatalf("двойной вход: успехов %d, отказов 0x07 %d; want 1/1 или 0/2", wins, fails)
 		}
 		if n := e.sessions.Len(); n != 0 {
 			t.Fatalf("живых сессий после гонки = %d; want 0 (вытеснение)", n)
@@ -901,4 +919,45 @@ func TestParallelDoubleLogin(t *testing.T) {
 	if err := lc.Login("dupe", "pass123"); err != nil {
 		t.Fatalf("Login после гонки: %v", err)
 	}
+}
+
+func TestDoubleLoginKickObservable(t *testing.T) {
+	// F37-фальсификатор: в гонке двойного входа победитель обязан получить
+	// кик на свой сокет (0x07 + закрытие) — в TOCTOU-варианте кик терялся и
+	// сокет победителя молчал до idle. Гоняем до победы raw-клиента.
+	e := startEnv(t, nil)
+	rcWon := false
+	for range 20 {
+		rc := dialRaw(t, e.addr)
+		rc.gg()
+		lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 5 * time.Second})
+		if err != nil {
+			t.Fatalf("DialLogin: %v", err)
+		}
+		if err := lc.Handshake(); err != nil {
+			t.Fatalf("Handshake: %v", err)
+		}
+		authErr := make(chan error, 1)
+		go func() { authErr <- rc.auth("dupe", "pass123") }()
+		lcErr := lc.Login("dupe", "pass123")
+		rcErr := <-authErr
+		switch {
+		case rcErr == nil:
+			// raw-клиент победил: кик обязан прийти на его сокет.
+			rc.expectFailClose(5*time.Second, protocol.OpLoginFail, byte(protocol.ReasonAccountInUse))
+			rcWon = true
+			_ = lc.Close()
+		case lcErr == nil:
+			_ = rc.conn.Close()
+		default:
+			// «Оба отклонены» — легитимный F70-интерливинг (кик победителя
+			// до отправки его LoginOk): победителя нет, наблюдать нечего.
+			_ = rc.conn.Close()
+			_ = lc.Close()
+		}
+		if rcWon {
+			return
+		}
+	}
+	t.Fatal("raw-клиент не победил ни в одной из 20 гонок — кик победителя не наблюдали")
 }
