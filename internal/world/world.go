@@ -55,6 +55,7 @@ type Entity struct {
 	Moving    bool     // интент смены владельца («еду»): флаг-состояние, не лок
 	Dead      bool     // смерть — маркер; деспавн — не смерть
 	HP        int32
+	Beat      Tick // heartbeat: тик последнего шага симуляции
 	Servants  [4]ServantSlot
 	Transfers []TransferRecord
 }

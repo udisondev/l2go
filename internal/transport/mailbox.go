@@ -305,6 +305,12 @@ func (m *Mailbox) ExtractInto(token uint64, buf []Envelope) []Envelope {
 	return m.extractInto(token, buf[:0])
 }
 
+// ExtractAppend — изъятие с дописыванием в buf: пачки нескольких ящиков
+// накапливаются владельцем в одном буфере (0 аллокаций вне роста).
+func (m *Mailbox) ExtractAppend(token uint64, buf []Envelope) []Envelope {
+	return m.extractInto(token, buf)
+}
+
 func (m *Mailbox) extractInto(token uint64, buf []Envelope) []Envelope {
 	m.checkReader(token)
 	seg := m.readerStart()
@@ -435,6 +441,10 @@ func (m *Mailbox) Despawn(token uint64) {
 
 // ID — адрес ящика в карте (заполняется Register; 0 до регистрации).
 func (m *Mailbox) ID() EntityID { return EntityID(m.regID.Load()) }
+
+// Mark возвращает водяной знак: seq последнего изъятого письма. Потребитель —
+// заголовки порций лога D5 (мир); меняет только подтверждённый читатель.
+func (m *Mailbox) Mark() uint64 { return m.mark.Load() }
 
 // Depth — текущая глубина очереди (метрика декларации).
 func (m *Mailbox) Depth() int64 { return m.length.Load() }

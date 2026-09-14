@@ -1,0 +1,228 @@
+package world
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/udisondev/l2go/internal/transport"
+)
+
+func newTestLog(t *testing.T, payloads bool, maxFile int64) *PortionLog {
+	t.Helper()
+	l, err := NewPortionLog(t.TempDir(), 7, 100*time.Millisecond, payloads, maxFile)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	return l
+}
+
+func sampleStep(tick Tick, delta uint64) (steps []StepInput) {
+	return []StepInput{{
+		Tick: tick, Delta: delta,
+		Births:  []AppliedBirth{{ID: 42, Ent: &Entity{ID: 42, Owner: 7, HP: 100, Beat: tick}}},
+		Retires: []Retire{{ID: 9}},
+		Portions: []PortionRecord{
+			{Box: 1, Mark: 3, Envs: []transport.Envelope{
+				{To: transport.Addr{Entity: 2, Slot: transport.SlotSelf}, FromID: 1, Kind: transport.KindAggro, Attrs: transport.AttrBound, Payload: []byte{1, 2, 3}},
+				{FromID: 1, Kind: transport.KindEnterWorld},
+			}},
+		},
+		Advisory: []AdvisoryIn{{Cell: 5, Entity: 11}},
+	}}
+}
+
+// Раундтрип формата: запись → чтение → реконструкция порций, оба режима
+// payloads; порядок порций = порядок применения.
+func TestPortionLogRoundtrip(t *testing.T) {
+	for _, payloads := range []bool{false, true} {
+		l := newTestLog(t, payloads, 1<<20)
+		for _, s := range sampleStep(10, 1) {
+			if err := l.LogStep(s); err != nil {
+				t.Fatalf("LogStep(payloads=%v): %v", payloads, err)
+			}
+		}
+		if err := l.LogPanic(11, 2); err != nil {
+			t.Fatalf("LogPanic: %v", err)
+		}
+		hdr, steps, panics, err := readAll(t, l)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if hdr.Region != 7 || hdr.Version != 1 || hdr.Payloads != payloads || hdr.PeriodNS == 0 {
+			t.Fatalf("заголовок %+v", hdr)
+		}
+		if len(steps) != 1 || len(panics) != 1 {
+			t.Fatalf("записей: steps=%d panics=%d; want 1 и 1", len(steps), len(panics))
+		}
+		st := steps[0]
+		if st.Tick != 10 || st.Delta != 1 {
+			t.Errorf("граница шага = (%d, %d); want (10, 1)", st.Tick, st.Delta)
+		}
+		if len(st.Births) != 1 || st.Births[0].ID != 42 || st.Births[0].Ent.HP != 100 {
+			t.Errorf("рождения в логе: %+v", st.Births)
+		}
+		if len(st.Retires) != 1 || st.Retires[0].ID != 9 {
+			t.Errorf("удаления в логе: %+v", st.Retires)
+		}
+		if len(st.Portions) != 1 || st.Portions[0].Box != 1 || st.Portions[0].Mark != 3 || len(st.Portions[0].Envs) != 2 {
+			t.Fatalf("пачки в логе: %+v", st.Portions)
+		}
+		env := st.Portions[0].Envs[0]
+		if env.To.Entity != 2 || env.FromID != 1 || env.Kind != transport.KindAggro || env.Attrs != transport.AttrBound {
+			t.Errorf("заголовок письма: %+v", env)
+		}
+		if payloads {
+			if string(env.Payload) != "\x01\x02\x03" {
+				t.Errorf("payload при включённых payloads = %v", env.Payload)
+			}
+		} else if env.Payload != nil {
+			t.Errorf("payload при выключенных payloads = %v; want nil", env.Payload)
+		}
+		if len(st.Advisory) != 1 || st.Advisory[0].Cell != 5 || st.Advisory[0].Entity != 11 {
+			t.Errorf("advisory-входы: %+v", st.Advisory)
+		}
+		if panics[0].Tick != 11 || panics[0].Phase != 2 {
+			t.Errorf("маркер паники: %+v", panics[0])
+		}
+	}
+}
+
+func readAll(t *testing.T, l *PortionLog) (FileHeader, []StepRecord, []PanicRecord, error) {
+	t.Helper()
+	if err := l.w.Flush(); err != nil { // тест читает при живом писателе
+		t.Fatalf("flush: %v", err)
+	}
+	hdr, steps, panics, err := ReadPortionLogDir(l.dir, l.region)
+	return hdr, steps, panics, err
+}
+
+// Запись границы шага — на каждый шаг: пустые шаги тоже пишутся (сходимость
+// реплея по Steps/Noise/Beat).
+func TestPortionLogEveryStepWritten(t *testing.T) {
+	l := newTestLog(t, false, 1<<20)
+	for i := 0; i < 5; i++ {
+		if err := l.LogStep(StepInput{Tick: Tick(i), Delta: 1}); err != nil {
+			t.Fatalf("LogStep: %v", err)
+		}
+	}
+	_, steps, _, err := readAll(t, l)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(steps) != 5 {
+		t.Fatalf("записей %d; want 5 (пустые шаги пишутся)", len(steps))
+	}
+}
+
+// Ротация по размеру: следующий файл, цепочка читается по seq.
+func TestPortionLogRotationAndChain(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewPortionLog(dir, 3, 100*time.Millisecond, false, 64)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		s := StepInput{Tick: Tick(i), Delta: 1}
+		s.Portions = []PortionRecord{{Box: 1, Mark: uint64(i), Envs: []transport.Envelope{{FromID: 5, Kind: transport.KindXP}}}}
+		if err := l.LogStep(s); err != nil {
+			t.Fatalf("LogStep: %v", err)
+		}
+	}
+	l.Close()
+	files, err := filepath.Glob(filepath.Join(dir, "portion-3-*.log"))
+	if err != nil || len(files) < 2 {
+		t.Fatalf("ротация не создала цепочку: %v (%v)", files, err)
+	}
+	_, steps, _, err := ReadPortionLogDir(dir, 3)
+	if err != nil {
+		t.Fatalf("ReadPortionLogDir: %v", err)
+	}
+	if len(steps) != 20 {
+		t.Fatalf("цепочка вернула %d шагов; want 20", len(steps))
+	}
+	for i, st := range steps {
+		if st.Tick != Tick(i) {
+			t.Fatalf("порядок цепочки нарушен: steps[%d].Tick = %d", i, st.Tick)
+		}
+	}
+}
+
+// seq на рестарте: max существующих + 1 — сессии не смешиваются, старый файл цел.
+func TestPortionLogRestartSeq(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewPortionLog(dir, 7, 100*time.Millisecond, false, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := first.LogStep(StepInput{Tick: 1, Delta: 1}); err != nil {
+		t.Fatalf("LogStep: %v", err)
+	}
+	first.Close()
+	second, err := NewPortionLog(dir, 7, 100*time.Millisecond, false, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	defer second.Close()
+	if second.seq != first.seq+1 {
+		t.Fatalf("seq новой сессии = %d; want %d (max существующих + 1)", second.seq, first.seq+1)
+	}
+	if err := second.LogStep(StepInput{Tick: 2, Delta: 0}); err != nil {
+		t.Fatalf("LogStep: %v", err)
+	}
+	if err := second.w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	_, steps, _, err := ReadPortionLogDir(dir, 7)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(steps) != 2 || steps[0].Tick != 1 || steps[1].Tick != 2 {
+		t.Fatalf("сессии смешались: %+v", steps)
+	}
+}
+
+// Оборванный хвост (ENOSPC/power-loss): ридер возвращает ErrTruncated после
+// валидных записей, а не мусор.
+func TestPortionLogTruncatedTail(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewPortionLog(dir, 7, 100*time.Millisecond, true, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := l.LogStep(StepInput{Tick: Tick(i), Delta: 1}); err != nil {
+			t.Fatalf("LogStep: %v", err)
+		}
+	}
+	l.Close()
+	path := filepath.Join(dir, "portion-7-1.log")
+	info, _ := os.Stat(path)
+	if err := os.Truncate(path, info.Size()-3); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	_, steps, _, err := ReadPortionLogDir(dir, 7)
+	if !errors.Is(err, ErrTruncated) {
+		t.Fatalf("err = %v; want ErrTruncated", err)
+	}
+	if len(steps) != 2 {
+		t.Fatalf("валидных записей %d; want 2", len(steps))
+	}
+}
+
+// Кодирование записи — в переиспользуемый буфер писателя: 0 аллокаций на
+// запись вне роста буфера.
+func TestPortionLogEncodeZeroAlloc(t *testing.T) {
+	l := newTestLog(t, false, 1<<20)
+	s := sampleStep(5, 1)[0]
+	l.encodeStep(s) // прогрев ёмкости
+	allocs := testing.AllocsPerRun(20, func() {
+		l.enc = l.encodeStepInto(l.enc[:0], s)
+	})
+	if allocs != 0 {
+		t.Fatalf("аллокаций на запись = %.0f; want 0 (вне роста буфера)", allocs)
+	}
+}
