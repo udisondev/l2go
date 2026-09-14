@@ -96,7 +96,7 @@ func TestUnknownKindDropped(t *testing.T) {
 func TestFAFCapDropNew(t *testing.T) {
 	const capFAF = 4
 	box, token := newClaimedBox(t, capFAF)
-	for i := 0; i < capFAF+5; i++ {
+	for i := range capFAF + 5 {
 		box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame, Payload: testSeq(uint64(i))})
 	}
 	got := box.Extract(token)
@@ -113,7 +113,7 @@ func TestFAFCapDropNew(t *testing.T) {
 		t.Errorf("DroppedFAF = %d; want 5", st.DroppedFAF)
 	}
 	// reliable и transfer капу не подчиняются: живому не дропается никогда
-	for i := 0; i < capFAF+10; i++ {
+	for i := range capFAF + 10 {
 		box.enqueue(Envelope{FromID: 1, Kind: KindAggro, Payload: testSeq(uint64(i))})
 		box.enqueue(Envelope{FromID: 1, Kind: KindReserve, Payload: testSeq(uint64(i))})
 	}
@@ -149,7 +149,7 @@ func TestFinalDropClasses(t *testing.T) {
 
 func TestUnappliedRemainderDrop(t *testing.T) {
 	box, token := newClaimedBox(t, 8)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		box.enqueue(Envelope{FromID: 1, Kind: KindAggro, Payload: testSeq(uint64(i))})
 	}
 	batch := box.Extract(token)
@@ -166,7 +166,7 @@ func TestUnappliedRemainderDrop(t *testing.T) {
 func TestSegmentCollectionBelowMark(t *testing.T) {
 	box, token := newClaimedBox(t, 8)
 	const total = 2*segCap + 3
-	for i := 0; i < total; i++ {
+	for i := range total {
 		box.enqueue(Envelope{FromID: 1, Kind: KindAggro, Payload: testSeq(uint64(i))})
 	}
 	if got := len(box.Extract(token)); got != total {
@@ -223,9 +223,9 @@ func TestNotifyNoLostWakeup(t *testing.T) {
 	const producers, perProducer = 6, 300
 	var sent atomic.Int64
 	done := make(chan struct{})
-	for p := 0; p < producers; p++ {
+	for range producers {
 		go func() {
-			for i := 0; i < perProducer; i++ {
+			for i := range perProducer {
 				// reliable: живому не дропается — на быстром железе пачка
 				// продюсеров пробивает FAF-кап и роняет тест классовыми дропами
 				box.enqueue(Envelope{FromID: 1, Kind: KindAggro})
@@ -261,7 +261,7 @@ reading:
 			}
 		}
 	}
-	for p := 0; p < producers; p++ {
+	for range producers {
 		<-done
 	}
 	if got, want := received.Load(), int64(producers*perProducer); got != want {
@@ -271,7 +271,7 @@ reading:
 
 func TestMailboxStatsDepth(t *testing.T) {
 	box, _ := newClaimedBox(t, 8)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		box.enqueue(Envelope{FromID: 1, Kind: KindAggro})
 	}
 	if d := box.Depth(); d != 3 {

@@ -52,7 +52,7 @@ zone name="synth_unknown" type="MysteryZone" shape="Octagon" minZ=0 maxZ=10 node
 // по префиксам.
 func dumpLinesByPrefix(dump string, prefixes ...string) map[string][]string {
 	out := map[string][]string{}
-	for _, ln := range strings.Split(dump, "\n") {
+	for ln := range strings.SplitSeq(dump, "\n") {
 		for _, p := range prefixes {
 			if strings.HasPrefix(ln, p) {
 				out[p] = append(out[p], ln)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -486,9 +487,7 @@ func parseSpawnNpc(dec *xml.Decoder, start xml.StartElement, terrName string, bl
 	var bag map[string]string
 	if len(blockBag) > 0 {
 		bag = make(map[string]string, len(blockBag))
-		for k, v := range blockBag {
-			bag[k] = v
-		}
+		maps.Copy(bag, blockBag)
 	}
 	for _, a := range start.Attr {
 		v := strings.TrimSpace(a.Value)

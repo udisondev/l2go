@@ -66,7 +66,7 @@ func (r *loginRewriter) process(rec []byte) (out, orig []byte, err error) {
 	}
 	var chars []protocol.ServerChars
 	if n, has := v.CharsCount(); has {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			c, ok := v.Chars(i)
 			if !ok {
 				return nil, nil, fmt.Errorf("ServerList: счётчик %d обрезан", i)

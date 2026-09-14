@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io/fs"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -649,7 +650,7 @@ func buildSkillLevels(def *SkillDef, srcs []skillSrc, routes map[int8]int, path 
 	for r := range routes {
 		routesSorted = append(routesSorted, r)
 	}
-	sort.Slice(routesSorted, func(i, j int) bool { return routesSorted[i] < routesSorted[j] })
+	slices.Sort(routesSorted)
 	for _, r := range routesSorted {
 		def.Enchant = append(def.Enchant, SkillEnchant{Route: r})
 		lvls := make([]Skill, routes[r])
@@ -841,7 +842,7 @@ func dumpSkills(sb *strings.Builder, s *Static) {
 	for id := range s.skills {
 		ids = append(ids, int64(id))
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for _, idv := range ids {
 		d := s.skills[SkillID(idv)]
 		fmt.Fprintf(sb, "skill id=%d name=%q levels=%d ench=[", d.ID, d.Name, d.Levels)
@@ -900,7 +901,7 @@ func dumpSkillOverrides(sb *strings.Builder, d *SkillDef) {
 	for r := range d.enchantOverrides {
 		routes = append(routes, r)
 	}
-	sort.Slice(routes, func(i, j int) bool { return routes[i] < routes[j] })
+	slices.Sort(routes)
 	for _, r := range routes {
 		m := d.enchantOverrides[r]
 		keys := make([]string, 0, len(m))

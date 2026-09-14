@@ -550,9 +550,9 @@ func (c *parseCursor) bytes(n int) []byte {
 
 func parseStep(body []byte, payloads bool) (StepRecord, error) {
 	c := &parseCursor{data: body}
-	st := StepRecord{}
-	st.Tick = Tick(c.uvarint())
-	st.Delta = c.uvarint()
+	st := StepRecord{
+		Tick:  Tick(c.uvarint()),
+		Delta: c.uvarint()}
 	nbu := c.uvarint()
 	if c.err == nil && nbu > uint64(len(body)) {
 		c.err = fmt.Errorf("world: лог порций: рождений %d больше тела записи", nbu)
@@ -560,7 +560,7 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 	if c.err == nil {
 		nb := int(nbu)
 		st.Births = make([]BirthRecord, 0, nb)
-		for i := 0; i < nb; i++ {
+		for range nb {
 			var b BirthRecord
 			b.ID = transport.EntityID(c.uvarint())
 			b.Ent, c.err = parseEntity(c)
@@ -577,7 +577,7 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 	if c.err == nil {
 		nr := int(nru)
 		st.Retires = make([]Retire, 0, nr)
-		for i := 0; i < nr; i++ {
+		for range nr {
 			st.Retires = append(st.Retires, Retire{ID: transport.EntityID(c.uvarint())})
 		}
 	}
@@ -588,7 +588,7 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 	if c.err == nil {
 		np := int(npu)
 		st.Portions = make([]PortionRecord, 0, np)
-		for i := 0; i < np; i++ {
+		for range np {
 			var p PortionRecord
 			p.Box = transport.EntityID(c.uvarint())
 			p.Mark = c.uvarint()
@@ -598,7 +598,7 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 			}
 			ne := int(neu)
 			p.Envs = make([]transport.Envelope, 0, ne)
-			for j := 0; j < ne; j++ {
+			for range ne {
 				var env transport.Envelope
 				env.To.Entity = transport.EntityID(c.uvarint())
 				env.To.Slot = transport.Slot(c.varint())
@@ -627,7 +627,7 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 	if c.err == nil {
 		na := int(nau)
 		st.Advisory = make([]AdvisoryIn, 0, na)
-		for i := 0; i < na; i++ {
+		for range na {
 			st.Advisory = append(st.Advisory, AdvisoryIn{
 				Cell:   uint32(c.uvarint()),
 				Entity: transport.EntityID(c.uvarint()),
@@ -639,8 +639,8 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 
 func parsePanic(body []byte) (PanicRecord, error) {
 	c := &parseCursor{data: body}
-	p := PanicRecord{}
-	p.Tick = Tick(c.uvarint())
+	p := PanicRecord{
+		Tick: Tick(c.uvarint())}
 	ph := c.uvarint()
 	if c.err == nil {
 		if ph > math.MaxUint8 {
@@ -685,7 +685,7 @@ func parseEntity(c *parseCursor) (Entity, error) {
 	nt := int(ntu)
 	if nt > 0 {
 		e.Transfers = make([]TransferRecord, 0, nt)
-		for i := 0; i < nt; i++ {
+		for range nt {
 			var tr TransferRecord
 			tr.ID = c.uvarint()
 			tr.Phase = c.byte()

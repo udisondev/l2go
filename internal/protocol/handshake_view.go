@@ -179,7 +179,7 @@ func (v CharSelectionInfoView) Char(i int) (CharSelectionEntry, bool) {
 		return CharSelectionEntry{}, false
 	}
 	off := 5
-	for j := 0; j < i; j++ {
+	for range i {
 		next, ok := v.skipRecord(off)
 		if !ok {
 			return CharSelectionEntry{}, false

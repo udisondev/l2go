@@ -15,9 +15,9 @@ var benchSink bool
 // Координаты порядка мировых (~±100000).
 func BenchmarkZoneContains(b *testing.B) {
 	npoly := func(n int) Zone {
-		zn := Zone{ShapeKind: ShapeNPoly, MinZ: -500, MaxZ: 500, ZLo: -500, ZHi: 500}
-		zn.Nodes = make([][2]int32, n)
-		for i := 0; i < n; i++ {
+		zn := Zone{ShapeKind: ShapeNPoly, MinZ: -500, MaxZ: 500, ZLo: -500, ZHi: 500,
+			Nodes: make([][2]int32, n)}
+		for i := range n {
 			a := float64(i) * 2 * 3.14159265 / float64(n)
 			zn.Nodes[i] = [2]int32{100000 + int32(5000*math.Cos(a)), 100000 + int32(5000*math.Sin(a))}
 		}
@@ -101,7 +101,7 @@ func scanZones() []Zone {
 				n := 4 + rng.Intn(13)
 				rad := int32(200 + rng.Intn(1800))
 				zn.Nodes = make([][2]int32, n)
-				for i := 0; i < n; i++ {
+				for i := range n {
 					a := float64(i)*2*3.14159265/float64(n) + rng.Float64()*0.3
 					zn.Nodes[i] = [2]int32{zx + int32(float64(rad)*math.Cos(a)), zy + int32(float64(rad)*math.Sin(a))}
 				}
@@ -182,7 +182,7 @@ func TestScanClasses(t *testing.T) {
 			classMiss[class]++
 		}
 	}
-	for class := 0; class < 4; class++ {
+	for class := range 4 {
 		if classHit[class] == 0 && classMiss[class] == 0 {
 			t.Errorf("класс %d не представлен", class)
 		}

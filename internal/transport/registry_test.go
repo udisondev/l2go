@@ -9,7 +9,7 @@ import (
 func TestRegisterMonotonicIDs(t *testing.T) {
 	r := NewRegistry(8)
 	var prev EntityID
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		id := r.Register(&Mailbox{})
 		if id == 0 {
 			t.Fatalf("выдан зарезервированный EntityID 0")

@@ -26,7 +26,7 @@ func newBenchRegion(b *testing.B, cfg Config, population int) *Region {
 		b.Fatalf("NewRegion: %v", err)
 	}
 	b.Cleanup(func() { _ = log.Close() })
-	for i := 0; i < population; i++ {
+	for range population {
 		if _, err := r.Spawn(Entity{Owner: 1, HP: 100}); err != nil {
 			b.Fatalf("Spawn: %v", err)
 		}
@@ -40,7 +40,7 @@ func newBenchRegion(b *testing.B, cfg Config, population int) *Region {
 func deliverLoad(r *Region, per int) {
 	n := 0
 	for _, res := range r.residents {
-		for j := 0; j < per; j++ {
+		for range per {
 			if n%16 == 0 {
 				r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
 			} else {
@@ -113,12 +113,12 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 		t.Fatalf("NewRegion: %v", err)
 	}
 	defer log.Close()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if _, err := r.Spawn(Entity{Owner: 1, HP: 100}); err != nil {
 			t.Fatalf("Spawn: %v", err)
 		}
 	}
-	for i := 0; i < 10; i++ { // прогрев ёмкостей буферов
+	for range 10 { // прогрев ёмкостей буферов
 		m.tick.Add(1)
 		r.step()
 	}

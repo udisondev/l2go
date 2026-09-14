@@ -22,7 +22,7 @@ func trackedArtifactFiles(t *testing.T, root string) []string {
 		t.Fatalf("git ls-files в %s: %v", root, err)
 	}
 	var found []string
-	for _, f := range bytes.Split(out, []byte{0}) {
+	for f := range bytes.SplitSeq(out, []byte{0}) {
 		if len(f) > 0 && strings.EqualFold(filepath.Ext(string(f)), ".l2a") {
 			found = append(found, string(f))
 		}
@@ -85,7 +85,7 @@ func trackedFiles(t *testing.T) []string {
 		t.Fatalf("git ls-files: %v", err)
 	}
 	var files []string
-	for _, f := range bytes.Split(out, []byte{0}) {
+	for f := range bytes.SplitSeq(out, []byte{0}) {
 		if len(f) > 0 {
 			files = append(files, string(f))
 		}

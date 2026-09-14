@@ -102,10 +102,7 @@ func TestDecodeStaticEvilInputs(t *testing.T) {
 func TestDecodeStaticNoPanic(t *testing.T) {
 	st, _ := loadSynthForCodec(t)
 	base := EncodeStatic(st)
-	step := len(base) / 256
-	if step < 1 {
-		step = 1
-	}
+	step := max(len(base)/256, 1)
 	for off := 0; off < len(base); off += step {
 		mut := append([]byte(nil), base...)
 		mut[off] ^= 0xFF
@@ -122,10 +119,10 @@ func TestSkillRawDepthCap(t *testing.T) {
 	const deep = 70
 	var sb strings.Builder
 	sb.WriteString(`<skill id="7999" levels="1" name="глубокий"><operateType>A1</operateType><effects>`)
-	for i := 0; i < deep; i++ {
+	for range deep {
 		sb.WriteString("<n>")
 	}
-	for i := 0; i < deep; i++ {
+	for range deep {
 		sb.WriteString("</n>")
 	}
 	sb.WriteString(`</effects></skill>`)
@@ -231,7 +228,7 @@ func TestDecodeStaticCraftedEvil(t *testing.T) {
 			func(t *testing.T) []byte {
 				return craftSection(t, func(e *enc) {
 					e.u32(2) // items
-					for i := 0; i < 5; i++ {
+					for range 5 {
 						e.u32(0)
 					}
 					craftItem(e, 9001)
@@ -244,7 +241,7 @@ func TestDecodeStaticCraftedEvil(t *testing.T) {
 			func(t *testing.T) []byte {
 				return craftSection(t, func(e *enc) {
 					e.u32(1)
-					for i := 0; i < 5; i++ {
+					for range 5 {
 						e.u32(0)
 					}
 					e.i32(9001)
@@ -256,7 +253,7 @@ func TestDecodeStaticCraftedEvil(t *testing.T) {
 			"маршрут 0",
 			func(t *testing.T) []byte {
 				return craftSection(t, func(e *enc) {
-					for i := 0; i < 5; i++ {
+					for range 5 {
 						e.u32(0)
 					}
 					e.u32(1) // skills
@@ -271,7 +268,7 @@ func TestDecodeStaticCraftedEvil(t *testing.T) {
 			"маршрут 9",
 			func(t *testing.T) []byte {
 				return craftSection(t, func(e *enc) {
-					for i := 0; i < 5; i++ {
+					for range 5 {
 						e.u32(0)
 					}
 					e.u32(1)
@@ -286,7 +283,7 @@ func TestDecodeStaticCraftedEvil(t *testing.T) {
 			"дубль маршрута",
 			func(t *testing.T) []byte {
 				return craftSection(t, func(e *enc) {
-					for i := 0; i < 5; i++ {
+					for range 5 {
 						e.u32(0)
 					}
 					e.u32(1)
@@ -302,7 +299,7 @@ func TestDecodeStaticCraftedEvil(t *testing.T) {
 			"глубина raw-дерева 65 в декодере",
 			func(t *testing.T) []byte {
 				return craftSection(t, func(e *enc) {
-					for i := 0; i < 5; i++ {
+					for range 5 {
 						e.u32(0)
 					}
 					e.u32(1) // skills
@@ -334,7 +331,7 @@ func TestDecodeStaticCraftedEvil(t *testing.T) {
 // благодаря сверке длин).
 func TestDecodeRouteDomainIsolated(t *testing.T) {
 	section := craftSection(t, func(e *enc) {
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			e.u32(0)
 		}
 		e.u32(1) // skills

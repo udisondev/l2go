@@ -206,7 +206,7 @@ func BenchmarkExtract(b *testing.B) {
 		if err := box.Claim(1); err != nil {
 			b.Fatal(err)
 		}
-		for i := 0; i < 3*segCap; i++ {
+		for range 3 * segCap {
 			box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]})
 		}
 		var sink []Envelope
@@ -278,8 +278,8 @@ func BenchmarkSendUnderWrite(b *testing.B) {
 	spawned := make(chan struct{})
 	go func() {
 		defer close(spawned)
-		for i := 0; i < batches; i++ {
-			for j := 0; j < 12_000; j++ {
+		for range batches {
+			for range 12_000 {
 				r.Register(&Mailbox{})
 			}
 		}
@@ -331,7 +331,7 @@ func BenchmarkMapWrite(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
 			r := NewRegistry(1024)
-			for j := 0; j < 12_000; j++ {
+			for range 12_000 {
 				r.Register(&Mailbox{})
 			}
 		}

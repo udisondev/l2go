@@ -85,7 +85,7 @@ func TestGameCryptPeerToPeer(t *testing.T) {
 	client.Enable()
 	server.Enable()
 
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		c2s := fill(1 + (i*7)%200)
 		s2c := fill(1 + (i*13)%200)
 

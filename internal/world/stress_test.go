@@ -31,7 +31,7 @@ func TestRegionStressSenders(t *testing.T) {
 	}
 	const population = 30
 	var ids []transport.EntityID
-	for i := 0; i < population; i++ {
+	for range population {
 		id, err := r.Spawn(Entity{Owner: 1, HP: 100})
 		if err != nil {
 			t.Fatalf("Spawn: %v", err)
@@ -48,11 +48,11 @@ func TestRegionStressSenders(t *testing.T) {
 	const senders, perSender = 8, 300
 	var sentReliable, sentFAF, sentCtrl atomic.Int64
 	var swg sync.WaitGroup
-	for s := 0; s < senders; s++ {
+	for s := range senders {
 		swg.Add(1)
 		go func(seed int) {
 			defer swg.Done()
-			for i := 0; i < perSender; i++ {
+			for i := range perSender {
 				id := ids[(seed+i)%population]
 				switch i % 3 {
 				case 0:
@@ -69,7 +69,7 @@ func TestRegionStressSenders(t *testing.T) {
 		}(s)
 	}
 	// целевая волна сверх FAF-капа одного ящика (1024): классовый дроп обязателен
-	for i := 0; i < 2048; i++ {
+	for range 2048 {
 		reg.Send(transport.Envelope{To: transport.Addr{Entity: ids[0]}, FromID: 5, Kind: transport.KindClientFrame})
 	}
 	sentFAF.Add(2048)

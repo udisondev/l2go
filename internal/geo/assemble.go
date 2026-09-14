@@ -35,7 +35,7 @@ func NewMapFromRegions(regions []*Region) (*Map, error) {
 // (возрастание rx, затем ry); raw — исходные байты региона. Возврат false из
 // fn прекращает обход.
 func (m *Map) EachRegion(fn func(rx, ry int, raw []byte) bool) {
-	for idx := 0; idx < len(m.regions); idx++ {
+	for idx := range len(m.regions) {
 		r := m.regions[idx]
 		if r == nil {
 			continue

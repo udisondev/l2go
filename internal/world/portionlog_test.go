@@ -104,7 +104,7 @@ func readAll(t *testing.T, l *PortionLog) (FileHeader, []StepRecord, []PanicReco
 // реплея по Steps/Noise/Beat).
 func TestPortionLogEveryStepWritten(t *testing.T) {
 	l := newTestLog(t, false, 1<<20)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if err := l.LogStep(StepInput{Tick: Tick(i), Delta: 1}); err != nil {
 			t.Fatalf("LogStep: %v", err)
 		}
@@ -125,9 +125,9 @@ func TestPortionLogRotationAndChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	for i := 0; i < 20; i++ {
-		s := StepInput{Tick: Tick(i), Delta: 1}
-		s.Portions = []PortionRecord{{Box: 1, Mark: uint64(i), Envs: []transport.Envelope{{FromID: 5, Kind: transport.KindXP}}}}
+	for i := range 20 {
+		s := StepInput{Tick: Tick(i), Delta: 1,
+			Portions: []PortionRecord{{Box: 1, Mark: uint64(i), Envs: []transport.Envelope{{FromID: 5, Kind: transport.KindXP}}}}}
 		if err := l.LogStep(s); err != nil {
 			t.Fatalf("LogStep: %v", err)
 		}
@@ -193,7 +193,7 @@ func TestPortionLogTruncatedTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := l.LogStep(StepInput{Tick: Tick(i), Delta: 1}); err != nil {
 			t.Fatalf("LogStep: %v", err)
 		}

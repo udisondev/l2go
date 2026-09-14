@@ -277,7 +277,7 @@ func (lc *LoginClient) ServerList() ([]protocol.ServerListEntry, []protocol.Serv
 	}
 	var chars []protocol.ServerChars
 	if n, ok := v.CharsCount(); ok {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			c, ok := v.Chars(i)
 			if !ok {
 				return nil, nil, fmt.Errorf("стадия ServerList: счётчик %d обрезан", i)

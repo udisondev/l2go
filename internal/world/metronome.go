@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -176,12 +177,7 @@ func (m *Metronome) watchdog(n Tick, active []*Region, episodes map[*Region]bool
 }
 
 func containsRegion(rs []*Region, r *Region) bool {
-	for _, x := range rs {
-		if x == r {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(rs, r)
 }
 
 // Activate включает регион в активный сет (no-op при повторной активации).
@@ -209,10 +205,8 @@ func (m *Metronome) addSet(ptr *atomic.Pointer[[]*Region], r *Region) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cur := *ptr.Load()
-	for _, x := range cur {
-		if x == r {
-			return
-		}
+	if slices.Contains(cur, r) {
+		return
 	}
 	next := make([]*Region, len(cur), len(cur)+1)
 	copy(next, cur)

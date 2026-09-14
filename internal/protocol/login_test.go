@@ -474,7 +474,7 @@ func TestLoginViewsNoPanic(t *testing.T) {
 			for i := 0; i < v.Count()+1; i++ {
 				_, _ = v.Server(i)
 			}
-			for i := 0; i < 4; i++ {
+			for i := range 4 {
 				_, _ = v.Chars(i)
 			}
 			_, _ = v.CharsCount()
@@ -586,7 +586,7 @@ func TestLoginWritersDirtyDst(t *testing.T) {
 				dirty[i] = 0xFF
 			}
 			tt.write(dirty)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				if clean[i] != dirty[i] {
 					t.Fatalf("%s: байт %d: чистый %#x, грязный %#x — затирание резервов сломано",
 						tt.name, i, clean[i], dirty[i])

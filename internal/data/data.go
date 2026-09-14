@@ -10,6 +10,7 @@ package data
 import (
 	"fmt"
 	"io/fs"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -153,7 +154,7 @@ func dumpItems(sb *strings.Builder, s *Static) {
 	for id := range s.items {
 		ids = append(ids, int64(id))
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for _, idv := range ids {
 		it := s.items[ItemID(idv)]
 		fmt.Fprintf(sb,
@@ -172,7 +173,7 @@ func dumpNpcs(sb *strings.Builder, s *Static) {
 	for id := range s.npcs {
 		ids = append(ids, int64(id))
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for _, idv := range ids {
 		n := s.npcs[NpcID(idv)]
 		fmt.Fprintf(sb,

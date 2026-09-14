@@ -165,8 +165,7 @@ func (r *Report) err(e Entry) {
 // отчёта, добавляя имя файла: StructError сохраняет свой код и место, прочие
 // ошибки читаются как io.
 func structEntry(file string, err error) Entry {
-	var se *StructError
-	if errors.As(err, &se) {
+	if se, ok := errors.AsType[*StructError](err); ok {
 		return Entry{File: file, Code: se.Code, Block: se.Block, Offset: se.Offset, Message: se.Message}
 	}
 	return Entry{File: file, Code: CodeIO, Message: err.Error()}

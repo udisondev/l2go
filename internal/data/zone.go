@@ -132,7 +132,7 @@ func npolyContains(nodes [][2]int32, minX, maxX, minY, maxY, x, y int32) bool {
 	px := int64(x)
 	hits := false
 	j := len(nodes) - 1
-	for i := 0; i < len(nodes); i++ {
+	for i := range nodes {
 		y1 := int64(nodes[j][1])
 		y2 := int64(nodes[i][1])
 		if (y1 > py) != (y2 > py) {

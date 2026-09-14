@@ -12,8 +12,8 @@ import (
 func goldenStatic() *Static {
 	it := Item{ID: 7, Name: "клинок", Type: "Weapon", Weight: 10, Price: 5,
 		Stackable: true, CrystalType: "d", CrystalCount: 3, Material: "fine_steel",
-		BodyPart: "rhand"}
-	it.set = map[string]string{"stat.pAtk": "10"}
+		BodyPart: "rhand",
+		set:      map[string]string{"stat.pAtk": "10"}}
 
 	n := Npc{ID: 21, Name: "гоблин", Title: "разбойник", Level: 9, Type: "Monster",
 		Race: "Goblin", AggroRange: 300, ClanHelpRange: 150, IsAggressive: true,
@@ -21,28 +21,28 @@ func goldenStatic() *Static {
 		IgnoreNpcIDs:    []NpcID{23},
 		CollisionRadius: 9.5, CollisionHeight: 21.5,
 		Minions: []MinionRef{{NpcID: 22, Count: 2, Max: 4, RespawnTime: 30, WeightPoint: 1}},
-	}
-	n.DropLists = []DropList{{Type: "drop",
-		Groups: []DropGroup{{Chance: 70, Items: []Drop{{ItemID: 7, Min: 1, Max: 3, Chance: 55.5}}}},
-		Items:  []Drop{{ItemID: 8, Min: 1, Max: 1, Chance: 100}}}}
-	n.set = map[string]string{"stats.vitals.hp": "95"}
+
+		DropLists: []DropList{{Type: "drop",
+			Groups: []DropGroup{{Chance: 70, Items: []Drop{{ItemID: 7, Min: 1, Max: 3, Chance: 55.5}}}},
+			Items:  []Drop{{ItemID: 8, Min: 1, Max: 1, Chance: 100}}}},
+		set: map[string]string{"stats.vitals.hp": "95"}}
 
 	t := Territory{Name: "terr_a", MinZ: -100, MaxZ: 200, MinX: -1000, MaxX: 1000,
 		MinY: -2000, MaxY: 2000,
 		Nodes:  [][2]int32{{-1000, -2000}, {1000, -2000}, {1000, 2000}},
-		Banned: []BannedTerritory{{MinZ: 0, MaxZ: 50, Nodes: [][2]int32{{0, 0}, {10, 10}}}}}
-	t.set = map[string]string{"terr.shape": "NPoly"}
+		Banned: []BannedTerritory{{MinZ: 0, MaxZ: 50, Nodes: [][2]int32{{0, 0}, {10, 10}}}},
+		set:    map[string]string{"terr.shape": "NPoly"}}
 
 	sp := NpcSpawn{NpcID: 21, HasPoint: true,
-		Point: Point{X: 100, Y: 200, Z: -300, Heading: 16000}, Count: 2, RespawnDelay: 60}
-	sp.set = map[string]string{"spawn.respawnRandom": "10"}
+		Point: Point{X: 100, Y: 200, Z: -300, Heading: 16000}, Count: 2, RespawnDelay: 60,
+		set: map[string]string{"spawn.respawnRandom": "10"}}
 
 	zn := Zone{ShapeKind: ShapeCuboid, MinZ: -50, MaxZ: 50, ZLo: -50, ZHi: 50,
 		MinX: -10, MaxX: 10, MinY: -20, MaxY: 20,
 		Nodes: [][2]int32{{-10, -20}, {10, 20}}, ID: 5, HasID: true, Name: "town_peace", Type: "Town",
 		SpawnPts: []ZoneSpawn{{X: 1, Y: 2, Z: 3, Type: "respawn"}},
-		RacePts:  []ZoneRacePoint{{Race: "Human", Point: "talking_island"}}}
-	zn.set = map[string]string{"zone.stat.name": "town"}
+		RacePts:  []ZoneRacePoint{{Race: "Human", Point: "talking_island"}},
+		set:      map[string]string{"zone.stat.name": "town"}}
 
 	s1 := Skill{Name: "удар", OperateType: "A1", TargetType: "ONE", ID: 99, Level: 1,
 		HitTime: 1000, ReuseDelay: 5000}

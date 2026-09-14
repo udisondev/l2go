@@ -204,7 +204,7 @@ func (v ServerListView) Chars(i int) (ServerChars, bool) {
 		return ServerChars{}, false
 	}
 	off++ // записи переменной длины — проход до i-й
-	for j := 0; j < i; j++ {
+	for range i {
 		if 3 > len(v)-off {
 			return ServerChars{}, false
 		}

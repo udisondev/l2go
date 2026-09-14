@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -51,7 +52,7 @@ func FuzzDecodeRegion(f *testing.F) {
 			return
 		}
 		const baseX, baseY = 16 * regionCells, 10 * regionCells
-		for i := 0; i < 64; i++ {
+		for i := range 64 {
 			lx, ly := (i*97)%regionCells, (i*131)%regionCells
 			c := reg.CellAt(baseX+lx, baseY+ly)
 			c.BlockType()
@@ -60,13 +61,7 @@ func FuzzDecodeRegion(f *testing.F) {
 				if lz, hz := c.LowerZ(z), c.HigherZ(z); lz > z || hz < z {
 					t.Fatalf("cell(%d,%d) z=%d: LowerZ=%d HigherZ=%d; инвариант LowerZ ≤ z ≤ HigherZ нарушен", lx, ly, z, lz, hz)
 				}
-				found := false
-				for _, h := range cellLayerHeights(c) {
-					if h == nz {
-						found = true
-						break
-					}
-				}
+				found := slices.Contains(cellLayerHeights(c), nz)
 				if !found {
 					t.Fatalf("cell(%d,%d) z=%d: Nearest=%d не является высотой слоя ячейки %v", lx, ly, z, nz, cellLayerHeights(c))
 				}

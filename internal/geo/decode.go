@@ -63,7 +63,7 @@ func decodeRegion(rx, ry int, data []byte) (*Region, *regionStats, error) {
 	var cells []uint16
 	var dupSeen [64]uint64 // 4096 кодов высоты слоя; чистится после каждой ячейки
 	off := 0
-	for b := 0; b < regionBlocks; b++ {
+	for b := range regionBlocks {
 		if off >= len(data) {
 			return nil, nil, truncErr(b, off, len(data))
 		}
@@ -117,7 +117,7 @@ func decodeRegion(rx, ry int, data []byte) (*Region, *regionStats, error) {
 // внутриблочных смещения ячеек в cells. Возвращает офсет следующего блока.
 func decodeMultiBlock(data []byte, block, off int, cells *[]uint16, st *regionStats, dupSeen *[64]uint64) (int, error) {
 	p := off + 1
-	for cell := 0; cell < blockCells; cell++ {
+	for range blockCells {
 		if p >= len(data) {
 			return 0, truncErr(block, p, len(data))
 		}

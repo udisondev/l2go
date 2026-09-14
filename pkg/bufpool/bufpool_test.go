@@ -150,11 +150,11 @@ func TestStressOwnership(t *testing.T) {
 	var expGets, expPuts, expOver atomic.Int64
 
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
-			for i := 0; i < cycles; i++ {
+			for i := range cycles {
 				size := 1 + (w*cycles+i)%5000 // все границы + overflow
 				b := p.Get(size)
 				c := b[:cap(b)]
@@ -201,11 +201,11 @@ func TestStressHandoff(t *testing.T) {
 		chs[i] = make(chan []byte, 1)
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < pairs; i++ {
+	for i := range pairs {
 		wg.Add(2)
 		go func(i int) { // производитель
 			defer wg.Done()
-			for cycle := 0; cycle < 500; cycle++ {
+			for cycle := range 500 {
 				b := p.Get(1 + (i*500+cycle)%3000)
 				for j := range b {
 					b[j] = byte(1 + i%255)

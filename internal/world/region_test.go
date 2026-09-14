@@ -93,7 +93,7 @@ func TestRegionCtrlBudgetK(t *testing.T) {
 	cfg.DrainBudget = 5 // контрольные вне бюджета дрена: применяются всегда
 	_, r := newTestRegion(t, cfg)
 	spawnResident(t, r, 100)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
 	}
 	r.step()
@@ -123,7 +123,7 @@ func TestRegionDrainBudget(t *testing.T) {
 	_, r := newTestRegion(t, cfg)
 	a := spawnResident(t, r, 100)
 	b := spawnResident(t, r, 100)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: a}, FromID: 5, Kind: transport.KindAggro})
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: b}, FromID: 5, Kind: transport.KindXP})
 	}
@@ -142,7 +142,7 @@ func TestRegionDrainBudget(t *testing.T) {
 func TestRegionDrainRingStart(t *testing.T) {
 	_, r := newTestRegion(t, DefaultConfig())
 	var ids []transport.EntityID
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		ids = append(ids, spawnResident(t, r, 100))
 	}
 	for _, id := range ids {
@@ -250,7 +250,7 @@ func TestRegionPanicDropsBatchAndMarks(t *testing.T) {
 	cfg.FreezePanics = 100
 	_, r := newTestRegion(t, cfg)
 	id := spawnResident(t, r, 100)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: id}, FromID: 5, Kind: transport.KindAggro})
 	}
 	r.metro.tick.Add(1)
@@ -325,10 +325,10 @@ func TestRegionPhaseBCap(t *testing.T) {
 		t.Fatalf("claim: %v", err)
 	}
 	const total = 25
-	for i := 0; i < total; i++ {
+	for i := range total {
 		r.outbox = append(r.outbox, transport.Envelope{To: transport.Addr{Entity: mbox}, FromID: transport.EntityID(i), Kind: transport.KindAggro})
 	}
-	for i := 0; i < 3; i++ { // кап 10: шаги по 10, 10, 5
+	for range 3 { // кап 10: шаги по 10, 10, 5
 		r.phaseB()
 		batch := box.Extract(uint64(mbox))
 		for _, env := range batch {
@@ -501,7 +501,7 @@ func TestRegionPanicDropCoverDisjoint(t *testing.T) {
 	cfg.FreezePanics = 100
 	_, r := newTestRegion(t, cfg)
 	spawnResident(t, r, 100)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
 	}
 	r.metro.tick.Add(1)

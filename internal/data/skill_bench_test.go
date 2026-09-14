@@ -15,12 +15,12 @@ func benchSkillsXML() string {
 	sb.WriteString("<list>")
 	fmt.Fprintf(&sb, `<skill id="8001" levels="80" name="Bench" enchantGroup1="1" enchantGroup2="2">`)
 	fmt.Fprintf(&sb, `<table name="#hit">`)
-	for l := 0; l < 80; l++ {
+	for l := range 80 {
 		fmt.Fprintf(&sb, "%d ", 100+l)
 	}
 	sb.WriteString("</table>")
 	fmt.Fprintf(&sb, `<table name="#e">`)
-	for l := 0; l < 30; l++ {
+	for l := range 30 {
 		fmt.Fprintf(&sb, "%d ", 500+l)
 	}
 	sb.WriteString("</table>")
@@ -29,7 +29,7 @@ func benchSkillsXML() string {
 	sb.WriteString(`<enchant1 name="reuseDelay">#e</enchant1>`)
 	sb.WriteString(`<effects><effect name="BenchEffect" power="10"><amount>5</amount></effect></effects>`)
 	sb.WriteString(`</skill>`)
-	for i := 0; i < 999; i++ {
+	for i := range 999 {
 		fmt.Fprintf(&sb, `<skill id="%d" levels="1" name="Bench %d"><operateType>P</operateType><targetType>SELF</targetType></skill>`, 8100+i, i)
 	}
 	sb.WriteString("</list>")

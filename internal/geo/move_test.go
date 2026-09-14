@@ -78,7 +78,7 @@ var defaultLayer = []uint16{layer(0, NSWEAll)}
 // flat фона.
 func (w *cellWorld) build() []byte {
 	b := newRegionBuilder()
-	for blk := 0; blk < regionBlocks; blk++ {
+	for blk := range regionBlocks {
 		bx, by := blk>>8, blk&0xFF
 		if h, ok := w.flatBlocks[[2]int{bx, by}]; ok {
 			b.addFlat(h)
@@ -87,7 +87,7 @@ func (w *cellWorld) build() []byte {
 		var cc [blockCells]uint16
 		var ml [blockCells][]uint16
 		useML := false
-		for i := 0; i < blockCells; i++ {
+		for i := range blockCells {
 			gx := w.rx*regionCells + bx*blockSide + i/8
 			gy := w.ry*regionCells + by*blockSide + i%8
 			word, isComplex := w.complexes[[2]int{gx, gy}]

@@ -59,7 +59,7 @@ func Run(ctx context.Context, opts Options) error {
 		mu      sync.Mutex
 		live    []*connPair
 		connsWG sync.WaitGroup
-		connSeq uint64
+		connSeq atomic.Uint64
 	)
 	closeLive := func() {
 		mu.Lock()
@@ -120,7 +120,7 @@ func Run(ctx context.Context, opts Options) error {
 				connsWG.Add(1)
 				go func(client net.Conn, m Map) {
 					defer connsWG.Done()
-					id := atomic.AddUint64(&connSeq, 1)
+					id := connSeq.Add(1)
 					handleConn(ctx, client, m, opts, jw, id, &mu, &live, stopOnJournalErr)
 				}(conn, m)
 			}

@@ -44,8 +44,7 @@ func TestMetronomeSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMetronome: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go m.Run(ctx)
 	ch, unsub := m.Subscribe()
 	select {
@@ -70,8 +69,7 @@ func TestMetronomeWatchdog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMetronome: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go m.Run(ctx)
 	r := &Region{metro: m, ringCh: make(chan struct{}, 1), fbCh: make(chan struct{}, 1)}
 	m.Activate(r)

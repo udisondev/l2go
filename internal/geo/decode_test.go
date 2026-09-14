@@ -76,8 +76,8 @@ func TestDecodeGoldenProbes(t *testing.T) {
 	wantNSWE[8], wantZ[8] = NSWEAll, 16376
 	wantNSWE[63], wantZ[63] = North|South, -16384
 	wantNSWE[16], wantZ[16] = 0, -8
-	for lx := 0; lx < 8; lx++ {
-		for ly := 0; ly < 8; ly++ {
+	for lx := range 8 {
+		for ly := range 8 {
 			i := lx*8 + ly
 			gx, gy = cellGeo(16, 10, complexB, lx, ly)
 			gotZ, gotNSWE := reg.CellAt(gx, gy).Nearest(wantZ[i] - 1000)
@@ -192,8 +192,8 @@ func TestDecodeDupLayerZ(t *testing.T) {
 func TestComplexAllNSWE(t *testing.T) {
 	b := newRegionBuilder()
 	var cells [blockCells]uint16
-	for lx := 0; lx < 8; lx++ {
-		for ly := 0; ly < 8; ly++ {
+	for lx := range 8 {
+		for ly := range 8 {
 			i := lx*8 + ly
 			cells[i] = encodeCellWord(8*(i/2), NSWE(i%16))
 		}
@@ -203,8 +203,8 @@ func TestComplexAllNSWE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeRegion: %v", err)
 	}
-	for lx := 0; lx < 8; lx++ {
-		for ly := 0; ly < 8; ly++ {
+	for lx := range 8 {
+		for ly := range 8 {
 			i := lx*8 + ly
 			z, nswe := reg.CellAt(cellGeo(16, 10, blk, lx, ly)).Nearest(0)
 			if z != 8*(i/2) || nswe != NSWE(i%16) {
@@ -216,7 +216,7 @@ func TestComplexAllNSWE(t *testing.T) {
 
 func TestDecodeEvilInputs(t *testing.T) {
 	flat := make([]byte, 0, regionBlocks*3)
-	for i := 0; i < regionBlocks; i++ {
+	for range regionBlocks {
 		flat = append(flat, blockFlatByte, 0, 0)
 	}
 	cases := []struct {

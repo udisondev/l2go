@@ -1,6 +1,7 @@
 package data
 
 import (
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -20,9 +21,7 @@ func catFS(files map[string]*fstest.MapFile) fstest.MapFS {
 		"spawns/.keep":       &fstest.MapFile{},
 		"zones/.keep":        &fstest.MapFile{},
 	}
-	for k, v := range files {
-		out[k] = v
-	}
+	maps.Copy(out, files)
 	return out
 }
 

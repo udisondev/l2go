@@ -567,7 +567,7 @@ func TestMutationPack(t *testing.T) {
 		}
 	}()
 	rng := rand.New(rand.NewSource(42))
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		srv, err := StartScenarioServer()
 		mustFlow(t, err, "StartScenarioServer")
 		// мутация случайного байта каждого golden-ответа LS-ноги

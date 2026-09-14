@@ -208,7 +208,7 @@ func (gc *GameClient) Run(ctx context.Context) error {
 		// приоритет входящих (с ограничением priorityBurst): готовые кадры
 		// логируются раньше команд — порядок строк детерминирован, а поток
 		// кадров не голодает отмену и команды бесконечно.
-		for i := 0; i < priorityBurst; i++ {
+		for range priorityBurst {
 			select {
 			case f, ok := <-frames:
 				if !ok {

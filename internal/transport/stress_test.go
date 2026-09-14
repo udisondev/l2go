@@ -22,23 +22,19 @@ func TestStressFIFOOrder(t *testing.T) {
 	}
 	var doneCnt atomic.Int32
 	var wg sync.WaitGroup
-	for s := 0; s < senders; s++ {
+	for s := range senders {
 		s := EntityID(s + 1)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := uint64(0); i < perSender; i++ {
+		wg.Go(func() {
+			for i := range uint64(perSender) {
 				r.Send(Envelope{To: Addr{Entity: 1}, FromID: s, Kind: KindAggro,
 					Payload: testSeq(i)})
 			}
 			doneCnt.Add(1)
-		}()
+		})
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		c := uint64(0) // свой монотонный счётчик отправителя
-		for i := uint64(0); i < perSender; i++ {
+		for i := range uint64(perSender) {
 			r.Send(Envelope{To: Addr{Entity: 1}, FromID: 99, Kind: KindEnterWorld,
 				Payload: testSeq(c)})
 			c++
@@ -49,7 +45,7 @@ func TestStressFIFOOrder(t *testing.T) {
 			}
 		}
 		doneCnt.Add(1)
-	}()
+	})
 	last := make(map[EntityID]uint64) // только горутина читателя
 	check := func(envs []Envelope) {
 		for _, env := range envs {
@@ -91,7 +87,7 @@ func TestStressCompetingClaims(t *testing.T) {
 	var wins atomic.Int32
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for i := 0; i < contenders; i++ {
+	for i := range contenders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -117,12 +113,9 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 	r.Register(box)
 	var sent atomic.Int64
 	var wgSenders sync.WaitGroup
-	for s := 0; s < senders; s++ {
-		s := s
-		wgSenders.Add(1)
-		go func() {
-			defer wgSenders.Done()
-			for i := 0; i < perSender; i++ {
+	for s := range senders {
+		wgSenders.Go(func() {
+			for i := range perSender {
 				seq := uint64(s*perSender + i)
 				r.Send(Envelope{To: Addr{Entity: 1}, FromID: 1, Kind: KindAggro,
 					Payload: testSeq(seq)})
@@ -131,7 +124,7 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 					time.Sleep(50 * time.Microsecond) // отправители живы в окнах миграции
 				}
 			}
-		}()
+		})
 	}
 	seen := make(map[uint64]bool) // модель уникальности: только горутина читателя
 	applied := 0
@@ -149,7 +142,7 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrations := 0
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		batch := box.Extract(tok1)
 		if len(batch) == 0 {
 			time.Sleep(time.Millisecond)
@@ -201,13 +194,11 @@ func TestStressRegistryBirthsRetiresSenders(t *testing.T) {
 	var delivered, sent atomic.Int64
 	var wgSpawners, wgSenders sync.WaitGroup
 
-	for s := 0; s < spawners; s++ {
+	for s := range spawners {
 		token := uint64(100 + s)
-		wgSpawners.Add(1)
-		go func() {
-			defer wgSpawners.Done()
+		wgSpawners.Go(func() {
 			var own int64
-			for i := 0; i < rounds; i++ {
+			for range rounds {
 				box := &Mailbox{}
 				id := r.Register(box)
 				if err := box.Claim(token); err != nil {
@@ -229,13 +220,13 @@ func TestStressRegistryBirthsRetiresSenders(t *testing.T) {
 				deadMu.Unlock()
 			}
 			delivered.Add(own)
-		}()
+		})
 	}
-	for s := 0; s < senders; s++ {
+	for s := range senders {
 		wgSenders.Add(1)
 		go func(s int) {
 			defer wgSenders.Done()
-			for i := 0; i < lettersPerSender; i++ {
+			for i := range lettersPerSender {
 				liveMu.Lock()
 				n := len(live)
 				if n == 0 {
@@ -289,15 +280,13 @@ func TestStressDespawnWithSenders(t *testing.T) {
 	}
 	var sent atomic.Int64
 	var wg sync.WaitGroup
-	for s := 0; s < senders; s++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < perSender; i++ {
+	for range senders {
+		wg.Go(func() {
+			for range perSender {
 				r.Send(Envelope{To: Addr{Entity: id}, FromID: 2, Kind: KindAggro})
 				sent.Add(1)
 			}
-		}()
+		})
 	}
 	time.Sleep(2 * time.Millisecond) // отправители разогнались
 	box.Despawn(1)

@@ -42,8 +42,8 @@ func buildFuzzWorlds() {
 			}
 		}),
 		mk(func(w *cellWorld) {
-			for lx := 0; lx < 8; lx++ {
-				for ly := 0; ly < 8; ly++ {
+			for lx := range 8 {
+				for ly := range 8 {
 					w.setML(geoX(lx), geoY(ly),
 						layer(-16, NSWEAll&^East), layer(0, NSWEAll&^West), layer(16, NSWEAll&^North))
 				}
