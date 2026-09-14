@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/rsa"
 	"math/big"
 	"testing"
@@ -86,5 +87,59 @@ func TestRSAGuards(t *testing.T) {
 	}
 	if _, err := RSAEncryptNoPadding(&rsa.PublicKey{N: pub.N, E: 1}, []byte{1}); err == nil {
 		t.Fatal("RSAEncryptNoPadding(E=1): ожидалась ошибка")
+	}
+}
+
+func TestRSADecryptRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	// Приватная экспонента пиннутого ключа в репо не входит — раундтрип на
+	// сгенерированном ключе (RSA-1024, как в login-флоу).
+	priv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		seed byte
+	}{
+		{"заполненный", 0xA5},
+		{"с ведущими нулями", 0x00},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			block := make([]byte, 128)
+			for i := range block {
+				block[i] = tc.seed + byte(i)
+			}
+			ct, err := RSAEncryptNoPadding(&priv.PublicKey, block)
+			if err != nil {
+				t.Fatalf("шифрование: %v", err)
+			}
+			pt, err := RSADecryptNoPadding(priv, ct)
+			if err != nil {
+				t.Fatalf("расшифровка: %v", err)
+			}
+			if !bytes.Equal(pt, block) {
+				t.Fatalf("раундтрип: got %x…, want %x…", pt[:8], block[:8])
+			}
+		})
+	}
+}
+
+func TestRSADecryptGuards(t *testing.T) {
+	t.Parallel()
+
+	priv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	if _, err := RSADecryptNoPadding(priv, make([]byte, 64)); err == nil {
+		t.Fatal("RSADecryptNoPadding(64): не размер ключа — ожидалась ошибка")
+	}
+	if _, err := RSADecryptNoPadding(nil, make([]byte, 128)); err == nil {
+		t.Fatal("RSADecryptNoPadding(nil-ключ): ожидалась ошибка")
+	}
+	if _, err := RSADecryptNoPadding(&rsa.PrivateKey{}, make([]byte, 1)); err == nil {
+		t.Fatal("RSADecryptNoPadding(без D): ожидалась ошибка")
 	}
 }

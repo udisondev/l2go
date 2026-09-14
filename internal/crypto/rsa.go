@@ -87,3 +87,26 @@ func RSAEncryptNoPadding(pub *rsa.PublicKey, plaintext []byte) ([]byte, error) {
 	c.FillBytes(out)
 	return out, nil
 }
+
+// ErrBadPrivateKey — приватный ключ RSA вырожден (N или D отсутствует).
+var ErrBadPrivateKey = errors.New("приватный ключ RSA")
+
+// RSADecryptNoPadding расшифровывает блок приватным ключом без паддинга
+// (m = c^d mod n) — серверная сторона RequestAuthLogin; выход выравнен до
+// размера ключа. Семантика L2J LoginController (modPow), зеркально
+// RSAEncryptNoPadding (udisondev/interlude@34fe4c86).
+func RSADecryptNoPadding(priv *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
+	if priv == nil || priv.N == nil || priv.D == nil {
+		return nil, fmt.Errorf("RSADecryptNoPadding: вырожденный приватный ключ: %w", ErrBadPrivateKey)
+	}
+	keySize := priv.Size()
+	if len(ciphertext) != keySize {
+		return nil, fmt.Errorf("RSADecryptNoPadding: вход %d байт, ожидалось %d: %w",
+			len(ciphertext), keySize, ErrBadLength)
+	}
+	c := new(big.Int).SetBytes(ciphertext)
+	m := new(big.Int).Exp(c, priv.D, priv.N)
+	out := make([]byte, keySize)
+	m.FillBytes(out)
+	return out, nil
+}

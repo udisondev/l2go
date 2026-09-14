@@ -1,0 +1,62 @@
+// Стык LoginServer ↔ GameServer (ADR-0005 п.2: сетевой gRPC, LS — сервер
+// внутреннего порта, GS — клиент). Аутентификации нет: внутренняя граница
+// доверия, дефолт bind 127.0.0.1.
+syntax = "proto3";
+
+package loginlink.v1;
+
+option go_package = "github.com/udisondev/l2go/internal/loginlink";
+
+// RegisterGameServerRequest — регистрация мира при старте GS.
+message RegisterGameServerRequest {
+  bytes hex_id = 1; // идентификатор мира; повторная регистрация заменяет запись
+  string host = 2;  // внешний адрес для ServerList
+  int32 port = 3;
+  string name = 4;  // имя мира: журналы/онлайн-статистика, на проводе ServerList его нет
+}
+
+// RegisterEvent — событие потока регистрации (LS → GS).
+message RegisterEvent {
+  oneof kind {
+    RegisterAck ack = 1;     // регистрация принята
+    Displaced displaced = 2; // вытеснен новой регистрацией того же hexID: терминально, без реконнекта
+    Kick kick = 3;           // кик игрока; реализация — фаза 4+
+  }
+}
+
+// RegisterAck — назначенный ID записи ServerList (стабилен при замене по hexID).
+message RegisterAck {
+  uint32 server_id = 1;
+}
+
+// Displaced — маркер вытеснения (пустое сообщение).
+message Displaced {}
+
+// Kick — запрос отключения игрока (фаза 3: заглушка с журналом).
+message Kick {
+  string account = 1;
+  string reason = 2;
+}
+
+// ValidateSessionRequest — ключи сессии игрока, входящего на GS.
+message ValidateSessionRequest {
+  string account = 1;
+  int32 login_ok1 = 2;
+  int32 login_ok2 = 3;
+  int32 play_ok1 = 4;
+  int32 play_ok2 = 5;
+}
+
+// ValidateSessionReply — вердикт; успех изымает сессию однократно.
+message ValidateSessionReply {
+  bool valid = 1;
+}
+
+service LoginLink {
+  // Регистрация GS: ответный поток живёт, пока GS подключён; закрытие потока
+  // (обрыв/вытеснение) убирает сервер из ServerList.
+  rpc RegisterGameServer(RegisterGameServerRequest) returns (stream RegisterEvent);
+
+  // Однократная валидация ключей сессии (replay-защита).
+  rpc ValidateSession(ValidateSessionRequest) returns (ValidateSessionReply);
+}

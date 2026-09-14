@@ -29,9 +29,10 @@ slog, простота, гайды стиля и производительно�
 3. **Раскладка.** `internal/` — всё доменное и служебное приложения; `pkg/` — публичный
    импортируемый API для внешних проектов (репозиторий публичный, GPLv3) с жёстким
    критерием: пакет уже сейчас не имеет доменных зависимостей и полезен вне проекта — не
-   «потенциально»; переезд в `pkg/` — отдельное решение. Первый житель — `pkg/bufpool`
-   (бакетный пул байтовых буферов). Крипта доменна (блоуфиш/XOR протокола L2) —
-   `internal/crypto`.
+   «потенциально»; переезд в `pkg/` — отдельное решение. Жители: `pkg/bufpool` (бакетный пул
+   байтовых буферов), `pkg/mtls` (материалы взаимной TLS-аутентификации: генерация CA и
+   клиент/серверных пар, сборка tls.Config — стык login↔game и будущие пограничные сервисы).
+   Крипта доменна (блоуфиш/XOR протокола L2) — `internal/crypto`.
 4. **Домены без привязки к географии** (пати, чат, клан, маркет) — акторы-шарды на том же
    транспорте: собственные адреса, письма через те же ящики, fromID — в конверте; реплей
    покрывает их без отдельных механизмов; детализация шардирования — при реализации.
@@ -47,6 +48,7 @@ slog, простота, гайды стиля и производительно�
 | `internal/version` | — |
 | `internal/crypto` | — |
 | `pkg/bufpool` | — |
+| `pkg/mtls` | — |
 | `internal/data` | — |
 | `internal/geo` | — |
 | `internal/artifact` | data, geo |
@@ -65,9 +67,9 @@ slog, простота, гайды стиля и производительно�
 | `internal/persist` | transport |
 | `internal/l2client` | protocol, protocol/fixture, crypto, tap |
 | `internal/tap` | protocol, protocol/fixture, crypto |
-| `internal/login` | protocol, crypto, persist |
-| `internal/loginlink` | transport |
-| `internal/admin` | transport |
+| `internal/login` | protocol, crypto, persist, loginlink, l2client (тесты интеграционного контура), transport/protocol-fixture (транзитивно), pkg/mtls (тестовый mTLS-стек) |
+| `internal/loginlink` | transport, pkg/mtls |
+| `internal/admin` | transport, pkg/mtls |
 | `cmd/*` | любые пакеты проекта (только wire-up) |
 
    Обоснование рёбер: криптоблок исходящего кадра — стейтлес-стадия энкода; расшифровка

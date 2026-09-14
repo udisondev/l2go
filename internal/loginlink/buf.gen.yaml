@@ -1,0 +1,14 @@
+# Регенерация стыка (только при изменении loginlink.proto):
+#   go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+#   go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+#   go install github.com/bufbuild/buf/cmd/buf@latest
+#   cd internal/loginlink && buf generate
+# Сгенерированный код коммитится; protoc/buf в сборке и CI не нужны.
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: .
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: .
+    opt: paths=source_relative
