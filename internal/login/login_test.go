@@ -949,6 +949,7 @@ func TestDoubleLoginKickObservable(t *testing.T) {
 			_ = lc.Close()
 		case lcErr == nil:
 			_ = rc.conn.Close()
+			_ = lc.Close()
 		default:
 			// «Оба отклонены» — легитимный F70-интерливинг (кик победителя
 			// до отправки его LoginOk): победителя нет, наблюдать нечего.
