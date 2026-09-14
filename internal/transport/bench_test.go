@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"io"
+	"log/slog"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -260,7 +262,7 @@ func BenchmarkSendParallel(b *testing.B) {
 }
 
 // Интерференция чтение×запись: параллельная отправка по заселённой карте,
-// фон — массовый спавн (рождения) в отдельной горутине.
+// фон — массовый спавн батчами по 12k (конечный, как P3.10) с паузой между.
 func BenchmarkSendUnderWrite(b *testing.B) {
 	const n = 10_000
 	r := fillRegistry(n)
@@ -269,15 +271,18 @@ func BenchmarkSendUnderWrite(b *testing.B) {
 	spawned := make(chan struct{})
 	go func() {
 		defer close(spawned)
-		i := n + 1
+		base := uint64(n)
 		for {
 			select {
 			case <-stop:
 				return
 			default:
 			}
-			r.Register(&Mailbox{})
-			i++
+			for j := 0; j < 12_000; j++ {
+				r.Register(&Mailbox{})
+			}
+			base += 12_000
+			runtime.Gosched()
 		}
 	}()
 	b.ReportAllocs()
@@ -294,14 +299,25 @@ func BenchmarkSendUnderWrite(b *testing.B) {
 	<-spawned
 }
 
+// Miss-путь отправки: RLock + промах + метрика; slog заглушен (цена лога —
+// ответственность потребителя, не пути).
+func BenchmarkSendMiss(b *testing.B) {
+	r := fillRegistry(10_000)
+	prev := slogDefaultSwapQuiet()
+	b.Cleanup(prev)
+	env := Envelope{FromID: 1, Kind: KindClientFrame, To: Addr{Entity: 1 << 40}, Payload: payloadFixed[:]}
+	b.ReportAllocs()
+	for b.Loop() {
+		r.Send(env)
+	}
+}
+
 func BenchmarkMapWrite(b *testing.B) {
 	b.Run("Birth", func(b *testing.B) {
 		r := fillRegistry(10_000)
 		b.ReportAllocs()
-		next := EntityID(10_001)
 		for b.Loop() {
 			r.Register(&Mailbox{})
-			next++
 		}
 	})
 	b.Run("Retire", func(b *testing.B) {
@@ -324,13 +340,55 @@ func BenchmarkMapWrite(b *testing.B) {
 	})
 }
 
+// Write-путь конкурентов выбора структуры: рождение и массовый спавн теми же
+// числами, что и у поставки (свидетельство решения «sharded против COW»).
+func BenchmarkMapWriteCompetitors(b *testing.B) {
+	mk := map[string]func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox){
+		"Plain": func() (func(EntityID, *Mailbox), func(EntityID) *Mailbox) {
+			p := &plainTable{m: make(map[EntityID]*Mailbox)}
+			return p.set, p.get
+		},
+		"SyncMap": func() (func(EntityID, *Mailbox), func(EntityID) *Mailbox) {
+			s := &syncMapTable{}
+			return func(id EntityID, box *Mailbox) { s.m.Store(id, box) }, s.get
+		},
+		"COW": func() (func(EntityID, *Mailbox), func(EntityID) *Mailbox) {
+			c := &cowTable{}
+			return c.set, c.get
+		},
+	}
+	for name, m := range mk {
+		set, _ := m()
+		b.Run(name+"/Birth", func(b *testing.B) {
+			for i := 1; i <= 10_000; i++ {
+				set(EntityID(i), &Mailbox{})
+			}
+			b.ResetTimer()
+			b.ReportAllocs()
+			next := 10_001
+			for b.Loop() {
+				set(EntityID(next), &Mailbox{})
+				next++
+			}
+		})
+		b.Run(name+"/MassSpawn", func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				set, _ := m()
+				for j := 1; j <= 12_000; j++ {
+					set(EntityID(j), &Mailbox{})
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkSendPlainTable(b *testing.B) {
 	for _, sz := range benchSizes {
-		r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+		tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
 			p := &plainTable{m: make(map[EntityID]*Mailbox)}
 			return p.set, p.get
 		})
-		_ = r
 		b.Run(sz.name, func(b *testing.B) {
 			runSendParallel(b, tbl, sz.n)
 		})
@@ -339,11 +397,10 @@ func BenchmarkSendPlainTable(b *testing.B) {
 
 func BenchmarkSendSyncMap(b *testing.B) {
 	for _, sz := range benchSizes {
-		r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+		tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
 			s := &syncMapTable{}
 			return func(id EntityID, box *Mailbox) { s.m.Store(id, box) }, s.get
 		})
-		_ = r
 		b.Run(sz.name, func(b *testing.B) {
 			runSendParallel(b, tbl, sz.n)
 		})
@@ -352,26 +409,36 @@ func BenchmarkSendSyncMap(b *testing.B) {
 
 func BenchmarkSendCOW(b *testing.B) {
 	for _, sz := range benchSizes {
-		r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+		tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
 			c := &cowTable{}
 			return c.set, c.get
 		})
-		_ = r
 		b.Run(sz.name, func(b *testing.B) {
 			runSendParallel(b, tbl, sz.n)
 		})
 	}
 }
 
-func fillCompetitor(n int, mk func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox)) (*Registry, func(EntityID) *Mailbox) {
+func fillCompetitor(n int, mk func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox)) func(EntityID) *Mailbox {
+	if n < 1 {
+		n = 1 // минимум один живой адресат — у всех кандидатов равный профиль
+	}
 	r := NewRegistry(1 << 20)
 	set, get := mk()
 	for i := 1; i <= n; i++ {
 		box := &Mailbox{}
-		id := r.Register(box)
-		set(id, box)
+		set(r.Register(box), box)
 	}
-	return r, get
+	return get
+}
+
+// slogDefaultSwapQuiet заглушает slog на время бенчмарка miss-пути; возвращает
+// восстановитель.
+func slogDefaultSwapQuiet() func() {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	prev := slog.Default()
+	slog.SetDefault(quiet)
+	return func() { slog.SetDefault(prev) }
 }
 
 func runSendParallel(b *testing.B, get func(EntityID) *Mailbox, n int) {

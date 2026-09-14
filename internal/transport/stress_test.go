@@ -9,8 +9,10 @@ import (
 )
 
 // И5: порядок писем одного отправителя FIFO, дублей/потерь нет (модельный подсчёт).
+// Контрольные письма (Regional) идут в тот же ящик тем же порядком — одна FIFO.
 func TestStressFIFOOrder(t *testing.T) {
 	const senders, perSender = 8, 512
+	const controlExtra = perSender + perSender/64 // EnterWorld каждое + LinkDead каждое 64-е
 	r := NewRegistry(4096)
 	box := &Mailbox{}
 	r.Register(box)
@@ -32,17 +34,33 @@ func TestStressFIFOOrder(t *testing.T) {
 			doneCnt.Add(1)
 		}()
 	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		c := uint64(0) // свой монотонный счётчик отправителя
+		for i := uint64(0); i < perSender; i++ {
+			r.Send(Envelope{To: Addr{Entity: 1}, FromID: 99, Kind: KindEnterWorld,
+				Payload: testSeq(c)})
+			c++
+			if i%64 == 0 {
+				r.Send(Envelope{To: Addr{Entity: 1}, FromID: 99, Kind: KindLinkDead,
+					Payload: testSeq(c)})
+				c++
+			}
+		}
+		doneCnt.Add(1)
+	}()
 	last := make(map[EntityID]uint64) // только горутина читателя
 	check := func(envs []Envelope) {
 		for _, env := range envs {
-			if prev, ok := last[env.FromID]; ok && seqOf(env) != prev+1 {
+			if prev, ok := last[env.FromID]; ok && seqOf(env) <= prev {
 				t.Fatalf("FIFO отправителя %d нарушен: seq %d после %d", env.FromID, seqOf(env), prev)
 			}
 			last[env.FromID] = seqOf(env)
 		}
 	}
 	total := 0
-	for doneCnt.Load() < senders {
+	for doneCnt.Load() < senders+1 {
 		if batch := box.Extract(token); len(batch) > 0 {
 			check(batch)
 			total += len(batch)
@@ -59,7 +77,7 @@ func TestStressFIFOOrder(t *testing.T) {
 		check(batch)
 		total += len(batch)
 	}
-	if want := senders * perSender; total != want {
+	if want := senders*perSender + controlExtra; total != want {
 		t.Fatalf("итого %d из %d: потери/дубли", total, want)
 	}
 }
@@ -130,6 +148,7 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 	if err := box.Claim(tok1); err != nil {
 		t.Fatal(err)
 	}
+	migrations := 0
 	for i := 0; i < 40; i++ {
 		batch := box.Extract(tok1)
 		if len(batch) == 0 {
@@ -148,6 +167,10 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 		if err := box.Claim(tok1); err != nil {
 			t.Fatal(err)
 		}
+		migrations++
+	}
+	if migrations == 0 {
+		t.Fatalf("стресс миграции прошёл без единой миграции с непустой пачкой")
 	}
 	wgSenders.Wait()
 	for {

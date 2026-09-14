@@ -7,14 +7,17 @@ import (
 	"sync/atomic"
 )
 
-//segCap — ёмкость сегмента очереди писем.
-
+// segCap — ёмкость сегмента очереди писем.
 const segCap = 64
+
+// depthAlertThreshold — порог глубины для одноразового алерта очереди
+// (единая декларация: глубина — метрика + алерт; настройка — фаза 4).
+const depthAlertThreshold = 1 << 16
 
 // Ошибки претензии на читательство.
 var (
 	// ErrBusy — у ящика уже есть читатель: вытеснения не существует.
-	ErrBusy = errors.New("transport: у ящика уже есть читателя")
+	ErrBusy = errors.New("transport: у ящика уже есть читатель")
 	// ErrZeroToken — нулевой токен не идентифицирует читателя.
 	ErrZeroToken = errors.New("transport: нулевой токен читателя")
 )
@@ -22,7 +25,8 @@ var (
 // segment — звено очереди: массив конвертов и атомарный счётчик опубликованных
 // писем. Продюсеры пишут envs/cnt под мьютексом ящика, публикуя cnt атомарно;
 // читатель проходит цепочку next без блокировок — видимость envs гарантирует
-// пару «store cnt → load cnt».
+// пару «store cnt → load cnt». Звено публикуется только заполненным: next ≠ nil
+// влечёт cnt == segCap (инвариант обхода читателя).
 type segment struct {
 	envs     [segCap]Envelope
 	cnt      atomic.Int32
@@ -34,29 +38,32 @@ type segment struct {
 // читателя и отправителей на чтение не блокирующий) с водяным знаком. Заголовок
 // встраивается в запись сущности у владельца (кеш-локальность тика): поля
 // отправителей и поля читателя разведены паддингом по разным кеш-линиям.
-// Первый сегмент очереди ленивый: рождается с первым письмом — пустые ящики
-// не платят за сегмент (бюджет памяти заголовков ADR-0003 §11). Готовность
-// к отправке даёт Register: он инициализирует ящик.
+// Первый сегмент очереди ленивый: рождается с первым письмом и отпускается
+// после усыновления читателем — изъятые сегменты собираются GC ниже знака
+// (бюджет памяти заголовков ADR-0003 §11). Готовность к отправке даёт
+// Register: он инициализирует ящик.
 type Mailbox struct {
 	// Поля отправителей: мьютекс, хвост публикации, деспавн-флаг (под mu).
-	mu      sync.Mutex
-	tail    *segment
-	dead    bool
-	fafCap  int
-	lastSeq uint64 // под mu: seq последнего опубликованного письма
+	mu           sync.Mutex
+	tail         *segment
+	dead         bool
+	fafCap       int
+	lastSeq      uint64 // под mu: seq последнего опубликованного письма
+	highWater    int64  // под mu: максимум глубины
+	depthAlerted bool   // под mu: одноразовый алерт глубины
 
-	// Счётчики и токен пробуждения — атомики (читаются без mu).
-	notify    chan struct{}           // cap-1; создаётся при init
-	regID     atomic.Uint64           // EntityID из карты (заполняет Register)
-	start     atomic.Pointer[segment] // первый сегмент (публикация читателю)
-	length    atomic.Int64
-	fafDepth  atomic.Int64
-	highWater atomic.Int64
-	drops     boxDrops
+	// Счётчики и токен пробуждения — атомики (Add продюсерами под mu,
+	// читателем — без mu).
+	notify   chan struct{}           // cap-1; создаётся при init
+	regID    atomic.Uint64           // EntityID из карты (заполняет Register)
+	start    atomic.Pointer[segment] // первый сегмент (публикация читателю; гаснет при усыновлении)
+	length   atomic.Int64
+	fafDepth atomic.Int64
+	drops    boxDrops
 
 	_ [64]byte // разделение кеш-линий: ниже — только поля читателя
 
-	mark    atomic.Uint64 // водяной знак: seq последнего изъятого письма
+	mark    atomic.Uint64 // водяной знак: seq последнего изъятого письма (потребитель — заголовки порций D5, P3.2)
 	owner   atomic.Uint64 // токен подтверждённого читателя; 0 — читателя нет
 	head    *segment      // позиция сбора (только читатель; nil до первого письма)
 	headOff int           // смещение внутри head (только читатель)
@@ -65,6 +72,7 @@ type Mailbox struct {
 // boxDrops — счётчики дропов по классам (метрики единой декларации очереди).
 type boxDrops struct {
 	droppedFAF    atomic.Int64 // дропы новых FAF по капу
+	unknown       atomic.Int64 // письма с неизвестным Kind (ошибка отправителя)
 	finalFAF      atomic.Int64 // финальные дропы FAF (мёртвому)
 	finalReliable atomic.Int64 // финальные дропы reliable (инцидент)
 	finalTransfer atomic.Int64 // финальные дропы transfer (abort)
@@ -75,22 +83,28 @@ type BoxStats struct {
 	Depth              int64
 	HighWater          int64
 	DroppedFAF         int64
+	DroppedUnknown     int64
 	FinalFireAndForget int64
 	FinalReliable      int64
 	FinalTransfer      int64
 	Dead               bool
 }
 
-// init инициализирует ящик (идемпотентно; вызывает Register): кап и токен
-// пробуждения. Сегменты — лениво, с первым письмом.
-func (m *Mailbox) init(fafCap int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// initLocked инициализирует ящик под mu: кап и токен пробуждения. Сегменты —
+// лениво, с первым письмом.
+func (m *Mailbox) initLocked(fafCap int) {
 	if m.notify != nil {
 		return
 	}
 	m.fafCap = fafCap
 	m.notify = make(chan struct{}, 1)
+}
+
+// init — initLocked под собственным мьютексом (вызывает Register).
+func (m *Mailbox) init(fafCap int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.initLocked(fafCap)
 }
 
 // enqueue — слепой push одного письма. Передаёт владение payload: отправитель
@@ -99,10 +113,15 @@ func (m *Mailbox) init(fafCap int) {
 // мёртвому — финальный классовый дроп с метрикой.
 func (m *Mailbox) enqueue(env Envelope) {
 	class := env.Kind.Class()
+	if class == 0 {
+		m.drops.unknown.Add(1)
+		slog.Error("transport: письмо с неизвестным Kind отброшено (ошибка отправителя)",
+			"kind", env.Kind, "to", env.To.Entity, "from", env.FromID)
+		return
+	}
 	m.mu.Lock()
 	if m.notify == nil {
-		m.fafCap = defaultFAFCap
-		m.notify = make(chan struct{}, 1)
+		m.initLocked(defaultFAFCap)
 	}
 	if m.dead {
 		m.mu.Unlock()
@@ -135,20 +154,26 @@ func (m *Mailbox) enqueue(env Envelope) {
 		}
 	}
 	m.lastSeq++
-	m.mu.Unlock()
-
 	if class == ClassFireAndForget {
 		m.fafDepth.Add(1)
 	}
 	n := m.length.Add(1)
-	if n == 1 {
-		m.wake() // переход пусто→непусто будит читателя
+	if hw := int64(n); hw > m.highWater {
+		m.highWater = hw
 	}
-	for {
-		h := m.highWater.Load()
-		if n <= h || m.highWater.CompareAndSwap(h, n) {
-			break
-		}
+	alert := !m.depthAlerted && n > depthAlertThreshold
+	if alert {
+		m.depthAlerted = true
+	}
+	emptyChan := len(m.notify) == 0
+	m.mu.Unlock()
+
+	if n == 1 || emptyChan {
+		m.wake() // пусто→непусто и пустой канал — токен обязан быть
+	}
+	if alert {
+		slog.Error("transport: глубина очереди превысила порог (алерт декларации)",
+			"to", m.ID(), "depth", n, "threshold", int64(depthAlertThreshold))
 	}
 }
 
@@ -173,7 +198,7 @@ func (m *Mailbox) dropFinal(env Envelope, class Class) {
 // посреди применения, недообработанный остаток). Пачка уже вне счётчиков
 // очереди.
 func (m *Mailbox) DropBatch(envs []Envelope) {
-	var faf, rel, xfer int64
+	var faf, rel, xfer, unknown int64
 	for _, env := range envs {
 		switch env.Kind.Class() {
 		case ClassFireAndForget:
@@ -182,6 +207,8 @@ func (m *Mailbox) DropBatch(envs []Envelope) {
 			rel++
 		case ClassTransfer:
 			xfer++
+		default:
+			unknown++
 		}
 	}
 	if faf > 0 {
@@ -197,6 +224,9 @@ func (m *Mailbox) DropBatch(envs []Envelope) {
 		slog.Error("transport: классовый дроп неприменённого остатка transfer — abort",
 			"count", xfer)
 	}
+	if unknown > 0 {
+		m.drops.unknown.Add(unknown)
+	}
 }
 
 // wake — неблокирующий токен пробуждения (cap-1); spurious-токен безвреден.
@@ -211,16 +241,21 @@ func (m *Mailbox) wake() {
 }
 
 // Notify возвращает канал пробуждения читателя. Токен приходит на переходе
-// пусто→непусто и при деспавне; сбрасывается AckNotify после дрена.
+// пусто→непусто, при отправке в пустой канал и при деспавне; сбрасывается
+// AckNotify после дрена.
 func (m *Mailbox) Notify() <-chan struct{} { return m.notify }
 
-// AckNotify сбрасывает токен после дрена. Протокол читателя: select{Notify,
-// тик} → Extract → применение → AckNotify → Extract (перечит после сброса —
-// закрывает гонку письмо-в-окне-дрена) → сон.
+// AckNotify сбрасывает токен после дрена и перезаряжает его, если в окне
+// дрена пришло письмо (письмо в очереди ⇒ токен придёт). Протокол читателя:
+// select{Notify, тик} → Extract → применение → AckNotify → Extract (перечит
+// после сброса) → сон.
 func (m *Mailbox) AckNotify() {
 	select {
 	case <-m.notify:
 	default:
+	}
+	if m.length.Load() > 0 {
+		m.wake()
 	}
 }
 
@@ -249,9 +284,10 @@ func (m *Mailbox) Release(token uint64) {
 }
 
 // checkReader — контракт читателя: операции изъятия только у текущего
-// претендента. Нарушение — паника контракта, не гонка.
+// претендента; нулевой токен никого не идентифицирует. Нарушение — паника
+// контракта, не гонка.
 func (m *Mailbox) checkReader(token uint64) {
-	if m.owner.Load() != token {
+	if token == 0 || m.owner.Load() != token {
 		panic("transport: операция читателя без претензии (контракт ящика)")
 	}
 }
@@ -319,8 +355,9 @@ func (m *Mailbox) extractInto(token uint64, buf []Envelope) []Envelope {
 }
 
 // readerStart — стартовая позиция обхода читателя: с текущей головы или,
-// до первого письма, с опубликованного первого сегмента. Вызывает только
-// текущий читатель.
+// до первого письма, с опубликованного первого сегмента; якорь start гаснет
+// после усыновления — изъятые сегменты становятся недостижимыми (сбор ниже
+// знака). Вызывает только текущий читатель.
 func (m *Mailbox) readerStart() *segment {
 	if m.head != nil {
 		return m.head
@@ -328,6 +365,7 @@ func (m *Mailbox) readerStart() *segment {
 	seg := m.start.Load()
 	if seg != nil {
 		m.head = seg
+		m.start.Store(nil)
 	}
 	return seg
 }
@@ -341,7 +379,7 @@ func (m *Mailbox) Despawn(token uint64) {
 	m.checkReader(token)
 	m.mu.Lock()
 	m.dead = true
-	var faf, rel, xfer int64
+	var faf, rel, xfer, unknown int64
 	var took int64
 	for seg := m.readerStart(); seg != nil; {
 		n := int(seg.cnt.Load())
@@ -354,6 +392,8 @@ func (m *Mailbox) Despawn(token uint64) {
 					rel++
 				case ClassTransfer:
 					xfer++
+				default:
+					unknown++
 				}
 			}
 			m.mark.Store(seg.firstSeq + uint64(n-1))
@@ -362,14 +402,15 @@ func (m *Mailbox) Despawn(token uint64) {
 		}
 		nxt := seg.next.Load()
 		if nxt == nil {
-			break
-		}
-		if m.headOff < segCap {
-			continue // симметрично extractInto (под mu снимок не стареет — не срабатывает)
+			break // под mu снимок не стареет: звено публикуется только заполненным
 		}
 		m.head = nxt
 		m.headOff = 0
 		seg = nxt
+	}
+	if took > 0 {
+		m.length.Store(0)
+		m.fafDepth.Store(0)
 	}
 	m.mu.Unlock()
 
@@ -386,9 +427,8 @@ func (m *Mailbox) Despawn(token uint64) {
 		slog.Error("transport: финальный дрен transfer при деспавне — abort",
 			"to", m.ID(), "count", xfer)
 	}
-	if took > 0 {
-		m.length.Store(0)
-		m.fafDepth.Store(0)
+	if unknown > 0 {
+		m.drops.unknown.Add(unknown)
 	}
 	m.wake() // деспавн будит наблюдающего читателя
 }
@@ -403,11 +443,13 @@ func (m *Mailbox) Depth() int64 { return m.length.Load() }
 func (m *Mailbox) Stats() BoxStats {
 	m.mu.Lock()
 	dead := m.dead
+	hw := m.highWater
 	m.mu.Unlock()
 	return BoxStats{
 		Depth:              m.length.Load(),
-		HighWater:          m.highWater.Load(),
+		HighWater:          hw,
 		DroppedFAF:         m.drops.droppedFAF.Load(),
+		DroppedUnknown:     m.drops.unknown.Load(),
 		FinalFireAndForget: m.drops.finalFAF.Load(),
 		FinalReliable:      m.drops.finalReliable.Load(),
 		FinalTransfer:      m.drops.finalTransfer.Load(),

@@ -25,8 +25,11 @@ func TestSendDeliverAndMiss(t *testing.T) {
 	r := NewRegistry(8)
 	box := &Mailbox{}
 	id := r.Register(box)
+	if err := box.Claim(1); err != nil {
+		t.Fatal(err)
+	}
 	r.Send(Envelope{To: Addr{Entity: id, Slot: SlotSelf}, FromID: 1, Kind: KindClientFrame})
-	if got := len(box.Extract(0)); got != 1 {
+	if got := len(box.Extract(1)); got != 1 {
 		t.Fatalf("Send не доставил письмо: получено %d; want 1", got)
 	}
 	// miss по неизвестному id — не тихо: метрика
@@ -49,7 +52,7 @@ func TestRetireSwapsToDeadSingleton(t *testing.T) {
 	// поздний отправитель попадает в синглтон «мёртв»: классовый дроп с метрикой
 	r.Send(Envelope{To: Addr{Entity: id, Slot: SlotSelf}, FromID: 2, Kind: KindXP})
 	if st := r.deadBox.Stats(); st.FinalReliable != 1 {
-		t.Errorf("синглон мёртвых: FinalReliable = %d; want 1", st.FinalReliable)
+		t.Errorf("синглтон мёртвых: FinalReliable = %d; want 1", st.FinalReliable)
 	}
 	if st := r.Stats(); st.Misses != 0 {
 		t.Errorf("retired id посчитан миссом: %d; want 0 (запись жива, ящик мёртв)", st.Misses)

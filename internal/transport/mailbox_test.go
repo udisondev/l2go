@@ -86,16 +86,22 @@ func TestFAFCapDropNew(t *testing.T) {
 	if len(got) != capFAF {
 		t.Fatalf("FAF сквозь кап: доставлено %d; want %d (дропнуты новые)", len(got), capFAF)
 	}
+	for i, env := range got {
+		if want := uint64(i); seqOf(env) != want {
+			t.Errorf("дропнут не новый: письмо %d имеет seq %d; want %d (первые выживают)", i, seqOf(env), want)
+		}
+	}
 	st := box.Stats()
 	if st.DroppedFAF != 5 {
 		t.Errorf("DroppedFAF = %d; want 5", st.DroppedFAF)
 	}
-	// reliable кап не подчиняется: живому не дропается никогда
+	// reliable и transfer капу не подчиняются: живому не дропается никогда
 	for i := 0; i < capFAF+10; i++ {
 		box.enqueue(Envelope{FromID: 1, Kind: KindAggro, Payload: testSeq(uint64(i))})
+		box.enqueue(Envelope{FromID: 1, Kind: KindReserve, Payload: testSeq(uint64(i))})
 	}
-	if got := box.Extract(token); len(got) != capFAF+10 {
-		t.Errorf("reliable сквозь кап: доставлено %d; want %d", len(got), capFAF+10)
+	if got := box.Extract(token); len(got) != 2*(capFAF+10) {
+		t.Errorf("reliable+transfer сквозь кап: доставлено %d; want %d", len(got), 2*(capFAF+10))
 	}
 }
 
@@ -257,7 +263,8 @@ func TestMailboxStatsDepth(t *testing.T) {
 	}
 }
 
-// Ленивый первый сегмент: пустой ящик не платит за сегмент (бюджет §11).
+// Ленивый первый сегмент: пустой ящик не платит за сегмент (бюджет §11);
+// якорь start гаснет при усыновлении — изъятые сегменты собираются GC.
 func TestMailboxLazyFirstSegment(t *testing.T) {
 	box, _ := newClaimedBox(t, 8)
 	if box.tail != nil || box.start.Load() != nil {
@@ -272,5 +279,8 @@ func TestMailboxLazyFirstSegment(t *testing.T) {
 	}
 	if got := box.Extract(42); len(got) != 1 {
 		t.Fatalf("изъятие после первого письма = %d; want 1", len(got))
+	}
+	if box.start.Load() != nil {
+		t.Fatalf("якорь start не погашен после усыновления: изъятые сегменты удерживаются")
 	}
 }
