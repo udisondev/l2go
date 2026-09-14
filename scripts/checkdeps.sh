@@ -17,16 +17,16 @@ allowed() {
 		internal/protocol) echo "internal/protocol/fixture" ;;
 		internal/protocol/fixture) echo "" ;;
 		internal/conn) echo "internal/protocol internal/crypto" ;;
-		internal/gateway) echo "internal/conn internal/protocol internal/transport" ;;
+		internal/gateway) echo "internal/conn internal/protocol internal/transport internal/persist" ;;
 		internal/replica) echo "internal/transport" ;;
 		internal/encode) echo "internal/protocol internal/crypto pkg/bufpool" ;;
-		internal/world) echo "internal/transport internal/replica internal/encode internal/data internal/geo" ;;
+		internal/world) echo "internal/transport internal/replica internal/encode internal/data internal/geo internal/persist" ;;
 		internal/party|internal/chat|internal/clan|internal/market) echo "internal/transport" ;;
 		internal/persist) echo "internal/transport" ;;
 		internal/loginlink|internal/admin) echo "internal/transport" ;;
 		internal/l2client) echo "internal/protocol internal/protocol/fixture internal/crypto internal/tap" ;;
 		internal/tap) echo "internal/protocol internal/protocol/fixture internal/crypto" ;;
-		internal/login) echo "internal/protocol internal/crypto" ;;
+		internal/login) echo "internal/protocol internal/crypto internal/persist" ;;
 		*) echo "UNLISTED" ;;
 	esac
 }

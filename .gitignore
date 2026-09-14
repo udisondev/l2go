@@ -14,3 +14,6 @@
 .DS_Store
 bin/
 internal/artifact/embedded/artifact.l2a
+
+# Данные персиста (дефолт P3.3)
+/var/

@@ -54,10 +54,10 @@ slog, простота, гайды стиля и производительно�
 | `internal/protocol/fixture` | — |
 | `internal/protocol` | protocol/fixture |
 | `internal/conn` | protocol, crypto |
-| `internal/gateway` | conn, protocol, transport |
+| `internal/gateway` | conn, protocol, transport, persist |
 | `internal/replica` | transport |
 | `internal/encode` | protocol, crypto, pkg/bufpool |
-| `internal/world` | transport, replica, encode, data, geo |
+| `internal/world` | transport, replica, encode, data, geo, persist |
 | `internal/party` | transport |
 | `internal/chat` | transport |
 | `internal/clan` | transport |
@@ -65,7 +65,7 @@ slog, простота, гайды стиля и производительно�
 | `internal/persist` | transport |
 | `internal/l2client` | protocol, protocol/fixture, crypto, tap |
 | `internal/tap` | protocol, protocol/fixture, crypto |
-| `internal/login` | protocol, crypto |
+| `internal/login` | protocol, crypto, persist |
 | `internal/loginlink` | transport |
 | `internal/admin` | transport |
 | `cmd/*` | любые пакеты проекта (только wire-up) |
