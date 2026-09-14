@@ -1,10 +1,8 @@
 package persist
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -51,6 +49,9 @@ type Accounts struct {
 // OpenAccounts открывает каталог аккаунтов; autoCreate разрешает создание
 // аккаунта при первом входе (КТ-1, дефолт плана).
 func OpenAccounts(root string, autoCreate bool) (*Accounts, error) {
+	if err := ensureRoot(root); err != nil {
+		return nil, err
+	}
 	s, err := openStore(filepath.Join(root, "accounts"))
 	if err != nil {
 		return nil, err
@@ -85,7 +86,7 @@ func (a *Accounts) Verify(login, password string) Verdict {
 		}
 		return VerdictOK
 	}
-	if !VerifyPassword(password, rec.Salt, rec.Hash) {
+	if !verifyPassword(password, rec.Salt, rec.Hash) {
 		return VerdictBadPassword
 	}
 	if rec.Banned {
@@ -114,28 +115,6 @@ func (a *Accounts) Create(login, password string) error {
 	return err
 }
 
-// Ban помечает аккаунт заблокированным.
-func (a *Accounts) Ban(login string) error {
-	normalized, err := NormalizeLogin(login)
-	if err != nil {
-		return err
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	rec, err := a.load(normalized)
-	if err != nil {
-		return err
-	}
-	if rec == nil {
-		return fmt.Errorf("persist: аккаунт %s не найден", normalized)
-	}
-	rec.Banned = true
-	if err := a.store.write(normalized+".json", rec); err != nil {
-		return err
-	}
-	return nil
-}
-
 // load возвращает запись из кэша или файла; nil — аккаунта нет.
 func (a *Accounts) load(login string) (*AccountRecord, error) {
 	if rec, ok := a.cache[login]; ok {
@@ -154,11 +133,11 @@ func (a *Accounts) load(login string) (*AccountRecord, error) {
 
 // createLocked создаёт и записывает новый аккаунт; вызывающий держит мьютекс.
 func (a *Accounts) createLocked(login, password string) (*AccountRecord, error) {
-	salt, err := NewSalt()
+	salt, err := newSalt()
 	if err != nil {
 		return nil, err
 	}
-	hash, err := HashPassword(password, salt)
+	hash, err := hashPassword(password, salt)
 	if err != nil {
 		return nil, err
 	}
@@ -173,9 +152,4 @@ func (a *Accounts) createLocked(login, password string) (*AccountRecord, error) 
 	}
 	a.cache[login] = rec
 	return rec, nil
-}
-
-// isNotExist сообщает, что ошибка — отсутствие файла (по цепочке %w).
-func isNotExist(err error) bool {
-	return errors.Is(err, os.ErrNotExist)
 }

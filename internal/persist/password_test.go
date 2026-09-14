@@ -39,22 +39,22 @@ func TestPBKDF2Vectors(t *testing.T) {
 }
 
 func TestHashVerifyRoundtrip(t *testing.T) {
-	salt, err := NewSalt()
+	salt, err := newSalt()
 	if err != nil {
-		t.Fatalf("NewSalt() error = %v", err)
+		t.Fatalf("newSalt() error = %v", err)
 	}
 	if len(salt) != saltLen {
-		t.Errorf("NewSalt() len = %d; want %d", len(salt), saltLen)
+		t.Errorf("newSalt() len = %d; want %d", len(salt), saltLen)
 	}
-	hash, err := HashPassword("секретный пароль", salt)
+	hash, err := hashPassword("секретный пароль", salt)
 	if err != nil {
-		t.Fatalf("HashPassword() error = %v", err)
+		t.Fatalf("hashPassword() error = %v", err)
 	}
-	if !VerifyPassword("секретный пароль", salt, hash) {
-		t.Error("VerifyPassword(верный пароль) = false; want true")
+	if !verifyPassword("секретный пароль", salt, hash) {
+		t.Error("verifyPassword(верный пароль) = false; want true")
 	}
-	if VerifyPassword("неверный пароль", salt, hash) {
-		t.Error("VerifyPassword(неверный пароль) = true; want false")
+	if verifyPassword("неверный пароль", salt, hash) {
+		t.Error("verifyPassword(неверный пароль) = true; want false")
 	}
 }
 
@@ -62,38 +62,56 @@ func TestHashVerifyEmptyAndLong(t *testing.T) {
 	salt := bytes.Repeat([]byte{7}, saltLen)
 	long := strings.Repeat("a", 1<<20)
 	for _, password := range []string{"", long} {
-		hash, err := HashPassword(password, salt)
+		hash, err := hashPassword(password, salt)
 		if err != nil {
-			t.Fatalf("HashPassword(len=%d) error = %v", len(password), err)
+			t.Fatalf("hashPassword(len=%d) error = %v", len(password), err)
 		}
-		if !VerifyPassword(password, salt, hash) {
-			t.Errorf("VerifyPassword(len=%d) = false; want true", len(password))
+		if !verifyPassword(password, salt, hash) {
+			t.Errorf("verifyPassword(len=%d) = false; want true", len(password))
 		}
-		if VerifyPassword(password+"x", salt, hash) {
-			t.Errorf("VerifyPassword(len=%d, +1) = true; want false", len(password))
+		if verifyPassword(password+"x", salt, hash) {
+			t.Errorf("verifyPassword(len=%d, +1) = true; want false", len(password))
 		}
 	}
 }
 
 func TestVerifyTiming(t *testing.T) {
-	salt, _ := NewSalt()
+	salt, _ := newSalt()
 	start := time.Now()
-	hash, err := HashPassword("timing", salt)
+	hash, err := hashPassword("timing", salt)
 	if err != nil {
-		t.Fatalf("HashPassword() error = %v", err)
+		t.Fatalf("hashPassword() error = %v", err)
 	}
 	elapsed := time.Since(start)
 	t.Logf("PBKDF2 %d итераций: %v", pbkdf2Iterations, elapsed)
-	if !VerifyPassword("timing", salt, hash) {
-		t.Fatal("VerifyPassword() = false; want true")
+	if !verifyPassword("timing", salt, hash) {
+		t.Fatal("verifyPassword() = false; want true")
 	}
 	if elapsed > 2*time.Second {
-		t.Errorf("HashPassword() = %v; want < 2s", elapsed)
+		t.Errorf("hashPassword() = %v; want < 2s", elapsed)
 	}
 }
 
-func TestBurnDummy(t *testing.T) {
-	start := time.Now()
-	burnDummy()
-	t.Logf("фиктивный PBKDF2: %v", time.Since(start))
+// TestBurnDummyTiming — ослабленное сравнение времени: фиктивный вывод не
+// дешевле трети честного (иначе выравнивание miss-тайминга сломано). Порог
+// с широким коридором — тайминг-тесты на CI шумят.
+func TestBurnDummyTiming(t *testing.T) {
+	hashMin, dummyMin := time.Hour, time.Hour
+	for i := 0; i < 3; i++ {
+		salt, _ := newSalt()
+		start := time.Now()
+		_, _ = hashPassword("probe", salt)
+		if d := time.Since(start); d < hashMin {
+			hashMin = d
+		}
+		start = time.Now()
+		burnDummy()
+		if d := time.Since(start); d < dummyMin {
+			dummyMin = d
+		}
+	}
+	t.Logf("pbkdf2: честный %v, фиктивный %v", hashMin, dummyMin)
+	if dummyMin < hashMin/3 {
+		t.Errorf("фиктивный вывод %v дешевле трети честного %v", dummyMin, hashMin)
+	}
 }

@@ -2,6 +2,7 @@ package persist
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -77,4 +78,19 @@ func TestCodecEvilPayloads(t *testing.T) {
 	if _, err := DecodeRequest([]byte("\x00\x01\x02")); err == nil {
 		t.Error("DecodeRequest(бинарный мусор) = nil; want ошибка")
 	}
+}
+
+func ExampleEncodeRequest() {
+	buf, err := EncodeRequest(Request{Op: OpCharList, Corr: 7, Account: "player1"})
+	if err != nil {
+		fmt.Println("ошибка:", err)
+		return
+	}
+	req, err := DecodeRequest(buf)
+	if err != nil {
+		fmt.Println("ошибка:", err)
+		return
+	}
+	fmt.Println(req.Op, req.Corr, req.Account)
+	// Output: charlist 7 player1
 }

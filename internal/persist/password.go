@@ -31,8 +31,8 @@ func pbkdf2SHA256(password string, salt []byte, iter, keyLength int) ([]byte, er
 	return key, nil
 }
 
-// NewSalt возвращает свежую соль для хэша пароля.
-func NewSalt() ([]byte, error) {
+// newSalt возвращает свежую соль для хэша пароля.
+func newSalt() ([]byte, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("persist: соль пароля: %w", err)
@@ -40,8 +40,8 @@ func NewSalt() ([]byte, error) {
 	return salt, nil
 }
 
-// HashPassword выводит ключ пароля PBKDF2-HMAC-SHA256.
-func HashPassword(password string, salt []byte) ([]byte, error) {
+// hashPassword выводит ключ пароля PBKDF2-HMAC-SHA256.
+func hashPassword(password string, salt []byte) ([]byte, error) {
 	key, err := pbkdf2SHA256(password, salt, pbkdf2Iterations, keyLen)
 	if err != nil {
 		return nil, fmt.Errorf("persist: пароль: %w", err)
@@ -49,8 +49,8 @@ func HashPassword(password string, salt []byte) ([]byte, error) {
 	return key, nil
 }
 
-// VerifyPassword сверяет пароль с ключом сравнением постоянного времени.
-func VerifyPassword(password string, salt, want []byte) bool {
+// verifyPassword сверяет пароль с ключом сравнением постоянного времени.
+func verifyPassword(password string, salt, want []byte) bool {
 	key, err := pbkdf2SHA256(password, salt, pbkdf2Iterations, keyLen)
 	if err != nil {
 		// Невозможно при валидных константах; ошибка не паникует и не
@@ -60,7 +60,7 @@ func VerifyPassword(password string, salt, want []byte) bool {
 	return hmac.Equal(key, want)
 }
 
-// burnDummy выполняет фиктивный вывод той же ценой, что и VerifyPassword.
+// burnDummy выполняет фиктивный вывод той же ценой, что и verifyPassword.
 func burnDummy() {
 	// Ошибка невозможна (валидные константы) и не имеет получателя.
 	_, _ = pbkdf2SHA256("", dummySalt, pbkdf2Iterations, keyLen)

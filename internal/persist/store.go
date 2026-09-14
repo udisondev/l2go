@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 // Ошибки хранилища: различимы, с именем файла.
@@ -22,6 +21,9 @@ var (
 	// ErrCorrupt — битая чексумма или JSON; файл требует разбора оператором.
 	ErrCorrupt = errors.New("persist: файл повреждён")
 )
+
+// schemaVersion — версия схемы файлов персиста.
+const schemaVersion = 1
 
 // fileEnvelope — конверт файла: версия схемы, канонические байты записи,
 // чексумма (детектор порчи, не MAC: локальный диск доверен оператору).
@@ -37,15 +39,27 @@ type fileEnvelope struct {
 type store struct {
 	dir string
 
-	// Швы тестов: testFailRename — сбой между temp и rename; testSlowWrite —
-	// задержка записи; testBlockWrite — блокировка первой фазы записи.
+	// testFailRename — шов инъекции сбоя записи между temp и rename;
+	// testBlockWrite — шов блокировки фазы записи (тест таймаута дрена).
 	testFailRename func() error
-	testSlowWrite  time.Duration
 	testBlockWrite chan struct{}
 }
 
-// openStore подготавливает каталог: создаёт (0700) и подтягивает права
-// существующего.
+// ensureRoot подготавливает корень персиста: создаёт (0700) и подтягивает
+// права существующего.
+func ensureRoot(root string) error {
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return fmt.Errorf("persist: корень %s: %w", root, err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		return fmt.Errorf("persist: права корня %s: %w", root, err)
+	}
+	return nil
+}
+
+// openStore подготавливает каталог (0700, chmod существующего) и зачищает
+// осиротевшие temp-файлы (kill -9 в окне записи; владелец каталога один —
+// гонки нет).
 func openStore(dir string) (*store, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("persist: каталог хранилища пуст")
@@ -56,7 +70,27 @@ func openStore(dir string) (*store, error) {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("persist: права каталога %s: %w", dir, err)
 	}
+	if err := cleanTemp(dir); err != nil {
+		return nil, err
+	}
 	return &store{dir: dir}, nil
+}
+
+// cleanTemp удаляет осиротевшие temp-файлы .tmp-* каталога.
+func cleanTemp(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("persist: скан %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), ".tmp-") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+			return fmt.Errorf("persist: зачистка temp %s: %w", e.Name(), err)
+		}
+	}
+	return nil
 }
 
 // write атомарно записывает value: конверт → temp (0600, fsync) → rename →
@@ -68,16 +102,13 @@ func (s *store) write(name string, value any) error {
 		return fmt.Errorf("persist: кодирование %s: %w", name, err)
 	}
 	sum := sha256.Sum256(data)
-	env := fileEnvelope{Schema: SchemaVersion, Data: data, SHA256: hex.EncodeToString(sum[:])}
+	env := fileEnvelope{Schema: schemaVersion, Data: data, SHA256: hex.EncodeToString(sum[:])}
 	buf, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		return fmt.Errorf("persist: кодирование %s: %w", name, err)
 	}
 	buf = append(buf, '\n')
 
-	if s.testSlowWrite > 0 {
-		time.Sleep(s.testSlowWrite)
-	}
 	if s.testBlockWrite != nil {
 		<-s.testBlockWrite
 	}
@@ -110,17 +141,18 @@ func (s *store) write(name string, value any) error {
 	return nil
 }
 
-// syncDir — best-effort fsync каталога после rename; файловые системы без
-// поддержки (например, некоторые Windows-режимы) не фейлят запись.
+// syncDir — best-effort fsync каталога после rename: усиление, не барьер
+// записи; ошибки видны журналом (Warn), запись не фейлят.
 func (s *store) syncDir() {
 	f, err := os.Open(s.dir)
 	if err != nil {
+		slog.Warn("persist: fsync каталога пропущен", "dir", s.dir, "err", err)
 		return
 	}
+	defer f.Close()
 	if err := f.Sync(); err != nil {
-		slog.Debug("persist: fsync каталога не поддержан", "dir", s.dir, "err", err)
+		slog.Warn("persist: fsync каталога не исполнен", "dir", s.dir, "err", err)
 	}
-	f.Close()
 }
 
 // read читает и проверяет конверт файла в value.
@@ -133,8 +165,8 @@ func (s *store) read(name string, value any) error {
 	if err := json.Unmarshal(buf, &env); err != nil {
 		return fmt.Errorf("%w: %s: %v", ErrCorrupt, name, err)
 	}
-	if env.Schema != SchemaVersion {
-		return fmt.Errorf("%w: %s: схема %d, ждём %d", ErrBadSchema, name, env.Schema, SchemaVersion)
+	if env.Schema != schemaVersion {
+		return fmt.Errorf("%w: %s: схема %d, ждём %d", ErrBadSchema, name, env.Schema, schemaVersion)
 	}
 	// Байты data в файле переформатируются отступами MarshalIndent: чексумма
 	// сравнивается по компакт-форме с обеих сторон.
@@ -152,6 +184,11 @@ func (s *store) read(name string, value any) error {
 	return nil
 }
 
+// isNotExist сообщает, что ошибка — отсутствие файла (по цепочке %w).
+func isNotExist(err error) bool {
+	return errors.Is(err, os.ErrNotExist)
+}
+
 // charStore — хранилище персонажей с индексом уникальных имён. Владелец —
 // горутина персист-актора, синхронизация не нужна.
 type charStore struct {
@@ -161,7 +198,7 @@ type charStore struct {
 }
 
 // openCharStore открывает каталог персонажей: полный скан (индекс имён —
-// уникальность требует загрузки каталога), зачистка осиротевших temp.
+// уникальность требует загрузки каталога); temp уже зачищен openStore.
 func openCharStore(dir string) (*charStore, error) {
 	s, err := openStore(dir)
 	if err != nil {
@@ -173,19 +210,13 @@ func openCharStore(dir string) (*charStore, error) {
 		return nil, fmt.Errorf("persist: скан %s: %w", dir, err)
 	}
 	for _, e := range entries {
-		switch {
-		case strings.HasPrefix(e.Name(), ".tmp-"):
-			// осиротевший temp (kill -9 в окне записи) — мусор
-			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
-				return nil, fmt.Errorf("persist: зачистка temp %s: %w", e.Name(), err)
-			}
-		case strings.HasSuffix(e.Name(), ".json"):
-			if err := cs.indexFile(e.Name()); err != nil {
-				return nil, err
-			}
-		default:
+		if !strings.HasSuffix(e.Name(), ".json") {
 			slog.Warn("persist: посторонний файл в каталоге персонажей игнорирован",
 				"file", e.Name())
+			continue
+		}
+		if err := cs.indexFile(e.Name()); err != nil {
+			return nil, err
 		}
 	}
 	return cs, nil
@@ -223,7 +254,7 @@ func (cs *charStore) list(account string) ([]CharRecord, error) {
 	}
 	var recs []CharRecord
 	if err := cs.read(account+".json", &recs); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if isNotExist(err) {
 			cs.cache[account] = nil
 			return nil, nil
 		}

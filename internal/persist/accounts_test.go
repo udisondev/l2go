@@ -25,14 +25,25 @@ func TestAccountsVerifyVerdicts(t *testing.T) {
 	if got := acc.Verify("ghost", "whatever"); got != VerdictNoAccount {
 		t.Errorf("Verify(закрытый режим, miss) = %v; want %v", got, VerdictNoAccount)
 	}
-	if err := acc.Ban("player1"); err != nil {
-		t.Fatalf("Ban() error = %v", err)
-	}
-	if got := acc.Verify("player1", "password1"); got != VerdictBanned {
-		t.Errorf("Verify(banned) = %v; want %v", got, VerdictBanned)
-	}
 	if err := acc.Create("player1", "x"); err == nil {
 		t.Error("Create(существует) = nil; want ошибка")
+	}
+	// бан — правкой файла (подкоманда/оператор): кэш живого API не
+	// перечитывает (F20), переоткрытие видит
+	var rec AccountRecord
+	if err := acc.store.read("player1.json", &rec); err != nil {
+		t.Fatal(err)
+	}
+	rec.Banned = true
+	if err := acc.store.write("player1.json", rec); err != nil {
+		t.Fatal(err)
+	}
+	acc2, err := OpenAccounts(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := acc2.Verify("player1", "password1"); got != VerdictBanned {
+		t.Errorf("Verify(banned) = %v; want %v", got, VerdictBanned)
 	}
 }
 

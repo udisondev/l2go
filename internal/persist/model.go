@@ -10,9 +10,6 @@ import (
 	"regexp"
 )
 
-// SchemaVersion — версия схемы файлов персиста.
-const SchemaVersion = 1
-
 // maxSlot — верхняя граница слота персонажа: 7 на аккаунт (канон).
 const maxSlot = 6
 
@@ -148,9 +145,9 @@ type CharRecord struct {
 	LastSeenUnix int64  `json:"last_seen_unix"`
 }
 
-// ValidateCharRecord проверяет запись на применении у владельца: домены имён,
+// validateCharRecord проверяет запись на применении у владельца: домены имён,
 // диапазоны внешности, единственный шаблон фазы, слот, уровень и пулы.
-func ValidateCharRecord(r CharRecord) error {
+func validateCharRecord(r CharRecord) error {
 	if _, err := NormalizeLogin(r.Account); err != nil {
 		return fmt.Errorf("persist: запись персонажа %q: %w", r.Name, err)
 	}

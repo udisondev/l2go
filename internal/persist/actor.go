@@ -59,10 +59,10 @@ type Actor struct {
 	panics    atomic.Uint64
 }
 
-// New валидирует конфиг, открывает каталог персонажей (стартовый скан строит
-// индекс имён) и регистрирует ящик актора в реестре. Doorbell — подписка на
-// дверной звонок метронома (инъекция из cmd): тик-фолбэк пробуждения
-// обязателен.
+// New валидирует конфиг, подготавливает корень персиста, открывает каталог
+// персонажей (стартовый скан строит индекс имён) и регистрирует ящик актора
+// в реестре. Doorbell — подписка на дверной звонок метронома (инъекция из
+// cmd): тик-фолбэк обязателен.
 func New(cfg Config, reg *transport.Registry, doorbell <-chan struct{}) (*Actor, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -72,6 +72,9 @@ func New(cfg Config, reg *transport.Registry, doorbell <-chan struct{}) (*Actor,
 	}
 	if doorbell == nil {
 		return nil, fmt.Errorf("persist: дверной звонок nil — тик-фолбэк обязателен")
+	}
+	if err := ensureRoot(cfg.Dir); err != nil {
+		return nil, err
 	}
 	chars, err := openCharStore(charsDir(cfg.Dir))
 	if err != nil {
@@ -212,6 +215,12 @@ func (a *Actor) processLetter(env *transport.Envelope) (ok bool) {
 			}
 		}
 	}()
+	// Сервисный адресат диспетчеризует по Kind: письмо чужого типа — ошибка
+	// отправителя, ответа нет.
+	if env.Kind != transport.KindPersistRequest {
+		slog.Error("persist: письмо чужого Kind отброшено", "from", env.FromID, "kind", env.Kind)
+		return true
+	}
 	req, err := DecodeRequest(env.Payload)
 	if err != nil {
 		// Синтаксический мусор: журнал, ответа нет (таймаут отправителя
@@ -238,6 +247,16 @@ func (a *Actor) processLetter(env *transport.Envelope) (ok bool) {
 	return true
 }
 
+// fail — конструктор отказа: эхо операции и корреляции + причина.
+func (r Request) fail(err error) Reply {
+	return Reply{Op: r.Op, Corr: r.Corr, Err: err.Error()}
+}
+
+// failMsg — fail со строковой причиной (домены канона без error-объекта).
+func (r Request) failMsg(msg string) Reply {
+	return Reply{Op: r.Op, Corr: r.Corr, Err: msg}
+}
+
 // handle исполняет запрос; ошибки — ответом ok=false (retry решает
 // отправитель), не паникой и не блокировкой мира.
 func (a *Actor) handle(req Request) Reply {
@@ -249,18 +268,18 @@ func (a *Actor) handle(req Request) Reply {
 	case OpSaveSnapshot:
 		return a.handleSnapshot(req)
 	default:
-		return Reply{Op: req.Op, Corr: req.Corr, Err: "неизвестная операция"}
+		return req.failMsg("неизвестная операция")
 	}
 }
 
 func (a *Actor) handleCharList(req Request) Reply {
 	account, err := NormalizeLogin(req.Account)
 	if err != nil {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		return req.fail(err)
 	}
 	recs, err := a.chars.list(account)
 	if err != nil {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		return req.fail(err)
 	}
 	return Reply{Op: req.Op, Corr: req.Corr, OK: true, Chars: recs}
 }
@@ -268,23 +287,23 @@ func (a *Actor) handleCharList(req Request) Reply {
 func (a *Actor) handleCreateChar(req Request) Reply {
 	account, err := NormalizeLogin(req.Account)
 	if err != nil {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		return req.fail(err)
 	}
 	if !ValidName(req.Name) {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: "имя вне домена (1–16 alnum)"}
+		return req.failMsg("имя вне домена (1–16 alnum)")
 	}
 	if err := ValidateAppearance(req.Sex, req.HairStyle, req.HairColor, req.Face); err != nil {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		return req.fail(err)
 	}
 	recs, err := a.chars.list(account)
 	if err != nil {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		return req.fail(err)
 	}
 	if len(recs) > maxSlot {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: "лимит персонажей аккаунта"}
+		return req.failMsg("лимит персонажей аккаунта")
 	}
 	if _, taken := a.chars.nameOwner(req.Name); taken {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: "имя занято"}
+		return req.failMsg("имя занято")
 	}
 	slot := firstFreeSlot(recs)
 	now := time.Now().Unix()
@@ -310,8 +329,8 @@ func (a *Actor) handleCreateChar(req Request) Reply {
 	next := append([]CharRecord(nil), recs...)
 	next = append(next, rec)
 	if err := a.chars.saveFile(account, next); err != nil {
-		a.writeErrs.Add(1)
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		a.writeFail(account, err)
+		return req.fail(err)
 	}
 	// Индекс занимается только после успешного rename: retry после ошибки
 	// записи идемпотентен.
@@ -322,11 +341,16 @@ func (a *Actor) handleCreateChar(req Request) Reply {
 func (a *Actor) handleSnapshot(req Request) Reply {
 	account, err := NormalizeLogin(req.Account)
 	if err != nil {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		return req.fail(err)
 	}
 	old, err := a.chars.list(account)
 	if err != nil {
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		return req.fail(err)
+	}
+	// Пустой снимок при непустом аккаунте — подозрительный вход (стёр бы
+	// всех персонажей); легитимно пуст только уже пустой аккаунт.
+	if len(req.Chars) == 0 && len(old) > 0 {
+		return req.failMsg("пустой снимок при непустом аккаунте")
 	}
 	created := make(map[string]int64, len(old))
 	for _, r := range old {
@@ -336,8 +360,8 @@ func (a *Actor) handleSnapshot(req Request) Reply {
 	recs := make([]CharRecord, 0, len(req.Chars))
 	for _, r := range req.Chars {
 		r.Account = account
-		if err := ValidateCharRecord(r); err != nil {
-			return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		if err := validateCharRecord(r); err != nil {
+			return req.fail(err)
 		}
 		if c, ok := created[lowercaseASCII(r.Name)]; ok {
 			r.CreatedUnix = c
@@ -347,27 +371,44 @@ func (a *Actor) handleSnapshot(req Request) Reply {
 		r.LastSeenUnix = now
 		recs = append(recs, r)
 	}
-	// уникальность имён снимка внутри аккаунта и против других аккаунтов
+	if len(recs) > maxSlot+1 {
+		return req.failMsg("лимит персонажей аккаунта")
+	}
+	// уникальность имён и слотов снимка внутри аккаунта, имена — против
+	// других аккаунтов (отправитель не доверяется)
+	slots := [maxSlot + 1]bool{}
 	for i, r := range recs {
 		for j := 0; j < i; j++ {
 			if lowercaseASCII(recs[j].Name) == lowercaseASCII(r.Name) {
-				return Reply{Op: req.Op, Corr: req.Corr, Err: "дубликат имени в снимке"}
+				return req.failMsg("дубликат имени в снимке")
 			}
 		}
+		if slots[r.Slot] {
+			return req.failMsg("дубликат слота в снимке")
+		}
+		slots[r.Slot] = true
 		if owner, ok := a.chars.nameOwner(r.Name); ok && owner != account {
-			return Reply{Op: req.Op, Corr: req.Corr, Err: "имя принадлежит другому аккаунту"}
+			return req.failMsg("имя принадлежит другому аккаунту")
 		}
 	}
 	if err := a.chars.saveFile(account, recs); err != nil {
-		a.writeErrs.Add(1)
-		return Reply{Op: req.Op, Corr: req.Corr, Err: err.Error()}
+		a.writeFail(account, err)
+		return req.fail(err)
 	}
 	a.chars.resyncNames(account, recs)
 	return Reply{Op: req.Op, Corr: req.Corr, OK: true}
 }
 
+// writeFail — ошибка записи: метрика + журнал (оператору), отправитель
+// получает ok=false.
+func (a *Actor) writeFail(account string, err error) {
+	a.writeErrs.Add(1)
+	slog.Error("persist: запись персонажей не удалась", "account", account, "err", err)
+}
+
 // firstFreeSlot возвращает первый свободный слот 0–maxSlot (канон: слот
-// назначает сервер).
+// назначает сервер). Guard лимита в handleCreateChar гарантирует свободный
+// слот; занятость всех — нарушение контракта вызывающего.
 func firstFreeSlot(recs []CharRecord) int {
 	taken := [maxSlot + 1]bool{}
 	for _, r := range recs {
@@ -380,7 +421,7 @@ func firstFreeSlot(recs []CharRecord) int {
 			return slot
 		}
 	}
-	return maxSlot
+	panic("persist: свободных слотов нет — нарушен guard лимита персонажей")
 }
 
 // charsDir — подкаталог персонажей корня персиста.

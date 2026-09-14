@@ -2,6 +2,7 @@ package persist
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,7 +135,7 @@ func TestActorCreateListSnapshot(t *testing.T) {
 	rec := rep.Record
 	if rec.Slot != 0 || rec.Level != 1 || rec.HP != HumanFighter.BaseHP ||
 		rec.X != HumanFighter.StartX || rec.Name != "Vasya" || rec.Account != "player1" {
-		t.Errorf("созданная запись = %+v", rec)
+		t.Errorf("созданная запись = %+v; want слот 0, уровень 1, позиция/статы шаблона, player1/Vasya", rec)
 	}
 
 	list := env.ask(Request{Op: OpCharList, Corr: 2, Account: "player1"}, 5*time.Second)
@@ -425,6 +426,9 @@ func TestActorPanicRecover(t *testing.T) {
 		t.Fatalf("паникующее письмо получило ответ: %+v", rep)
 	case <-time.After(200 * time.Millisecond):
 	}
+	if drops := env.actor.box.Stats().FinalReliable; drops == 0 {
+		t.Error("паникующее письмо не получило классовый дроп остатка")
+	}
 	// актор жив: следующий запрос обрабатывается, серия сброшена
 	env.actor.testPanicOp = ""
 	rep := env.ask(Request{Op: OpCharList, Corr: 2, Account: "acc"}, 5*time.Second)
@@ -475,5 +479,115 @@ func TestActorConfigValidation(t *testing.T) {
 	if _, err := New(Config{Dir: t.TempDir(), DrainTimeout: time.Second, PanicLimit: 3},
 		reg, nil); err == nil {
 		t.Error("без doorbell = nil; want ошибка (тик-фолбэк обязателен)")
+	}
+}
+
+// TestActorRetryAfterWriteError — F3: индекс имён занимается только после
+// успешной записи; retry того же имени после ошибки идемпотентен.
+func TestActorRetryAfterWriteError(t *testing.T) {
+	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
+	env.start()
+	defer env.stop()
+
+	env.actor.chars.testFailRename = func() error {
+		return errors.New("инъекция: диск внезапно полон")
+	}
+	rep := env.ask(Request{Op: OpCreateChar, Corr: 1, Account: "acc",
+		Name: "Vasya", Sex: 0}, 5*time.Second)
+	if rep.OK || rep.Err == "" {
+		t.Fatalf("CreateChar при сбое записи = %+v; want отказ с причиной", rep)
+	}
+	if stats := env.actor.Stats(); stats.WriteErrs != 1 {
+		t.Errorf("WriteErrs = %d; want 1", stats.WriteErrs)
+	}
+	// занято ли имя? повтор после снятия инъекции должен пройти
+	env.actor.chars.testFailRename = nil
+	rep2 := env.ask(Request{Op: OpCreateChar, Corr: 2, Account: "acc",
+		Name: "Vasya", Sex: 0}, 5*time.Second)
+	if !rep2.OK || rep2.Record == nil {
+		t.Fatalf("retry CreateChar тем же именем = %+v; want OK (индекс не занялся до rename)", rep2)
+	}
+	list := env.ask(Request{Op: OpCharList, Corr: 3, Account: "acc"}, 5*time.Second)
+	if !list.OK || len(list.Chars) != 1 {
+		t.Errorf("после retry list = %+v; want одна запись", list.Chars)
+	}
+}
+
+// TestActorDemultiplexFIFO — F22/FIFO: один отправитель, несколько запросов
+// в полёте с разными corr; ответы различимы по эху и приходят в порядке
+// запросов отправителя.
+func TestActorDemultiplexFIFO(t *testing.T) {
+	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
+	env.start()
+	defer env.stop()
+
+	rep1 := env.ask(Request{Op: OpCreateChar, Corr: 11, Account: "acc",
+		Name: "First", Sex: 0}, 5*time.Second)
+	if !rep1.OK {
+		t.Fatalf("создание = %+v", rep1)
+	}
+	// три запроса в полёте без ожидания между отправками
+	env.send(Request{Op: OpCharList, Corr: 21, Account: "acc"})
+	env.send(Request{Op: OpCreateChar, Corr: 22, Account: "acc", Name: "Second", Sex: 1})
+	env.send(Request{Op: OpCharList, Corr: 23, Account: "acc"})
+	want := []uint64{21, 22, 23}
+	got := make([]uint64, 0, len(want))
+	for range want {
+		select {
+		case r := <-env.replyCh:
+			if !r.OK {
+				t.Fatalf("ответ corr=%d не OK: %+v", r.Corr, r)
+			}
+			got = append(got, r.Corr)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("ответы не пришли: %v из %v", got, want)
+		}
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("порядок/эхо corr: got %v; want %v", got, want)
+			break
+		}
+	}
+}
+
+// TestActorSnapshotGuards — слоты и пустой снимок: отправитель не доверяется.
+func TestActorSnapshotGuards(t *testing.T) {
+	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
+	env.start()
+	defer env.stop()
+
+	base := mkChar("acc", "Vasya", 0)
+	base.ClassID, base.Race, base.Level = 0, 0, 1
+	dupSlot := mkChar("acc", "Petya", 0)
+	dupSlot.ClassID, dupSlot.Level = 0, 1
+	rep := env.ask(Request{Op: OpSaveSnapshot, Corr: 1, Account: "acc",
+		Chars: []CharRecord{base, dupSlot}}, 5*time.Second)
+	if rep.OK {
+		t.Error("снимок с дубликатом слота принят")
+	}
+	var many []CharRecord
+	for i := 0; i <= 7; i++ {
+		r := mkChar("acc", string(rune('A'+i)), i)
+		r.ClassID, r.Level = 0, 1
+		many = append(many, r)
+	}
+	rep = env.ask(Request{Op: OpSaveSnapshot, Corr: 2, Account: "acc", Chars: many}, 5*time.Second)
+	if rep.OK {
+		t.Error("снимок с 8 персонажами принят")
+	}
+	// пустой снимок при непустом аккаунте — отказ
+	ok := env.ask(Request{Op: OpCreateChar, Corr: 3, Account: "acc2", Name: "Solo", Sex: 0}, 5*time.Second)
+	if !ok.OK {
+		t.Fatalf("создание = %+v", ok)
+	}
+	rep = env.ask(Request{Op: OpSaveSnapshot, Corr: 4, Account: "acc2", Chars: nil}, 5*time.Second)
+	if rep.OK {
+		t.Error("пустой снимок при непустом аккаунте принят (стёр бы персонажей)")
+	}
+	// при пустом аккаунте пустой снимок легитимен (нечего стирать)
+	rep = env.ask(Request{Op: OpSaveSnapshot, Corr: 5, Account: "acc3", Chars: nil}, 5*time.Second)
+	if !rep.OK {
+		t.Errorf("пустой снимок пустого аккаунта = %+v; want OK", rep)
 	}
 }

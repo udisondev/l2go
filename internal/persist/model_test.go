@@ -119,7 +119,7 @@ func TestValidateCharRecord(t *testing.T) {
 		X: 1, Y: 2, Z: 3, Heading: 0,
 		Level: 1, Exp: 0, HP: HumanFighter.BaseHP, MP: HumanFighter.BaseMP,
 	}
-	if err := ValidateCharRecord(base); err != nil {
+	if err := validateCharRecord(base); err != nil {
 		t.Errorf("ValidateCharRecord(база) error = %v; want nil", err)
 	}
 	bad := []struct {
@@ -139,7 +139,7 @@ func TestValidateCharRecord(t *testing.T) {
 	for _, tc := range bad {
 		r := base
 		tc.mutate(&r)
-		if err := ValidateCharRecord(r); err == nil {
+		if err := validateCharRecord(r); err == nil {
 			t.Errorf("%s: ValidateCharRecord() = nil; want ошибка", tc.name)
 		}
 	}
