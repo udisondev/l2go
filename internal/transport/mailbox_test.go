@@ -144,7 +144,7 @@ func TestSegmentCollectionBelowMark(t *testing.T) {
 	box, token := newClaimedBox(t, 8)
 	const total = 2*segCap + 3
 	for i := 0; i < total; i++ {
-		box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame, Payload: testSeq(uint64(i))})
+		box.enqueue(Envelope{FromID: 1, Kind: KindAggro, Payload: testSeq(uint64(i))})
 	}
 	if got := len(box.Extract(token)); got != total {
 		t.Fatalf("Extract = %d; want %d", got, total)
@@ -160,28 +160,22 @@ func TestSegmentCollectionBelowMark(t *testing.T) {
 
 func TestNotifyToken(t *testing.T) {
 	box, token := newClaimedBox(t, 8)
-	select {
-	case <-box.Notify():
-		t.Fatalf("токен до отправки")
-	default:
+	if n := len(box.Notify()); n != 0 {
+		t.Fatalf("токен до отправки: в канале %d", n)
 	}
 	box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame})
-	select {
-	case <-box.Notify():
-	default:
-		t.Fatalf("переход пусто→непусто не дал токена")
+	if n := len(box.Notify()); n != 1 {
+		t.Fatalf("переход пусто→непусто не дал токена: %d", n)
 	}
 	// повторная отправка не плодит токени (cap-1)
 	box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame})
-	if len(box.Notify()) != 1 {
-		t.Errorf("в канале %d токенов; want 1 (cap-1)", len(box.Notify()))
+	if n := len(box.Notify()); n != 1 {
+		t.Errorf("в канале %d токенов; want 1 (cap-1)", n)
 	}
 	box.Extract(token)
 	box.AckNotify()
-	select {
-	case <-box.Notify():
-		t.Fatalf("AckNotify не сбросил токен")
-	default:
+	if n := len(box.Notify()); n != 0 {
+		t.Fatalf("AckNotify не сбросил токен: %d", n)
 	}
 	// после сброса новое пусто→непусто снова будит
 	box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame})
@@ -260,5 +254,23 @@ func TestMailboxStatsDepth(t *testing.T) {
 	}
 	if hw := box.Stats().HighWater; hw < 3 {
 		t.Errorf("HighWater = %d; want >= 3", hw)
+	}
+}
+
+// Ленивый первый сегмент: пустой ящик не платит за сегмент (бюджет §11).
+func TestMailboxLazyFirstSegment(t *testing.T) {
+	box, _ := newClaimedBox(t, 8)
+	if box.tail != nil || box.start.Load() != nil {
+		t.Fatalf("пустой ящик аллоцировал сегмент при рождении")
+	}
+	if got := box.Extract(42); len(got) != 0 {
+		t.Fatalf("изъятие из пустого с рождения ящика = %d; want 0", len(got))
+	}
+	box.enqueue(Envelope{FromID: 1, Kind: KindAggro})
+	if box.start.Load() == nil {
+		t.Fatalf("первое письмо не опубликовало первый сегмент")
+	}
+	if got := box.Extract(42); len(got) != 1 {
+		t.Fatalf("изъятие после первого письма = %d; want 1", len(got))
 	}
 }

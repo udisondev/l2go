@@ -26,7 +26,7 @@ func TestStressFIFOOrder(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := uint64(0); i < perSender; i++ {
-				r.Send(Envelope{To: Addr{Entity: 1}, FromID: s, Kind: KindClientFrame,
+				r.Send(Envelope{To: Addr{Entity: 1}, FromID: s, Kind: KindAggro,
 					Payload: testSeq(i)})
 			}
 			doneCnt.Add(1)
@@ -106,7 +106,7 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 			defer wgSenders.Done()
 			for i := 0; i < perSender; i++ {
 				seq := uint64(s*perSender + i)
-				r.Send(Envelope{To: Addr{Entity: 1}, FromID: 1, Kind: KindClientFrame,
+				r.Send(Envelope{To: Addr{Entity: 1}, FromID: 1, Kind: KindAggro,
 					Payload: testSeq(seq)})
 				sent.Add(1)
 				if seq%13 == 0 {

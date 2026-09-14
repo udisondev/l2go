@@ -48,7 +48,7 @@ func TestRetireSwapsToDeadSingleton(t *testing.T) {
 
 	// поздний отправитель попадает в синглтон «мёртв»: классовый дроп с метрикой
 	r.Send(Envelope{To: Addr{Entity: id, Slot: SlotSelf}, FromID: 2, Kind: KindXP})
-	if st := deadBox.Stats(); st.FinalReliable != 1 {
+	if st := r.deadBox.Stats(); st.FinalReliable != 1 {
 		t.Errorf("синглон мёртвых: FinalReliable = %d; want 1", st.FinalReliable)
 	}
 	if st := r.Stats(); st.Misses != 0 {

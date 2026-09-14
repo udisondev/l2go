@@ -1,12 +1,12 @@
-// Package transport — типы данных конверта сообщений мира. Отправка — слепой
-// push: lookup ящика и enqueue — смежные операции, без маршрутизации, проверок
-// свежести адреса и ожидания; указатель ящика между отправками не кешируется.
-// Реализация (карта id→ящик, MPSC-очередь с мигрирующим читателем и водяным
-// знаком, контрольный ящик региона) появится вместе с каркасом мира.
+// Package transport — транспорт мира: карта вечных адресов id→ящик, MPSC-ящики
+// с мигрирующим читателем и водяным знаком (ADR-0003). Отправка — слепой push:
+// lookup ящика и enqueue — смежные операции, без маршрутизации, проверок свежести
+// адреса и ожидания; указатель ящика между отправками не кешируется.
 package transport
 
-// EntityID — вечный идентификатор: сущность, сервисная шарда или шлюз.
-// ID не переиспользуются; смерть — маркер, не удаление.
+// EntityID — вечный идентификатор: сущность, сервисная шарда, регион или шлюз.
+// ID не переиспользуются; смерть — маркер, не удаление. Ноль зарезервирован
+// как невалидный (нулевое значение Addr не адресует никого).
 type EntityID uint64
 
 // Slot — слот адресата: SlotSelf адресует саму сущность, остальные значения —
@@ -35,7 +35,7 @@ type Class uint8
 
 const (
 	ClassFireAndForget Class = iota + 1 // финальный дроп молча (урон, бродкаст)
-	ClassReliable                       // дроп = уведомление отправителя (аггро, XP, контроли)
+	ClassReliable                       // дроп = уведомление владельцу отправителя (аггро, XP, контроли)
 	ClassTransfer                       // дроп = чистый abort (передача ресурсов)
 )
 
@@ -48,16 +48,20 @@ const (
 	AttrBound Attrs = 1 << iota
 )
 
-// Envelope — конверт письма: {to, fromID, class, attrs, payload}.
+// Envelope — конверт письма: {to, fromID, kind, attrs, payload}. Тип письма
+// едет с конвертом: класс доставки и принадлежность контрольному разбору —
+// производные Kind. Payload — байты со смыслом по Kind; enqueue передаёт
+// владение байтами отправителя, после изъятия байты принадлежат читателю.
 type Envelope struct {
 	To      Addr
 	FromID  EntityID
-	Class   Class
+	Kind    Kind
 	Attrs   Attrs
 	Payload []byte
 }
 
-// Kind — тип письма таксономии. Реестр закрыт: новый тип — правка таксономии.
+// Kind — тип письма таксономии. Реестр закрыт: новый тип — правка таксономии
+// в задаче-потребителе вместе с тестом полноты.
 type Kind uint16
 
 const (
@@ -81,23 +85,37 @@ const (
 	KindMemberStatus // статус члена пати получателю
 	KindServiceMsg   // прочие письма доменов (инвайты, переписка)
 
-	// Контрольные письма региону: ящик региона, приоритетная полоса.
+	// Контрольные письма региону: ящик региона, приоритетный разбор.
 	KindSuitcase   // чемодан переезда
 	KindInstallAck // подтверждение установки черновика
 	KindConfirmAck // подтверждение забвения копии источника
 	KindRetire     // гашение черновика/устаревшей попытки
 	KindSeed       // затравка известности при переезде наблюдателя
+
+	// Клиентские кадры: payload — байты расшифрованного кадра (опкод + тело),
+	// fromID — шлюз; декодирование представления — у читателя-владельца.
+	KindClientFrame
+
+	// Персист-актор: запросы и ответы файлового писателя.
+	KindPersistRequest
+	KindPersistReply
+
+	// Контрольные письма фазы 3: рождение и смерть связи игрок-коннект.
+	KindEnterWorld // вход в мир: {connID, account, снимок персонажа} региону
+	KindLinkDead   // обрыв коннекта региону
+	KindConnClose  // регион→шлюз «закрыть коннект»
 )
 
 // Class возвращает класс доставки типа. Неизвестный тип — нулевой класс:
 // валидация на применении такое отклоняет.
 func (k Kind) Class() Class {
 	switch k {
-	case KindApplyDamage, KindBroadcastState:
+	case KindApplyDamage, KindBroadcastState, KindClientFrame:
 		return ClassFireAndForget
 	case KindAggro, KindKillCredit, KindXP, KindControlEffect,
 		KindMemberStatus, KindServiceMsg, KindInstallAck, KindConfirmAck,
-		KindRetire, KindSeed:
+		KindRetire, KindSeed, KindPersistRequest, KindPersistReply,
+		KindEnterWorld, KindLinkDead, KindConnClose:
 		return ClassReliable
 	case KindReserve, KindCommit, KindAbort, KindLootPickup, KindSpoil,
 		KindSweep, KindSuitcase:
@@ -106,11 +124,12 @@ func (k Kind) Class() Class {
 	return 0
 }
 
-// Regional сообщает, что письмо контрольное: адресат — регион, доставка в
-// контрольный ящик приоритетной полосой.
+// Regional сообщает, что письмо контрольное: адресат — регион как таковой,
+// разбор — в приоритетной фазе дрена.
 func (k Kind) Regional() bool {
 	switch k {
-	case KindSuitcase, KindInstallAck, KindConfirmAck, KindRetire, KindSeed:
+	case KindSuitcase, KindInstallAck, KindConfirmAck, KindRetire, KindSeed,
+		KindEnterWorld, KindLinkDead:
 		return true
 	}
 	return false
@@ -122,7 +141,9 @@ func (k Kind) Service() bool {
 }
 
 // Domain — домен адресата для валидации на применении: письмо применяется,
-// только если домен разрешает тип; по умолчанию — запрет.
+// только если домен разрешает тип; по умолчанию — запрет. Сервисные адресаты
+// (шлюз, persist-актор, регион) вне доменной валидации — их читатель
+// диспетчеризует по Kind.
 type Domain uint8
 
 const (

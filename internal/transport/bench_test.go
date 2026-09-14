@@ -173,7 +173,7 @@ func BenchmarkEnqueueParallel(b *testing.B) {
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
-		for pb.Loop() {
+		for pb.Next() {
 			box.enqueue(env)
 		}
 	})
@@ -196,7 +196,7 @@ func BenchmarkExtract(b *testing.B) {
 		}
 	})
 	b.Run("DeepCycle", func(b *testing.B) {
-		r := NewRegistry(8)
+		r := NewRegistry(1 << 20)
 		box := &Mailbox{}
 		r.Register(box)
 		if err := box.Claim(1); err != nil {
@@ -219,8 +219,8 @@ func BenchmarkExtract(b *testing.B) {
 
 func BenchmarkSend(b *testing.B) {
 	for _, sz := range benchSizes {
+		r := fillRegistry(sz.n)
 		b.Run(sz.name, func(b *testing.B) {
-			r := fillRegistry(sz.n)
 			ids := idsUpTo(sz.n)
 			if len(ids) == 0 {
 				ids = []EntityID{1}
@@ -239,8 +239,8 @@ func BenchmarkSend(b *testing.B) {
 
 func BenchmarkSendParallel(b *testing.B) {
 	for _, sz := range benchSizes {
+		r := fillRegistry(sz.n)
 		b.Run(sz.name, func(b *testing.B) {
-			r := fillRegistry(sz.n)
 			ids := idsUpTo(sz.n)
 			if len(ids) == 0 {
 				ids = []EntityID{1}
@@ -249,7 +249,7 @@ func BenchmarkSendParallel(b *testing.B) {
 			b.RunParallel(func(pb *testing.PB) {
 				env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
 				i := 0
-				for pb.Loop() {
+				for pb.Next() {
 					env.To.Entity = ids[i%len(ids)]
 					r.Send(env)
 					i++
@@ -284,7 +284,7 @@ func BenchmarkSendUnderWrite(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
 		i := 0
-		for pb.Loop() {
+		for pb.Next() {
 			env.To.Entity = ids[i%len(ids)]
 			r.Send(env)
 			i++
@@ -326,25 +326,25 @@ func BenchmarkMapWrite(b *testing.B) {
 
 func BenchmarkSendPlainTable(b *testing.B) {
 	for _, sz := range benchSizes {
+		r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+			p := &plainTable{m: make(map[EntityID]*Mailbox)}
+			return p.set, p.get
+		})
+		_ = r
 		b.Run(sz.name, func(b *testing.B) {
-			r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
-				p := &plainTable{m: make(map[EntityID]*Mailbox)}
-				return p.set, p.get
-			})
-			_ = r
-			runSendParallel(b, tbl.get, sz.n)
+			runSendParallel(b, tbl, sz.n)
 		})
 	}
 }
 
 func BenchmarkSendSyncMap(b *testing.B) {
 	for _, sz := range benchSizes {
+		r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+			s := &syncMapTable{}
+			return func(id EntityID, box *Mailbox) { s.m.Store(id, box) }, s.get
+		})
+		_ = r
 		b.Run(sz.name, func(b *testing.B) {
-			r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
-				s := &syncMapTable{}
-				return func(id EntityID, box *Mailbox) { s.m.Store(id, box) }, s.get
-			})
-			_ = r
 			runSendParallel(b, tbl, sz.n)
 		})
 	}
@@ -352,12 +352,12 @@ func BenchmarkSendSyncMap(b *testing.B) {
 
 func BenchmarkSendCOW(b *testing.B) {
 	for _, sz := range benchSizes {
+		r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+			c := &cowTable{}
+			return c.set, c.get
+		})
+		_ = r
 		b.Run(sz.name, func(b *testing.B) {
-			r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
-				c := &cowTable{}
-				return c.set, c.get
-			})
-			_ = r
 			runSendParallel(b, tbl, sz.n)
 		})
 	}
@@ -383,7 +383,7 @@ func runSendParallel(b *testing.B, get func(EntityID) *Mailbox, n int) {
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
-		for pb.Loop() {
+		for pb.Next() {
 			if box := get(ids[i%len(ids)]); box != nil {
 				box.enqueue(env)
 			}
@@ -394,6 +394,9 @@ func runSendParallel(b *testing.B, get func(EntityID) *Mailbox, n int) {
 
 func fillRegistry(n int) *Registry {
 	r := NewRegistry(1 << 20)
+	if n < 1 {
+		n = 1 // «пустая» карта: один адресат, фон таблицы минимален, мисс-путь не меряется
+	}
 	for i := 0; i < n; i++ {
 		r.Register(&Mailbox{})
 	}
