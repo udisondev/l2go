@@ -1,0 +1,401 @@
+package transport
+
+import (
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"testing"
+)
+
+// Конкуренты выбора структуры карты (ADR-0003 §3): побеждает та, что в Registry;
+// проигравшие живут здесь — числа воспроизводимы, мёртвого кода в поставке нет.
+
+type plainTable struct {
+	mu sync.RWMutex
+	m  map[EntityID]*Mailbox
+}
+
+func (p *plainTable) get(id EntityID) *Mailbox {
+	p.mu.RLock()
+	box := p.m[id]
+	p.mu.RUnlock()
+	return box
+}
+
+func (p *plainTable) set(id EntityID, box *Mailbox) {
+	p.mu.Lock()
+	p.m[id] = box
+	p.mu.Unlock()
+}
+
+type syncMapTable struct{ m sync.Map }
+
+func (s *syncMapTable) get(id EntityID) *Mailbox {
+	v, _ := s.m.Load(id)
+	if v == nil {
+		return nil
+	}
+	return v.(*Mailbox)
+}
+
+const (
+	cowSegBits = 10
+	cowSegSize = 1 << cowSegBits
+	cowSegMask = cowSegSize - 1
+)
+
+// Сегментированный COW с прямым индексом по монотонному id: чтение — загрузка корня
+// плюс две зависимые загрузки, без RMW; запись клонирует затронутый сегмент.
+type cowTable struct {
+	mu   sync.Mutex
+	root atomic.Pointer[cowRoot]
+}
+
+type cowRoot struct {
+	segs []*cowSeg
+}
+
+type cowSeg struct {
+	slots [cowSegSize]*Mailbox
+}
+
+func (c *cowTable) get(id EntityID) *Mailbox {
+	root := c.root.Load()
+	if root == nil {
+		return nil
+	}
+	i := int(id) >> cowSegBits
+	if i >= len(root.segs) {
+		return nil
+	}
+	return root.segs[i].slots[int(id)&cowSegMask]
+}
+
+func (c *cowTable) set(id EntityID, box *Mailbox) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	old := c.root.Load()
+	i := int(id) >> cowSegBits
+	var segs []*cowSeg
+	if old == nil || i >= len(old.segs) {
+		n := i + 1
+		if old != nil {
+			n = len(old.segs) * 2
+			if n <= i {
+				n = i + 1
+			}
+		}
+		segs = make([]*cowSeg, n)
+		copy(segs, oldSegs(old))
+	} else {
+		segs = append(make([]*cowSeg, 0, len(old.segs)), oldSegs(old)...)
+	}
+	if segs[i] == nil {
+		segs[i] = &cowSeg{}
+	} else {
+		cloned := &cowSeg{}
+		*cloned = *segs[i]
+		segs[i] = cloned
+	}
+	segs[i].slots[int(id)&cowSegMask] = box
+	c.root.Store(&cowRoot{segs: segs})
+}
+
+func oldSegs(r *cowRoot) []*cowSeg {
+	if r == nil {
+		return nil
+	}
+	return r.segs
+}
+
+var benchSizes = []struct {
+	name string
+	n    int
+}{
+	{"Map0", 0},
+	{"Map100", 100},
+	{"Map10k", 10_000},
+	{"Map50k", 50_000},
+}
+
+func idsUpTo(n int) []EntityID {
+	ids := make([]EntityID, n)
+	for i := range ids {
+		ids[i] = EntityID(i + 1)
+	}
+	return ids
+}
+
+func BenchmarkEnqueue(b *testing.B) {
+	r := NewRegistry(1 << 20)
+	box := &Mailbox{}
+	r.Register(box)
+	if err := box.Claim(1); err != nil {
+		b.Fatal(err)
+	}
+	env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
+	var sink []Envelope
+	b.ReportAllocs()
+	for b.Loop() {
+		box.enqueue(env)
+		if box.length.Load() >= segCap {
+			sink = box.extractInto(1, sink[:0])
+		}
+	}
+	benchSink = sink
+}
+
+func BenchmarkEnqueueParallel(b *testing.B) {
+	r := NewRegistry(1 << 20)
+	box := &Mailbox{}
+	r.Register(box)
+	if err := box.Claim(1); err != nil {
+		b.Fatal(err)
+	}
+	stop := make(chan struct{})
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		var sink []Envelope
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if box.length.Load() > segCap*4 {
+				sink = box.extractInto(1, sink[:0])
+				continue
+			}
+			runtime.Gosched()
+		}
+	}()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
+		for pb.Loop() {
+			box.enqueue(env)
+		}
+	})
+	close(stop)
+	<-drained
+	benchSink = nil
+}
+
+func BenchmarkExtract(b *testing.B) {
+	b.Run("Empty", func(b *testing.B) {
+		r := NewRegistry(8)
+		box := &Mailbox{}
+		r.Register(box)
+		if err := box.Claim(1); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		for b.Loop() {
+			benchSink = box.extractInto(1, nil)
+		}
+	})
+	b.Run("DeepCycle", func(b *testing.B) {
+		r := NewRegistry(8)
+		box := &Mailbox{}
+		r.Register(box)
+		if err := box.Claim(1); err != nil {
+			b.Fatal(err)
+		}
+		for i := 0; i < 3*segCap; i++ {
+			box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]})
+		}
+		var sink []Envelope
+		b.ReportAllocs()
+		for b.Loop() {
+			sink = box.extractInto(1, sink[:0])
+			for _, env := range sink {
+				box.enqueue(env)
+			}
+		}
+		benchSink = sink
+	})
+}
+
+func BenchmarkSend(b *testing.B) {
+	for _, sz := range benchSizes {
+		b.Run(sz.name, func(b *testing.B) {
+			r := fillRegistry(sz.n)
+			ids := idsUpTo(sz.n)
+			if len(ids) == 0 {
+				ids = []EntityID{1}
+			}
+			env := Envelope{FromID: 1, Kind: KindClientFrame, To: Addr{Entity: 1}, Payload: payloadFixed[:]}
+			b.ReportAllocs()
+			i := 0
+			for b.Loop() {
+				env.To.Entity = ids[i%len(ids)]
+				r.Send(env)
+				i++
+			}
+		})
+	}
+}
+
+func BenchmarkSendParallel(b *testing.B) {
+	for _, sz := range benchSizes {
+		b.Run(sz.name, func(b *testing.B) {
+			r := fillRegistry(sz.n)
+			ids := idsUpTo(sz.n)
+			if len(ids) == 0 {
+				ids = []EntityID{1}
+			}
+			b.ReportAllocs()
+			b.RunParallel(func(pb *testing.PB) {
+				env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
+				i := 0
+				for pb.Loop() {
+					env.To.Entity = ids[i%len(ids)]
+					r.Send(env)
+					i++
+				}
+			})
+		})
+	}
+}
+
+// Интерференция чтение×запись: параллельная отправка по заселённой карте,
+// фон — массовый спавн (рождения) в отдельной горутине.
+func BenchmarkSendUnderWrite(b *testing.B) {
+	const n = 10_000
+	r := fillRegistry(n)
+	ids := idsUpTo(n)
+	stop := make(chan struct{})
+	spawned := make(chan struct{})
+	go func() {
+		defer close(spawned)
+		i := n + 1
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			r.Register(&Mailbox{})
+			i++
+		}
+	}()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
+		i := 0
+		for pb.Loop() {
+			env.To.Entity = ids[i%len(ids)]
+			r.Send(env)
+			i++
+		}
+	})
+	close(stop)
+	<-spawned
+}
+
+func BenchmarkMapWrite(b *testing.B) {
+	b.Run("Birth", func(b *testing.B) {
+		r := fillRegistry(10_000)
+		b.ReportAllocs()
+		next := EntityID(10_001)
+		for b.Loop() {
+			r.Register(&Mailbox{})
+			next++
+		}
+	})
+	b.Run("Retire", func(b *testing.B) {
+		r := fillRegistry(10_000)
+		b.ReportAllocs()
+		i := 0
+		for b.Loop() {
+			r.Retire(EntityID(i%10_000 + 1))
+			i++
+		}
+	})
+	b.Run("MassSpawn", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			r := NewRegistry(1024)
+			for j := 0; j < 12_000; j++ {
+				r.Register(&Mailbox{})
+			}
+		}
+	})
+}
+
+func BenchmarkSendPlainTable(b *testing.B) {
+	for _, sz := range benchSizes {
+		b.Run(sz.name, func(b *testing.B) {
+			r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+				p := &plainTable{m: make(map[EntityID]*Mailbox)}
+				return p.set, p.get
+			})
+			_ = r
+			runSendParallel(b, tbl.get, sz.n)
+		})
+	}
+}
+
+func BenchmarkSendSyncMap(b *testing.B) {
+	for _, sz := range benchSizes {
+		b.Run(sz.name, func(b *testing.B) {
+			r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+				s := &syncMapTable{}
+				return func(id EntityID, box *Mailbox) { s.m.Store(id, box) }, s.get
+			})
+			_ = r
+			runSendParallel(b, tbl, sz.n)
+		})
+	}
+}
+
+func BenchmarkSendCOW(b *testing.B) {
+	for _, sz := range benchSizes {
+		b.Run(sz.name, func(b *testing.B) {
+			r, tbl := fillCompetitor(sz.n, func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox) {
+				c := &cowTable{}
+				return c.set, c.get
+			})
+			_ = r
+			runSendParallel(b, tbl, sz.n)
+		})
+	}
+}
+
+func fillCompetitor(n int, mk func() (set func(EntityID, *Mailbox), get func(EntityID) *Mailbox)) (*Registry, func(EntityID) *Mailbox) {
+	r := NewRegistry(1 << 20)
+	set, get := mk()
+	for i := 1; i <= n; i++ {
+		box := &Mailbox{}
+		id := r.Register(box)
+		set(id, box)
+	}
+	return r, get
+}
+
+func runSendParallel(b *testing.B, get func(EntityID) *Mailbox, n int) {
+	ids := idsUpTo(n)
+	if len(ids) == 0 {
+		ids = []EntityID{1}
+	}
+	env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Loop() {
+			if box := get(ids[i%len(ids)]); box != nil {
+				box.enqueue(env)
+			}
+			i++
+		}
+	})
+}
+
+func fillRegistry(n int) *Registry {
+	r := NewRegistry(1 << 20)
+	for i := 0; i < n; i++ {
+		r.Register(&Mailbox{})
+	}
+	return r
+}

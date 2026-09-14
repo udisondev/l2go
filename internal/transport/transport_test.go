@@ -23,6 +23,7 @@ func TestKindClassRegistry(t *testing.T) {
 	want := map[Kind]Class{
 		KindApplyDamage:    ClassFireAndForget,
 		KindBroadcastState: ClassFireAndForget,
+		KindClientFrame:    ClassFireAndForget,
 		KindAggro:          ClassReliable,
 		KindKillCredit:     ClassReliable,
 		KindXP:             ClassReliable,
@@ -33,6 +34,11 @@ func TestKindClassRegistry(t *testing.T) {
 		KindConfirmAck:     ClassReliable,
 		KindRetire:         ClassReliable,
 		KindSeed:           ClassReliable,
+		KindPersistRequest: ClassReliable,
+		KindPersistReply:   ClassReliable,
+		KindEnterWorld:     ClassReliable,
+		KindLinkDead:       ClassReliable,
+		KindConnClose:      ClassReliable,
 		KindReserve:        ClassTransfer,
 		KindCommit:         ClassTransfer,
 		KindAbort:          ClassTransfer,
@@ -42,7 +48,7 @@ func TestKindClassRegistry(t *testing.T) {
 		KindSuitcase:       ClassTransfer,
 	}
 	// полнота реестра: каждый тип от первого до последнего имеет класс
-	for k := KindApplyDamage; k <= KindSeed; k++ {
+	for k := KindApplyDamage; k <= KindConnClose; k++ {
 		c, ok := want[k]
 		if !ok {
 			t.Errorf("тип %d не покрыт таблицей теста", k)
@@ -52,7 +58,7 @@ func TestKindClassRegistry(t *testing.T) {
 			t.Errorf("Kind(%d).Class() = %d; want %d", k, got, c)
 		}
 	}
-	if extra := len(want) - int(KindSeed); extra != 0 {
+	if extra := len(want) - int(KindConnClose); extra != 0 {
 		t.Errorf("в таблице %d лишних типов", extra)
 	}
 	if unknown := Kind(999).Class(); unknown != 0 {
@@ -63,10 +69,10 @@ func TestKindClassRegistry(t *testing.T) {
 func TestKindRegionalAndService(t *testing.T) {
 	regional := map[Kind]bool{
 		KindSuitcase: true, KindInstallAck: true, KindConfirmAck: true,
-		KindRetire: true, KindSeed: true,
+		KindRetire: true, KindSeed: true, KindEnterWorld: true, KindLinkDead: true,
 	}
 	service := map[Kind]bool{KindMemberStatus: true, KindServiceMsg: true}
-	for k := KindApplyDamage; k <= KindSeed; k++ {
+	for k := KindApplyDamage; k <= KindConnClose; k++ {
 		if got := k.Regional(); got != regional[k] {
 			t.Errorf("Kind(%d).Regional() = %v; want %v", k, got, regional[k])
 		}
@@ -83,6 +89,8 @@ func TestDomainAllows(t *testing.T) {
 		want bool
 	}{
 		{DomainWorld, KindApplyDamage, true},
+		{DomainWorld, KindClientFrame, true},
+		{DomainWorld, KindEnterWorld, true},
 		{DomainWorld, KindSuitcase, true},
 		{DomainWorld, KindMemberStatus, false},
 		{DomainParty, KindMemberStatus, true},
@@ -97,6 +105,14 @@ func TestDomainAllows(t *testing.T) {
 		if got := c.d.Allows(c.k); got != c.want {
 			t.Errorf("Domain(%d).Allows(%d) = %v; want %v", c.d, c.k, got, c.want)
 		}
+	}
+}
+
+func TestEnvelopeCarriesKind(t *testing.T) {
+	// Класс доставки — производная Kind: конверт несёт тип, но не дублирует класс.
+	env := Envelope{To: Addr{Entity: 7, Slot: SlotSelf}, FromID: 1, Kind: KindClientFrame}
+	if got := env.Kind.Class(); got != ClassFireAndForget {
+		t.Errorf("конверт KindClientFrame: класс = %d; want %d", got, ClassFireAndForget)
 	}
 }
 
