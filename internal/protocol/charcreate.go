@@ -33,7 +33,7 @@ const (
 )
 
 // CharDeleteFailReason — причины отказа удаления (CharDeleteFail.java канона).
-// Удаление — анти-скоуп фазы 3: сервер всегда отвечает отказом с причиной
+// Удаление персонажа — анти-скоуп: сервер всегда отвечает отказом с причиной
 // DeletionFailed.
 type CharDeleteFailReason int32
 

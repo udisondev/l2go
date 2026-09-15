@@ -12,7 +12,8 @@ const userInfo = 0x04
 
 // UserInfoData — варьируемые поля кадра UserInfo; нули и константы канона
 // (vehicleId, paperdoll, аугментации, клан, права, кубики, fishing и пр.)
-// пишет писатель.
+// пишет писатель. Передаётся по значению: событийная частота, стек-копия
+// без алиасинга.
 type UserInfoData struct {
 	X                     int32
 	Y                     int32

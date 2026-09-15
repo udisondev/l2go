@@ -13,7 +13,8 @@ const npcInfo = 0x16
 const npcDisplayOffset int32 = 1000000
 
 // NpcInfoData — варьируемые поля кадра NpcInfo; нули и константы канона
-// (экипировка, клан, AVE, enchant, flying) пишет писатель.
+// (экипировка, клан, AVE, enchant, flying) пишет писатель. Передаётся по
+// значению: событийная частота, стек-копия без алиасинга.
 type NpcInfoData struct {
 	ObjID                 int32
 	DisplayID             int32
