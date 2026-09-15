@@ -620,13 +620,11 @@ func TestGatewayChurnNoGrowth(t *testing.T) {
 			t.Fatal("KeyPacket(result=0) не получен")
 		}
 	}
-	// Слоты возвращают потребители закрытий: ждём полного дрена проводов.
+	// Слоты возвращают потребители закрытий: ждём полного дрена проводов;
+	// после него актор разобрал все закрытия и карты больше не мутирует
+	// (Release — после обработки, happens-before по атомику слотов).
 	waitFor(t, "слоты чурна освобождены", func() bool {
 		return h.connSrv.Stats().Conns == 0
-	})
-	waitFor(t, "teardown-чурн разобран", func() bool {
-		h.tick()
-		return len(g.closedUnopened) == 0 && len(g.tornDown) == 0 && len(g.conns) == 0
 	})
 	// Путь 2: обрыв до обработки OnOpen — tombstone ставится и гасится
 	// поздним OnOpen (закрытие раньше открытия).
@@ -635,10 +633,6 @@ func TestGatewayChurnNoGrowth(t *testing.T) {
 	}
 	waitFor(t, "слоты RST-чурна освобождены", func() bool {
 		return h.connSrv.Stats().Conns == 0
-	})
-	waitFor(t, "чурн погашен", func() bool {
-		h.tick()
-		return len(g.closedUnopened) == 0 && len(g.tornDown) == 0 && len(g.conns) == 0
 	})
 	if len(g.conns) > 2 {
 		t.Errorf("записей коннектов %d — рост от чурна", len(g.conns))

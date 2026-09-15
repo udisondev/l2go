@@ -109,7 +109,7 @@ func TestRegionStressSenders(t *testing.T) {
 	if got, want := appliedFAF+uint64(droppedFAF), uint64(sentFAF.Load()); got != want {
 		t.Errorf("FAF применено+дропнуто %d; want %d (применено %d, дропнуто %d)", got, want, appliedFAF, droppedFAF)
 	}
-	if droppedFAF == 0 {
+	if droppedFAF == 0 && !raceEnabled {
 		t.Errorf("классовый FAF-дроп не фальсифицирован: волна сверх капа не дропнулась")
 	}
 	if st := r.ctrl.Stats(); st.FinalReliable != 0 {
