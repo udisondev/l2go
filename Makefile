@@ -36,6 +36,7 @@ fuzz-smoke:
 	$(GO) test -fuzz='^FuzzRoundtripS$$' -fuzztime=10s ./internal/protocol/
 	$(GO) test -fuzz='^FuzzReadOffsets$$' -fuzztime=10s ./internal/protocol/
 	$(GO) test -fuzz='^FuzzNextFrame$$' -fuzztime=10s ./internal/protocol/
+	$(GO) test -fuzz='^FuzzWorldViews$$' -fuzztime=10s ./internal/protocol/
 	$(GO) test -fuzz='^FuzzLoginDecrypt$$' -fuzztime=10s ./internal/crypto/
 	$(GO) test -fuzz='^FuzzGameDecrypt$$' -fuzztime=10s ./internal/crypto/
 	$(GO) test -fuzz='^FuzzLoadItems$$' -fuzztime=10s ./internal/data/
@@ -50,6 +51,7 @@ fuzz-long:
 	$(GO) test -fuzz='^FuzzRoundtripS$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
 	$(GO) test -fuzz='^FuzzReadOffsets$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
 	$(GO) test -fuzz='^FuzzNextFrame$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
+	$(GO) test -fuzz='^FuzzWorldViews$$' -fuzztime=$(FUZZTIME) ./internal/protocol/
 	$(GO) test -fuzz='^FuzzLoginDecrypt$$' -fuzztime=$(FUZZTIME) ./internal/crypto/
 	$(GO) test -fuzz='^FuzzGameDecrypt$$' -fuzztime=$(FUZZTIME) ./internal/crypto/
 	$(GO) test -fuzz='^FuzzLoadItems$$' -fuzztime=$(FUZZTIME) ./internal/data/

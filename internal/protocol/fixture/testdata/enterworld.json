@@ -1,0 +1,42 @@
+[
+  {
+    "dir": "game-client",
+    "op": 3,
+    "sub": 0,
+    "name": "ENTER_WORLD",
+    "payload": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01000000020000000300000004000000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f05000000c0a80001c0a80002c0a80003c0a80004c0a80005",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 27,
+    "sub": 0,
+    "name": "ITEM_LIST",
+    "payload": "00000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 88,
+    "sub": 0,
+    "name": "SKILL_LIST",
+    "payload": "00000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 69,
+    "sub": 0,
+    "name": "SHORT_CUT_INIT",
+    "payload": "00000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 37,
+    "sub": 0,
+    "name": "ACTION_FAIL",
+    "payload": "",
+    "origin": "generated"
+  }
+]

@@ -126,6 +126,22 @@ func ReadF(src []byte, off int) (float64, bool) {
 	return math.Float64frombits(binary.LittleEndian.Uint64(src[off:])), true
 }
 
+// sFieldLen — размер строкового поля (юниты до терминатора включительно) по
+// смещению off без декода: навигационным геттерам представлений нужен только
+// офсет следующего поля, декод строки — задача ReadS. ok=false, если
+// терминатор не найден среди полных юнитов до конца буфера (семантика ReadS).
+func sFieldLen(src []byte, off int) (int, bool) {
+	if off < 0 || off >= len(src) {
+		return 0, false
+	}
+	for i := off; i+1 < len(src); i += 2 {
+		if binary.LittleEndian.Uint16(src[i:]) == 0 {
+			return i + 2 - off, true
+		}
+	}
+	return 0, false
+}
+
 // ReadS читает UTF-16LE-строку с null-терминатором по смещению off;
 // возвращает строку и n — число байт поля включая терминатор. ok=false,
 // только если терминатор не найден среди полностью уложившихся юнитов до

@@ -1,0 +1,58 @@
+[
+  {
+    "dir": "game-client",
+    "op": 11,
+    "sub": 0,
+    "name": "CHARACTER_CREATE",
+    "payload": "4e0065007700620069006500000000000000010000000000000015000000280000002b000000190000001e0000000b000000020000000300000001000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-client",
+    "op": 12,
+    "sub": 0,
+    "name": "CHARACTER_DELETE",
+    "payload": "03000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-client",
+    "op": 14,
+    "sub": 0,
+    "name": "NEW_CHARACTER",
+    "payload": "",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 23,
+    "sub": 0,
+    "name": "CHAR_TEMPLATES",
+    "payload": "01000000000000000000000046000000280000000a000000460000001e0000000a000000460000002b0000000a00000046000000150000000a000000460000000b0000000a00000046000000190000000a000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 25,
+    "sub": 0,
+    "name": "CHAR_CREATE_OK",
+    "payload": "01000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 26,
+    "sub": 0,
+    "name": "CHAR_CREATE_FAIL",
+    "payload": "02000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 36,
+    "sub": 0,
+    "name": "CHAR_DELETE_FAIL",
+    "payload": "01000000",
+    "origin": "generated"
+  }
+]

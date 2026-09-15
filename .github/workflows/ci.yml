@@ -31,7 +31,7 @@ jobs:
 
       - name: Fuzz-смоук (фаза 1+)
         run: |
-          for t in FuzzRoundtripFixed FuzzRoundtripS FuzzReadOffsets FuzzNextFrame; do
+          for t in FuzzRoundtripFixed FuzzRoundtripS FuzzReadOffsets FuzzNextFrame FuzzWorldViews; do
             go test -fuzz="^${t}$" -fuzztime=10s ./internal/protocol/
           done
           for t in FuzzLoginDecrypt FuzzGameDecrypt; do

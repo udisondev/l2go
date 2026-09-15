@@ -1,0 +1,66 @@
+[
+  {
+    "dir": "game-client",
+    "op": 1,
+    "sub": 0,
+    "name": "MOVE_TO_LOCATION",
+    "payload": "64000000c8000000d4fefffff6ffffff140000001e00000001000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-client",
+    "op": 72,
+    "sub": 0,
+    "name": "VALIDATE_POSITION",
+    "payload": "56e9feffdff00300e0f3ffffe304000000000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-client",
+    "op": 54,
+    "sub": 0,
+    "name": "CANNOT_MOVE_ANYMORE",
+    "payload": "010000000200000003000000c8010000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 1,
+    "sub": 0,
+    "name": "CHAR_MOVE_TO_LOCATION",
+    "payload": "09030000e8030000d0070000b80b00000a000000140000001e000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 71,
+    "sub": 0,
+    "name": "STOP_MOVE",
+    "payload": "0500000064000000c80000002c01000040000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 40,
+    "sub": 0,
+    "name": "TELEPORT_TO_LOCATION",
+    "payload": "090000000100000002000000030000000000000004000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 97,
+    "sub": 0,
+    "name": "VALIDATE_LOCATION",
+    "payload": "030000000700000008000000090000000a000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 18,
+    "sub": 0,
+    "name": "DELETE_OBJECT",
+    "payload": "2a00000001000000",
+    "origin": "generated"
+  }
+]

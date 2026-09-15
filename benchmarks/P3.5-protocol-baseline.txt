@@ -1,0 +1,118 @@
+# Baseline P3.5 internal/protocol — пакеты стационарной фазы (рев. 2 — дофикс S8:
+# Race-навигация, sFieldLen без декода, реалистичный титул кейсов Short), benchstat-
+# совместимо: -count=10, -benchtime=100ms.
+# Окружение: linux/amd64, AMD Ryzen 9 PRO 8945HS, 16 потоков, go1.27.1 — машина агента
+# (CI-машина отличается; межмашинное сравнение запрещено). Числа шапки — медианы рядов
+# этого файла, извлечены механически (python statistics.median), не руками.
+#
+# Послабление против docs/perf.md §0 (benchtime 100ms < 1s и медианы вместо регресс-сравнения):
+# прецеденты F28/P1.1, F9/P1.2, P1.3/P3.2 — baseline фиксирует медианы для будущих сверок,
+# регресс-бюджеты — по нагрузочной базе фазы 4+.
+#
+# Реестр горячих путей ADR-0005: кластер движения (CharMoveToLocation/StopMove,
+# пер-тиковая репликация; входной разбор MoveToLocationView — дрен под лавиной шлюза);
+# большие писатели — событие join-AoI; кейсы Short (новичок Human Fighter, титул «Нуб»)
+# / Long (титул 77 симв. = 156 Б по проводу). Клеймо «0 аллокаций» писателей заперто
+# TestWorldWritersZeroAllocs (все, включая создание/ответы) и пер-файловыми
+# TestWrite{CharInfo,UserInfo,NpcInfo}ZeroAllocs.
+#
+# Медианы (ns/op): WriteCharMoveToLocation 1.98 · WriteStopMove 1.81 ·
+# MoveToLocationView 3.25 · WriteCharInfoShort 78.00 / Long 442.70 ·
+# WriteUserInfoShort 107.90 / Long 475.10 · WriteNpcInfoShort 44.59 / Long 438.05.
+
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/protocol
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkWriteCharMoveToLocation-16    	49074475	         2.078 ns/op	13958.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	60844058	         1.985 ns/op	14609.91 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	57125643	         2.061 ns/op	14067.60 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	56943387	         2.055 ns/op	14112.05 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	58823500	         2.064 ns/op	14050.08 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	59592624	         1.979 ns/op	14652.99 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	59922339	         1.978 ns/op	14658.55 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	60472348	         1.979 ns/op	14656.74 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	60713596	         1.976 ns/op	14674.32 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharMoveToLocation-16    	57679080	         1.983 ns/op	14624.51 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	58247082	         1.786 ns/op	11758.86 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	57185064	         1.840 ns/op	11413.11 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	57433772	         1.786 ns/op	11760.01 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	67153753	         1.785 ns/op	11765.21 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	66315624	         1.809 ns/op	11608.30 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	56128717	         1.815 ns/op	11573.22 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	66082059	         1.822 ns/op	11524.80 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	65878706	         1.807 ns/op	11619.71 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	65869275	         1.815 ns/op	11567.66 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteStopMove-16              	65814853	         1.818 ns/op	11553.97 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	37488178	         3.229 ns/op	8981.93 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	35319772	         3.358 ns/op	8637.17 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	31997362	         3.273 ns/op	8859.59 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	37701170	         3.225 ns/op	8993.09 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	32802228	         3.250 ns/op	8923.55 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	36613221	         3.272 ns/op	8862.37 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	35864130	         3.312 ns/op	8756.48 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	37035812	         3.229 ns/op	8980.10 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	36651860	         3.251 ns/op	8920.09 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMoveToLocationView-16         	37616752	         3.177 ns/op	9126.72 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1456897	        82.06 ns/op	4179.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1515572	        77.96 ns/op	4399.97 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1524445	        78.03 ns/op	4395.51 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1549822	        77.43 ns/op	4429.72 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1507245	        78.21 ns/op	4385.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1549743	        77.47 ns/op	4427.79 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1551332	        77.24 ns/op	4440.71 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1515619	        78.24 ns/op	4383.94 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1465188	        79.55 ns/op	4311.85 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoShort-16         	 1550198	        77.27 ns/op	4438.69 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  272737	       457.8 ns/op	1076.88 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  260736	       447.3 ns/op	1102.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  278694	       433.7 ns/op	1136.71 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  245746	       452.9 ns/op	1088.44 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  264604	       439.9 ns/op	1120.63 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  249423	       445.5 ns/op	1106.70 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  272200	       460.4 ns/op	1070.87 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  276742	       432.7 ns/op	1139.33 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  268677	       438.4 ns/op	1124.47 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteCharInfoLong-16          	  278954	       435.0 ns/op	1133.34 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1000000	       106.6 ns/op	5290.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1000000	       111.3 ns/op	5067.27 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	  919390	       127.6 ns/op	4418.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1104582	       108.6 ns/op	5191.29 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1087698	       108.2 ns/op	5211.38 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1000000	       111.9 ns/op	5041.35 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1132905	       105.8 ns/op	5332.89 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1000000	       105.8 ns/op	5328.92 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1128565	       106.2 ns/op	5308.31 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoShort-16         	 1112071	       107.6 ns/op	5243.69 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  240992	       478.8 ns/op	1491.09 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  228600	       504.1 ns/op	1416.43 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  214544	       475.5 ns/op	1501.71 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  239662	       474.7 ns/op	1504.27 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  220940	       470.5 ns/op	1517.61 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  259099	       470.2 ns/op	1518.66 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  251256	       472.6 ns/op	1510.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  260223	       496.2 ns/op	1439.05 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  225092	       480.4 ns/op	1486.22 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteUserInfoLong-16          	  242319	       473.2 ns/op	1508.80 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2660092	        44.77 ns/op	4556.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2516145	        45.25 ns/op	4508.59 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2575760	        44.73 ns/op	4560.49 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2721240	        44.45 ns/op	4589.32 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2692765	        44.42 ns/op	4592.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2702162	        44.34 ns/op	4601.05 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2705866	        43.69 ns/op	4669.06 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2678160	        45.33 ns/op	4500.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2750630	        43.86 ns/op	4651.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoShort-16          	 2530381	        45.07 ns/op	4526.07 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  254011	       420.0 ns/op	 833.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  270642	       430.0 ns/op	 813.92 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  270271	       443.6 ns/op	 789.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  269056	       442.8 ns/op	 790.49 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  271358	       447.5 ns/op	 782.09 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  269368	       444.3 ns/op	 787.80 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  280965	       426.9 ns/op	 819.95 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  265299	       426.1 ns/op	 821.34 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  275157	       433.3 ns/op	 807.72 MB/s	       0 B/op	       0 allocs/op
+BenchmarkWriteNpcInfoLong-16           	  242257	       452.7 ns/op	 773.19 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/protocol	10.522s

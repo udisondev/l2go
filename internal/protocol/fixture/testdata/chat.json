@@ -1,0 +1,34 @@
+[
+  {
+    "dir": "game-client",
+    "op": 56,
+    "sub": 0,
+    "name": "SAY2",
+    "payload": "1f0440043804320435044204000000000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-client",
+    "op": 56,
+    "sub": 0,
+    "name": "SAY2_WHISPER",
+    "payload": "7000730073007400000002000000560061007300790061000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 74,
+    "sub": 0,
+    "name": "CREATURE_SAY",
+    "payload": "0c01000000000000560061007300790061000000480065006c006c006f000000",
+    "origin": "generated"
+  },
+  {
+    "dir": "game-server",
+    "op": 100,
+    "sub": 0,
+    "name": "SYSTEM_MESSAGE",
+    "payload": "2200000000000000",
+    "origin": "generated"
+  }
+]
