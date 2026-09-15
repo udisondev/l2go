@@ -3,7 +3,6 @@ package gateway
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/udisondev/l2go/internal/conn"
@@ -44,12 +43,13 @@ func (g *Gateway) onFrame(gc *gconn, frame []byte) {
 // марка crypt на всех последующих); чужая → KeyPacket(result=0) + разрыв.
 func (g *Gateway) onProtocolVersion(gc *gconn, frame []byte) {
 	if frame[0] != protocol.OpProtocolVersion {
-		g.failLoginRaw(gc, 0, false)
+		g.failLoginRaw(gc, protocol.GSReasonNoText, false)
 		return
 	}
 	v, ok := protocol.NewProtocolVersionView(frame)
 	if !ok || v.Version() != protocol.ProtocolVersionInterlude {
-		// Канон: чужая версия — KeyPacket(result=0) + разрыв (CryptInit).
+		// Канон: чужая версия — KeyPacket(result=0) + разрыв
+		// (Mobius CT_0_Interlude ProtocolVersion.java/KeyPacket.java).
 		wire := make([]byte, protocol.KeyPacketSize)
 		protocol.WriteKeyPacket(wire, 0, gc.key[:], false, gameServerID)
 		g.replyRaw(gc, wire, false)
@@ -61,7 +61,8 @@ func (g *Gateway) onProtocolVersion(gc *gconn, frame []byte) {
 	g.replyRaw(gc, keyWire, false)
 	gc.cryptOn = true
 	gc.phase = phAuth
-	g.conn.SetReadMode(gc.id, conn.ModePresession)
+	// Режим presession — с обработки AuthLogin: до того живёт абсолютный
+	// HandshakeTimeout фазы accept→AuthLogin (dribble не продлевает).
 }
 
 // onAuthLogin: нормализация → домен → асинхронная ValidateSession;
@@ -94,8 +95,10 @@ func (g *Gateway) onAuthLogin(gc *gconn, frame []byte) {
 		g.failLogin(gc, protocol.GSReasonAccessFailedTryLater)
 		return
 	}
+	gc.sessionID = p1 // канон: SessionID списков/выбора = playOk1
 	gc.account = norm
 	gc.phase = phValidating
+	g.conn.SetReadMode(gc.id, conn.ModePresession)
 	go func() {
 		valid, err := g.validator.ValidateSession(context.Background(), norm, l1, l2, p1, p2)
 		select {
@@ -123,7 +126,9 @@ func (g *Gateway) onValidated(gc *gconn, cp completion) {
 		return
 	}
 	if !cp.valid {
-		g.failLogin(gc, protocol.GSReasonAccessFailedTryLater)
+		// Канон: провал сверки ключей — SYSTEM_ERROR_LOGIN_LATER
+		// (LoginServerThread PlayerAuthResponse isAuthed=false).
+		g.failLogin(gc, protocol.GSReasonSystemErrorLoginLater)
 		return
 	}
 	if old, busy := g.accounts[gc.account]; busy && old != gc.id {
@@ -134,34 +139,41 @@ func (g *Gateway) onValidated(gc *gconn, cp completion) {
 		}
 	}
 	g.accounts[gc.account] = gc.id
+	g.boundN.Add(1)
 	gc.phase = phList
 	g.requestCharList(gc)
 }
 
-// requestCharList — письмо персист-актору (Corr=connID) + таймер таймаута.
+// requestCharList — письмо списка персист-актору (Corr=connID).
 func (g *Gateway) requestCharList(gc *gconn) {
-	g.persistRequest(gc, persist.OpCharList)
+	g.persistRequest(gc, persist.Request{Op: persist.OpCharList, Corr: uint64(gc.id), Account: gc.account})
 }
 
-func (g *Gateway) persistRequest(gc *gconn, op string) {
-	gc.pending = &pending{op: op}
-	body, err := persist.EncodeRequest(persist.Request{Op: op, Corr: uint64(gc.id), Account: gc.account})
+// persistRequest — единый запрос персисту: ожидание ключуется монотонным
+// seq (устаревший таймер таймаута не убивает следующее ожидание — сверка в
+// onCompletion), таймер снимается ответом и teardown.
+func (g *Gateway) persistRequest(gc *gconn, req persist.Request) {
+	gc.waitSeq++
+	gc.pending = &pending{op: req.Op, seq: gc.waitSeq}
+	body, err := persist.EncodeRequest(req)
 	if err != nil {
-		slog.Error("gateway: кодирование запроса персиста", "op", op, "err", err)
+		slog.Error("gateway: кодирование запроса персиста", "op", req.Op, "err", err)
+		gc.pending = nil
 		g.failLogin(gc, protocol.GSReasonSystemErrorLoginLater)
 		return
 	}
+	seq := gc.waitSeq
+	gc.pending.timer = time.AfterFunc(g.cfg.PersistTimeout, func() {
+		select {
+		case g.completions <- completion{conn: gc.id, kind: cpPersistTimeout, seq: seq}:
+		case <-time.After(loginlinkValidateCap):
+		}
+	})
 	g.reg.Send(transport.Envelope{
 		To:      transport.Addr{Entity: g.cfg.Persist},
 		FromID:  g.id,
 		Kind:    transport.KindPersistRequest,
 		Payload: body,
-	})
-	time.AfterFunc(g.cfg.PersistTimeout, func() {
-		select {
-		case g.completions <- completion{conn: gc.id, kind: cpPersistTimeout}:
-		default:
-		}
 	})
 }
 
@@ -170,6 +182,12 @@ func (g *Gateway) onListFrame(gc *gconn, frame []byte) {
 	switch frame[0] {
 	case protocol.OpCNewCharacter:
 		g.replyTemplates(gc)
+	case protocol.OpCCharacterDelete:
+		// Анти-скоуп удаления: отказ с причиной канона, коннект жив
+		// (CharDeleteFail.java — порт в protocol).
+		wire := make([]byte, protocol.CharDeleteFailSize)
+		protocol.WriteCharDeleteFail(wire, protocol.CharDeleteReasonDeletionFailed)
+		g.reply(gc, wire)
 	case protocol.OpCCharacterCreate:
 		g.onCreate(gc, frame)
 	case protocol.OpCharacterSelect:
@@ -187,8 +205,23 @@ func (g *Gateway) onCreate(gc *gconn, frame []byte) {
 		return
 	}
 	name, ok := v.Name()
-	if !ok || !persist.ValidName(name) {
+	if !ok {
 		g.replyCreateFail(gc, protocol.CharCreateReasonIncorrectName)
+		return
+	}
+	if len(name) > persist.MaxNameLen {
+		// Канон различает превышение длины (REASON_16_ENG_CHARS).
+		g.replyCreateFail(gc, protocol.CharCreateReasonNameTooLong)
+		return
+	}
+	if !persist.ValidName(name) {
+		g.replyCreateFail(gc, protocol.CharCreateReasonIncorrectName)
+		return
+	}
+	// Единственный шаблон фазы: чужая раса/класс — отказ канона, не подмена
+	// (CharacterCreate.java: шаблон недоступен → CREATION_FAILED).
+	if int(v.Race()) != persist.HumanFighter.Race || int(v.ClassID()) != persist.HumanFighter.ClassID {
+		g.replyCreateFail(gc, protocol.CharCreateReasonCreationFailed)
 		return
 	}
 	sex, hs, hc, face := v.Sex(), v.HairStyle(), v.HairColor(), v.Face()
@@ -197,43 +230,25 @@ func (g *Gateway) onCreate(gc *gconn, frame []byte) {
 		return
 	}
 	gc.phase = phCreating
-	body, err := persist.EncodeRequest(persist.Request{
+	g.persistRequest(gc, persist.Request{
 		Op: persist.OpCreateChar, Corr: uint64(gc.id), Account: gc.account,
 		Name: name, Sex: int(sex), HairStyle: int(hs), HairColor: int(hc), Face: int(face),
 	})
-	if err != nil {
-		slog.Error("gateway: кодирование запроса создания", "err", err)
-		g.replyCreateFail(gc, protocol.CharCreateReasonCreationFailed)
-		gc.phase = phList
-		return
-	}
-	gc.pending = &pending{op: persist.OpCreateChar}
-	g.reg.Send(transport.Envelope{
-		To:      transport.Addr{Entity: g.cfg.Persist},
-		FromID:  g.id,
-		Kind:    transport.KindPersistRequest,
-		Payload: body,
-	})
-	time.AfterFunc(g.cfg.PersistTimeout, func() {
-		select {
-		case g.completions <- completion{conn: gc.id, kind: cpPersistTimeout}:
-		default:
-		}
-	})
 }
 
-// replyCreate — ответ персиста на создание.
+// replyCreate — ответ персиста на создание: Ok и свежий CharSelectionInfo
+// следом (канон CharacterCreate.initNewChar: sources списка у клиента —
+// только серверные ответы).
 func (g *Gateway) replyCreate(gc *gconn, reply persist.Reply) {
 	gc.phase = phList
 	if !reply.OK {
-		g.replyCreateFail(gc, createFailReason(reply.Err))
+		g.replyCreateFail(gc, createFailReason(reply.Code, reply.Err))
 		return
 	}
 	wire := make([]byte, protocol.CharCreateOkSize)
 	protocol.WriteCharCreateOk(wire)
 	g.reply(gc, wire)
-	// Канон: сервер подтверждает созданием только Ok; свежий список клиент
-	// перечитает новым коннектом (CharSelectionInfo идёт в ответ на AuthLogin).
+	g.requestCharList(gc)
 }
 
 // onSelect: слот валидируется на применении (0 ≤ slot < count, занят).
@@ -250,8 +265,9 @@ func (g *Gateway) onSelect(gc *gconn, frame []byte) {
 	}
 	rec := gc.chars[slot]
 	gc.char = &rec
-	wire := make([]byte, protocol.CharSelectedSize(selectedData(rec)))
-	protocol.WriteCharSelected(wire, selectedData(rec))
+	data := selectedData(rec, gc.sessionID)
+	wire := make([]byte, protocol.CharSelectedSize(data))
+	protocol.WriteCharSelected(wire, data)
 	g.reply(gc, wire)
 	gc.phase = phSelected
 }
@@ -262,7 +278,9 @@ func (g *Gateway) onSelectedFrame(gc *gconn, frame []byte) {
 		g.failLogin(gc, protocol.GSReasonAccessFailedTryLater)
 		return
 	}
-	if _, ok := protocol.NewEnterWorldView(frame); !ok {
+	if _, ok := protocol.NewEnterWorldView(frame); !ok || gc.char == nil {
+		// char ставится SelectChar; здесь его нет — состояние коннекта
+		// несогласовано с фазой, детерминированный отказ.
 		g.failLogin(gc, protocol.GSReasonAccessFailedTryLater)
 		return
 	}
@@ -308,8 +326,9 @@ func findMove(inbox [][]byte) int {
 	return -1
 }
 
-// failLogin — GSLoginFail + close-after-fail (канон: LoginFail завершает
-// коннект, повторная попытка — новым коннектом).
+// failLogin — GSLoginFail + close-after-fail (канон Mobius
+// CT_0_Interlude: LoginFail завершает коннект, повторная попытка — новым
+// коннектом; прецедент close-after-fail login-ноги — LoginController).
 func (g *Gateway) failLogin(gc *gconn, reason protocol.GSLoginFailReason) {
 	g.failLoginRaw(gc, reason, gc.cryptOn)
 }
@@ -334,10 +353,10 @@ func (g *Gateway) replyRaw(gc *gconn, wire []byte, crypt bool) {
 func (g *Gateway) replyCharList(gc *gconn) {
 	entries := make([]protocol.CharSelectionEntry, len(gc.chars))
 	for i, r := range gc.chars {
-		entries[i] = selectionEntry(r)
+		entries[i] = selectionEntry(r, gc.sessionID)
 	}
 	wire := make([]byte, protocol.CharSelectionInfoSize(entries))
-	protocol.WriteCharSelectionInfo(wire, entries, -1)
+	protocol.WriteCharSelectionInfo(wire, entries, lastSeenSlot(gc.chars))
 	g.reply(gc, wire)
 }
 
@@ -360,12 +379,26 @@ func (g *Gateway) replyCreateFail(gc *gconn, reason protocol.CharCreateFailReaso
 	g.reply(gc, wire)
 }
 
-// selectionEntry — CharRecord → запись CharSelectionInfo.
-func selectionEntry(r persist.CharRecord) protocol.CharSelectionEntry {
+// lastSeenSlot — предвыбор записи с последним входом (канон: при отсутствии
+// активного CharSelectionInfo отмечает последнего lastAccess).
+func lastSeenSlot(chars []persist.CharRecord) int {
+	best, bestAt := -1, int64(0)
+	for i, r := range chars {
+		if r.LastSeenUnix > bestAt {
+			best, bestAt = i, r.LastSeenUnix
+		}
+	}
+	return best
+}
+
+// selectionEntry — CharRecord → запись CharSelectionInfo (SessionID —
+// playOk1 сессии коннекта).
+func selectionEntry(r persist.CharRecord, sessionID int32) protocol.CharSelectionEntry {
 	return protocol.CharSelectionEntry{
 		Name:        r.Name,
 		CharID:      int32(r.Slot),
 		LoginName:   r.Account,
+		SessionID:   sessionID,
 		Sex:         int32(r.Sex),
 		Race:        int32(r.Race),
 		BaseClassID: int32(r.ClassID),
@@ -383,9 +416,9 @@ func selectionEntry(r persist.CharRecord) protocol.CharSelectionEntry {
 }
 
 // selectedData — CharRecord → аргумент писателя CharSelected.
-func selectedData(r persist.CharRecord) protocol.CharSelectedData {
+func selectedData(r persist.CharRecord, sessionID int32) protocol.CharSelectedData {
 	return protocol.CharSelectedData{
-		Name: r.Name, CharID: int32(r.Slot),
+		Name: r.Name, CharID: int32(r.Slot), SessionID: sessionID,
 		Sex: int32(r.Sex), Race: int32(r.Race), ClassID: int32(r.ClassID),
 		X: int32(r.X), Y: int32(r.Y), Z: int32(r.Z),
 		CurHP: float64(r.HP), CurMP: float64(r.MP),
@@ -393,21 +426,24 @@ func selectedData(r persist.CharRecord) protocol.CharSelectedData {
 		STR: int32(persist.HumanFighter.Str), DEX: int32(persist.HumanFighter.Dex),
 		CON: int32(persist.HumanFighter.Con), INT: int32(persist.HumanFighter.Int),
 		WIT: int32(persist.HumanFighter.Wit), MEN: int32(persist.HumanFighter.Men),
-		GameTime: 0, // заполняется миром из тиков (D1) с P3.7
+		GameTime: 0, // ноль безвреден; игровое время клиенту несёт слиток входа (P3.7)
 	}
 }
 
-// createFailReason — строка ошибки персиста → причина канона
-// (CharCreateFail.java: соответствие текстов домена — по смыслу причины).
-func createFailReason(errMsg string) protocol.CharCreateFailReason {
-	switch {
-	case strings.Contains(errMsg, "лимит персонажей"):
+// createFailReason — код ошибки персиста → причина канона
+// (CharCreateFail.java; коды — контракт persist.Reply.Code, не тексты).
+func createFailReason(code, errMsg string) protocol.CharCreateFailReason {
+	switch code {
+	case persist.CodeCharLimit:
 		return protocol.CharCreateReasonTooManyCharacters
-	case strings.Contains(errMsg, "имя занято"):
+	case persist.CodeNameTaken:
 		return protocol.CharCreateReasonNameAlreadyExists
-	case strings.Contains(errMsg, "имя"):
+	case persist.CodeNameInvalid:
 		return protocol.CharCreateReasonIncorrectName
+	case persist.CodeAppearance:
+		return protocol.CharCreateReasonCreationFailed
 	default:
+		slog.Error("gateway: неизвестный код отказа персиста", "code", code, "err", errMsg)
 		return protocol.CharCreateReasonCreationFailed
 	}
 }

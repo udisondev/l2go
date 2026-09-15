@@ -28,11 +28,13 @@ type Request struct {
 	Chars     []CharRecord `json:"chars,omitempty"`
 }
 
-// Reply — ответ актора (payload KindPersistReply).
+// Reply — ответ актора (payload KindPersistReply). Code — стабильный код
+// отказа (пуст для ok), Err — человекочитаемый текст.
 type Reply struct {
 	Op     string       `json:"op"`
 	Corr   uint64       `json:"corr"`
 	OK     bool         `json:"ok"`
+	Code   string       `json:"code,omitempty"`
 	Err    string       `json:"err,omitempty"`
 	Chars  []CharRecord `json:"chars,omitempty"`
 	Record *CharRecord  `json:"record,omitempty"`

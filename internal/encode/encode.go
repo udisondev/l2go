@@ -26,9 +26,9 @@ type entry struct {
 }
 
 // client — запись клиента стейджа; реализует потребительский шов conn.Outbound.
-// Take зовёт ровно одна write-горутина коннекта, Push — актор шлюза (мир
-// добавит своего пушера в P3.7): мьютекс сериализует очередь, паркинг —
-// notify-токен cap-1 на переходе пусто→непусто.
+// Take зовёт ровно одна write-горутина коннекта, Push — актор шлюза (второй
+// пушер стационарных кадров появится вместе с миром): мьютекс сериализует
+// очередь, паркинг — notify-токен cap-1 на переходе пусто→непусто.
 type client struct {
 	crypt *crypto.GameCrypt
 
@@ -123,7 +123,7 @@ func (s *Stage) Close(id ClientID) {
 	c.close()
 }
 
-// Stats — снимок счётчиков стейджа (глубина per-client — у записи клиента).
+// Stats — снимок счётчиков стейджа (глубина per-client — Depth записи).
 func (s *Stage) Stats() StageStats {
 	s.mu.Lock()
 	clients := len(s.clients)
@@ -140,6 +140,14 @@ type StageStats struct {
 	Clients  int
 	Pushed   uint64
 	CapDrops uint64
+}
+
+// Depth возвращает глубину FIFO клиента в байтах провода и кадрах
+// (наблюдаемость backpressure; паркинг write-горутины её не меняет).
+func (c *client) Depth() (bytes, frames int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bytes, len(c.queue)
 }
 
 // push исполняется у записи клиента; false — кадр не встал (сверх капа).

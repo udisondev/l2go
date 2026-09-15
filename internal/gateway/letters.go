@@ -6,9 +6,9 @@ import (
 )
 
 // Кодеки контрольных писем шлюза: JSON по прецеденту персиста (редкие
-// письма, читаемость в логе порций). Формат стабилен: производитель
-// KindEnterWorld/KindLinkDead — шлюз (P3.6), читатель — регион (P3.7);
-// KindConnBind/KindConnClose производит регион.
+// письма, читаемость в логе порций). Формат стабилен: KindEnterWorld и
+// KindLinkDead производит шлюз, читает регион; KindConnBind и KindConnClose —
+// в обратную сторону.
 
 // enterWorldMsg — контрольное письмо входа в мир региону.
 type enterWorldMsg struct {

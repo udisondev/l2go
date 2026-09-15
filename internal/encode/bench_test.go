@@ -2,6 +2,7 @@ package encode
 
 import (
 	"bytes"
+	"sync"
 	"testing"
 )
 
@@ -52,6 +53,33 @@ var errBenchmarkClose = &benchError{}
 type benchError struct{}
 
 func (*benchError) Error() string { return "закрытие в бенче" }
+
+// Push→Take раунд с параллельными пушерами (контенция client.mu пушер↔Take —
+// база для второго пушера стационарных кадров).
+func BenchmarkPushTakeParallelCrypt(b *testing.B) {
+	s, err := NewStage(1 << 20)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer s.Unregister(1)
+	c := s.Register(1, benchKey)
+	frame := bytes.Repeat([]byte{0xAB}, 38)
+	var batch [][]byte
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		var wg sync.WaitGroup
+		for i := 0; i < 4; i++ {
+			wg.Go(func() {
+				for j := 0; j < 8; j++ {
+					s.Push(1, frame, true)
+				}
+			})
+		}
+		wg.Wait()
+		batch, _ = c.Take(batch)
+	}
+}
 
 func BenchmarkPushTake40Plain(b *testing.B)      { benchRound(b, 38, 1, false) }
 func BenchmarkPushTake40Crypt(b *testing.B)      { benchRound(b, 38, 1, true) }

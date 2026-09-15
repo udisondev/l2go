@@ -10,63 +10,17 @@ import (
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// Бенч пер-событийного ingest-пути актора (кадрособытие → диспетчер →
-// стационарный inbox) и пер-тикового дрена (inbox → коалесинг уже при
-// добавлении → слепой push в ящик игрока).
-
-func benchGateway(b *testing.B, conns, framesPerConn int) {
-	g := benchGatewayState(b, conns)
-	move := make([]byte, protocol.MoveToLocationSize)
-	protocol.WriteMoveToLocation(move, 1, 2, 3, 4, 5, 6, 1)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		for i := 0; i < framesPerConn; i++ {
-			for _, gc := range g.conns {
-				g.onStationaryFrame(gc, move)
-			}
-		}
-		g.onTick()
-	}
+// benchState — Gateway без сети: коннекты стационарной фазы с живыми ящиками
+// игроков (Send идёт в зарегистрированные адреса; дрен ящиков в итерации
+// обязателен — полный faf-ящик превратил бы Send в дроп-ветку).
+type benchState struct {
+	g       *Gateway
+	players []*transport.Mailbox
+	tokens  []uint64
 }
 
-func BenchmarkGatewayIngest1(b *testing.B)  { benchGateway(b, 1, 1) }
-func BenchmarkGatewayIngest50(b *testing.B) { benchGateway(b, 50, 1) }
-func BenchmarkGatewayTickDrain(b *testing.B) {
-	// Приготовленные inbox: тик дренирует DrainCap кадров на коннект.
-	g := benchGatewayState(b, 50)
-	move := make([]byte, protocol.MoveToLocationSize)
-	protocol.WriteMoveToLocation(move, 1, 2, 3, 4, 5, 6, 1)
-	other := make([]byte, protocol.ValidatePositionSize)
-	protocol.WriteValidatePosition(other, 1, 2, 3, 4, 0)
-	for _, gc := range g.conns {
-		g.onStationaryFrame(gc, move)
-		for i := 0; i < 8; i++ {
-			g.onStationaryFrame(gc, bytesClone(other))
-		}
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		for _, gc := range g.conns {
-			for i := 0; i < 8; i++ {
-				g.onStationaryFrame(gc, bytesClone(other))
-			}
-		}
-		g.onTick()
-	}
-}
-
-func bytesClone(b []byte) []byte {
-	out := make([]byte, len(b))
-	copy(out, b)
-	return out
-}
-
-// benchGatewayState — Gateway без сети: коннекты стационарной фазы с живыми
-// ящиками игроков (Send идёт в зарегистрированные адреса).
-func benchGatewayState(tb testing.TB, conns int) *Gateway {
+func newBenchState(tb testing.TB, conns int) *benchState {
+	tb.Helper()
 	stage, err := encode.NewStage(1 << 18)
 	if err != nil {
 		tb.Fatal(err)
@@ -87,11 +41,14 @@ func benchGatewayState(tb testing.TB, conns int) *Gateway {
 			PanicLimit: 3, CompletionsCap: conns + 1,
 		},
 		reg: reg, stage: stage, conn: connSrv,
-		conns:    make(map[conn.ConnID]*gconn),
-		accounts: make(map[string]conn.ConnID),
+		conns:          make(map[conn.ConnID]*gconn),
+		accounts:       make(map[string]conn.ConnID),
+		closedUnopened: make(map[conn.ConnID]bool),
+		tornDown:       make(map[conn.ConnID]bool),
 	}
 	g.id = reg.Register(&g.box)
 	g.token = uint64(g.id)
+	bs := &benchState{g: g}
 	for i := 1; i <= conns; i++ {
 		player := &transport.Mailbox{}
 		pid := reg.Register(player)
@@ -99,6 +56,69 @@ func benchGatewayState(tb testing.TB, conns int) *Gateway {
 			tb.Fatal(err)
 		}
 		g.conns[conn.ConnID(i)] = &gconn{id: conn.ConnID(i), phase: phWorld, entity: pid}
+		bs.players = append(bs.players, player)
+		bs.tokens = append(bs.tokens, uint64(pid))
 	}
-	return g
+	return bs
+}
+
+// drainPlayers вычитывает faf-ящики игроков (в проде это регион).
+func (bs *benchState) drainPlayers() {
+	for i, box := range bs.players {
+		batch := box.ExtractInto(bs.tokens[i], nil)
+		box.AckNotify()
+		_ = batch
+	}
+}
+
+func benchIngest(b *testing.B, conns int) {
+	bs := newBenchState(b, conns)
+	move := make([]byte, protocol.MoveToLocationSize)
+	protocol.WriteMoveToLocation(move, 1, 2, 3, 4, 5, 6, 1)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		for _, gc := range bs.g.conns {
+			// Полный ingest-путь: событие → lookup → стейт-машина → inbox.
+			bs.g.onEvent(conn.Event{Conn: gc.id, Frame: move})
+		}
+		bs.g.onTick()
+		bs.drainPlayers()
+	}
+}
+
+func BenchmarkGatewayIngest1(b *testing.B)  { benchIngest(b, 1) }
+func BenchmarkGatewayIngest50(b *testing.B) { benchIngest(b, 50) }
+
+func BenchmarkGatewayTickDrain(b *testing.B) {
+	bs := newBenchState(b, 50)
+	move := make([]byte, protocol.MoveToLocationSize)
+	protocol.WriteMoveToLocation(move, 1, 2, 3, 4, 5, 6, 1)
+	other := make([]byte, protocol.ValidatePositionSize)
+	protocol.WriteValidatePosition(other, 1, 2, 3, 4, 0)
+	for _, gc := range bs.g.conns {
+		bs.g.onStationaryFrame(gc, move)
+		for i := 0; i < 8; i++ {
+			bs.g.onStationaryFrame(gc, cloneBytes(other))
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		for _, gc := range bs.g.conns {
+			for i := 0; i < 8; i++ {
+				bs.g.onStationaryFrame(gc, cloneBytes(other))
+			}
+		}
+		bs.g.onTick()
+		bs.drainPlayers()
+	}
+}
+
+// cloneBytes — кадр уходит в inbox владением: для повторных итераций копия.
+func cloneBytes(b []byte) []byte {
+	out := make([]byte, len(b))
+	copy(out, b)
+	return out
 }

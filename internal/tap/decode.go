@@ -617,7 +617,8 @@ func logKeyPacket(w io.Writer, v protocol.KeyPacketView) {
 		{K: "result", V: logNum(int64(v.Result()))},
 		{K: "encryption", V: strconv.FormatBool(v.Encryption())},
 		{K: "serverID", V: logNum32(v.ServerID())},
-		{K: "key", V: hex.EncodeToString(v.Key())},
+		// Ключ сессии — учётное данное: печатается длиной.
+		{K: "key", V: logNum(int64(len(v.Key())))},
 	})
 }
 
@@ -630,14 +631,9 @@ func logGameLine(w io.Writer, dir byte, body []byte) {
 		switch body[0] {
 		case protocol.OpAuthLogin:
 			if len(body) >= 17 {
-				off := len(body) - 16
-				fields := []logField{
-					{K: "playKey2", V: logNum32(int32(binary.LittleEndian.Uint32(body[off:])))},
-					{K: "playKey1", V: logNum32(int32(binary.LittleEndian.Uint32(body[off+4:])))},
-					{K: "loginKey1", V: logNum32(int32(binary.LittleEndian.Uint32(body[off+8:])))},
-					{K: "loginKey2", V: logNum32(int32(binary.LittleEndian.Uint32(body[off+12:])))},
-				}
-				logLine(w, dir, protocol.NameAuthLogin, fields)
+				// Ключи сессии — учётные данные: печатаются счётчиком.
+				logLine(w, dir, protocol.NameAuthLogin,
+					[]logField{{K: "keys", V: logNum(4)}})
 				return
 			}
 		case protocol.OpCharacterSelect:

@@ -247,14 +247,14 @@ func (a *Actor) processLetter(env *transport.Envelope) (ok bool) {
 	return true
 }
 
-// fail — конструктор отказа: эхо операции и корреляции + причина.
-func (r Request) fail(err error) Reply {
-	return Reply{Op: r.Op, Corr: r.Corr, Err: err.Error()}
+// fail — конструктор отказа: эхо операции и корреляции, код + причина.
+func (r Request) fail(code string, err error) Reply {
+	return Reply{Op: r.Op, Corr: r.Corr, Code: code, Err: err.Error()}
 }
 
 // failMsg — fail со строковой причиной (домены канона без error-объекта).
-func (r Request) failMsg(msg string) Reply {
-	return Reply{Op: r.Op, Corr: r.Corr, Err: msg}
+func (r Request) failMsg(code, msg string) Reply {
+	return Reply{Op: r.Op, Corr: r.Corr, Code: code, Err: msg}
 }
 
 // handle исполняет запрос; ошибки — ответом ok=false (retry решает
@@ -268,18 +268,18 @@ func (a *Actor) handle(req Request) Reply {
 	case OpSaveSnapshot:
 		return a.handleSnapshot(req)
 	default:
-		return req.failMsg("неизвестная операция")
+		return req.failMsg("", "неизвестная операция")
 	}
 }
 
 func (a *Actor) handleCharList(req Request) Reply {
 	account, err := NormalizeLogin(req.Account)
 	if err != nil {
-		return req.fail(err)
+		return req.fail(CodeLogin, err)
 	}
 	recs, err := a.chars.list(account)
 	if err != nil {
-		return req.fail(err)
+		return req.fail(CodeIO, err)
 	}
 	return Reply{Op: req.Op, Corr: req.Corr, OK: true, Chars: recs}
 }
@@ -287,23 +287,23 @@ func (a *Actor) handleCharList(req Request) Reply {
 func (a *Actor) handleCreateChar(req Request) Reply {
 	account, err := NormalizeLogin(req.Account)
 	if err != nil {
-		return req.fail(err)
+		return req.fail(CodeLogin, err)
 	}
 	if !ValidName(req.Name) {
-		return req.failMsg("имя вне домена (1–16 alnum)")
+		return req.failMsg(CodeNameInvalid, "имя вне домена (1–16 alnum)")
 	}
 	if err := ValidateAppearance(req.Sex, req.HairStyle, req.HairColor, req.Face); err != nil {
-		return req.fail(err)
+		return req.fail(CodeAppearance, err)
 	}
 	recs, err := a.chars.list(account)
 	if err != nil {
-		return req.fail(err)
+		return req.fail(CodeIO, err)
 	}
 	if len(recs) > maxSlot {
-		return req.failMsg("лимит персонажей аккаунта")
+		return req.failMsg(CodeCharLimit, "лимит персонажей аккаунта")
 	}
 	if _, taken := a.chars.nameOwner(req.Name); taken {
-		return req.failMsg("имя занято")
+		return req.failMsg(CodeNameTaken, "имя занято")
 	}
 	slot := firstFreeSlot(recs)
 	now := time.Now().Unix()
@@ -330,7 +330,7 @@ func (a *Actor) handleCreateChar(req Request) Reply {
 	next = append(next, rec)
 	if err := a.chars.saveFile(account, next); err != nil {
 		a.writeFail(account, err)
-		return req.fail(err)
+		return req.fail(CodeIO, err)
 	}
 	// Индекс занимается только после успешного rename: retry после ошибки
 	// записи идемпотентен.
@@ -341,16 +341,16 @@ func (a *Actor) handleCreateChar(req Request) Reply {
 func (a *Actor) handleSnapshot(req Request) Reply {
 	account, err := NormalizeLogin(req.Account)
 	if err != nil {
-		return req.fail(err)
+		return req.fail(CodeLogin, err)
 	}
 	old, err := a.chars.list(account)
 	if err != nil {
-		return req.fail(err)
+		return req.fail(CodeIO, err)
 	}
 	// Пустой снимок при непустом аккаунте — подозрительный вход (стёр бы
 	// всех персонажей); легитимно пуст только уже пустой аккаунт.
 	if len(req.Chars) == 0 && len(old) > 0 {
-		return req.failMsg("пустой снимок при непустом аккаунте")
+		return req.failMsg(CodeIO, "пустой снимок при непустом аккаунте")
 	}
 	created := make(map[string]int64, len(old))
 	for _, r := range old {
@@ -361,7 +361,7 @@ func (a *Actor) handleSnapshot(req Request) Reply {
 	for _, r := range req.Chars {
 		r.Account = account
 		if err := validateCharRecord(r); err != nil {
-			return req.fail(err)
+			return req.fail(CodeNameInvalid, err)
 		}
 		if c, ok := created[lowercaseASCII(r.Name)]; ok {
 			r.CreatedUnix = c
@@ -372,7 +372,7 @@ func (a *Actor) handleSnapshot(req Request) Reply {
 		recs = append(recs, r)
 	}
 	if len(recs) > maxSlot+1 {
-		return req.failMsg("лимит персонажей аккаунта")
+		return req.failMsg("", "лимит персонажей аккаунта")
 	}
 	// уникальность имён и слотов снимка внутри аккаунта, имена — против
 	// других аккаунтов (отправитель не доверяется)
@@ -380,20 +380,20 @@ func (a *Actor) handleSnapshot(req Request) Reply {
 	for i, r := range recs {
 		for j := 0; j < i; j++ {
 			if lowercaseASCII(recs[j].Name) == lowercaseASCII(r.Name) {
-				return req.failMsg("дубликат имени в снимке")
+				return req.failMsg("", "дубликат имени в снимке")
 			}
 		}
 		if slots[r.Slot] {
-			return req.failMsg("дубликат слота в снимке")
+			return req.failMsg("", "дубликат слота в снимке")
 		}
 		slots[r.Slot] = true
 		if owner, ok := a.chars.nameOwner(r.Name); ok && owner != account {
-			return req.failMsg("имя принадлежит другому аккаунту")
+			return req.failMsg("", "имя принадлежит другому аккаунту")
 		}
 	}
 	if err := a.chars.saveFile(account, recs); err != nil {
 		a.writeFail(account, err)
-		return req.fail(err)
+		return req.fail(CodeIO, err)
 	}
 	a.chars.resyncNames(account, recs)
 	return Reply{Op: req.Op, Corr: req.Corr, OK: true}

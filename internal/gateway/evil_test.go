@@ -198,7 +198,9 @@ func TestEvilAuthLoginStorm(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.write(auth)
-	r.write(bytesClone(auth)) // вторая попытка при валидации в полёте
+	clone := make([]byte, len(auth))
+	copy(clone, auth)
+	r.write(clone) // вторая попытка при валидации в полёте
 
 	frame := r.readFrame(2 * time.Second)
 	if frame == nil {

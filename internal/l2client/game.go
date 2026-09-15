@@ -95,11 +95,12 @@ func (gc *GameClient) Handshake() error {
 	copy(wireKey[:], v.Key())
 	gc.crypt = crypto.NewGameCrypt(wireKey)
 	gc.crypt.Enable()
+	// Ключ сессии — учётные данные: в трафик-лог не пишется.
 	gc.logRecv(protocol.NameKeyPacket,
 		Field{K: "result", V: num(int64(v.Result()))},
 		Field{K: "encryption", V: boolean(v.Encryption())},
 		Field{K: "serverID", V: num32(v.ServerID())},
-		Field{K: "key", V: hexs(v.Key())})
+		Field{K: "key", V: num(int64(len(v.Key())))})
 	return nil
 }
 
@@ -111,16 +112,15 @@ func (gc *GameClient) Auth(ep GameEndpoint, account string) ([]protocol.CharSele
 	if err := gc.sendEnc(wire); err != nil {
 		return nil, fmt.Errorf("стадия AuthLogin: %w", err)
 	}
-	// Аккаунт не печатается — учётные данные.
-	gc.logSend(protocol.NameAuthLogin,
-		Field{K: "playKey2", V: num32(ep.PlayOk2)},
-		Field{K: "playKey1", V: num32(ep.PlayOk1)},
-		Field{K: "loginKey1", V: num32(ep.LoginOk1)},
-		Field{K: "loginKey2", V: num32(ep.LoginOk2)})
+	// Аккаунт и ключи сессии — учётные данные: не печатаются.
+	gc.logSend(protocol.NameAuthLogin, Field{K: "keys", V: num(4)})
 
 	reply, err := gc.readDec()
 	if err != nil {
 		return nil, fmt.Errorf("стадия CharSelectionInfo: %w", err)
+	}
+	if len(reply) == 0 {
+		return nil, fmt.Errorf("стадия CharSelectionInfo: пустой кадр")
 	}
 	switch reply[0] {
 	case protocol.OpCharSelectInfo:
@@ -162,6 +162,9 @@ func (gc *GameClient) SelectChar(slot int32) error {
 	if err != nil {
 		return fmt.Errorf("стадия CharSelected: %w", err)
 	}
+	if len(reply) == 0 {
+		return fmt.Errorf("стадия CharSelected: пустой кадр")
+	}
 	switch reply[0] {
 	case protocol.OpCharSelected:
 		v, ok := protocol.NewCharSelectedView(reply)
@@ -187,52 +190,81 @@ func (gc *GameClient) SelectChar(slot int32) error {
 const framesCap = 16
 
 // CreateChar — синхронная стадия создания: NewChar → CharTemplates →
-// CharacterCreate → CharCreateOk/Fail.
-func (gc *GameClient) CreateChar(d protocol.CharacterCreateData) error {
+// CharacterCreate → CharCreateOk и свежий CharSelectionInfo следом (канон
+// initNewChar). Возвращает записи обновлённого списка.
+func (gc *GameClient) CreateChar(d protocol.CharacterCreateData) ([]protocol.CharSelectionEntry, error) {
 	var nc [protocol.NewCharacterSize]byte
 	protocol.WriteNewCharacter(nc[:])
 	if err := gc.sendEnc(nc[:]); err != nil {
-		return fmt.Errorf("стадия NewChar: %w", err)
+		return nil, fmt.Errorf("стадия NewChar: %w", err)
 	}
 	gc.logSend(protocol.NameNewCharacter)
 	reply, err := gc.readDec()
 	if err != nil {
-		return fmt.Errorf("стадия CharTemplates: %w", err)
+		return nil, fmt.Errorf("стадия CharTemplates: %w", err)
 	}
 	if reply[0] != protocol.OpCharTemplates {
-		return fmt.Errorf("стадия CharTemplates: неожиданный опкод 0x%02X", reply[0])
+		return nil, fmt.Errorf("стадия CharTemplates: неожиданный опкод 0x%02X", reply[0])
 	}
 	tv, ok := protocol.NewCharTemplatesView(reply)
 	if !ok {
-		return fmt.Errorf("стадия CharTemplates: обрезанное тело (%d Б)", len(reply))
+		return nil, fmt.Errorf("стадия CharTemplates: обрезанное тело (%d Б)", len(reply))
 	}
 	gc.logRecv(protocol.NameCharTemplates, Field{K: "count", V: num(int64(tv.Count()))})
 
 	wire := make([]byte, protocol.CharacterCreateSize(d))
 	protocol.WriteCharacterCreate(wire, d)
 	if err := gc.sendEnc(wire); err != nil {
-		return fmt.Errorf("стадия CharacterCreate: %w", err)
+		return nil, fmt.Errorf("стадия CharacterCreate: %w", err)
 	}
 	gc.logSend(protocol.NameCharacterCreate, Field{K: "name", V: d.Name})
 
 	reply, err = gc.readDec()
 	if err != nil {
-		return fmt.Errorf("стадия CharCreateOk: %w", err)
+		return nil, fmt.Errorf("стадия CharCreateOk: %w", err)
+	}
+	if len(reply) == 0 {
+		return nil, fmt.Errorf("стадия CharCreateOk: пустой кадр")
 	}
 	switch reply[0] {
 	case protocol.OpCharCreateOk:
 		gc.logRecv(protocol.NameCharCreateOk)
-		return nil
+		return gc.readCharList("свежий список после создания")
 	case protocol.OpCharCreateFail:
 		v, ok := protocol.NewCharCreateFailView(reply)
 		if !ok {
-			return fmt.Errorf("стадия CharCreateFail: обрезанное тело (%d Б)", len(reply))
+			return nil, fmt.Errorf("стадия CharCreateFail: обрезанное тело (%d Б)", len(reply))
 		}
 		gc.logRecv(protocol.NameCharCreateFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
-		return fmt.Errorf("создание отклонено: reason=0x%02X", v.Reason())
+		return nil, fmt.Errorf("создание отклонено: reason=0x%02X", v.Reason())
 	default:
-		return fmt.Errorf("неожиданный ответ создания: опкод 0x%02X", reply[0])
+		return nil, fmt.Errorf("неожиданный ответ создания: опкод 0x%02X", reply[0])
 	}
+}
+
+// readCharList читает CharSelectionInfo (общий хвост Auth и CreateChar).
+func (gc *GameClient) readCharList(stage string) ([]protocol.CharSelectionEntry, error) {
+	reply, err := gc.readDec()
+	if err != nil {
+		return nil, fmt.Errorf("стадия %s: %w", stage, err)
+	}
+	if len(reply) == 0 || reply[0] != protocol.OpCharSelectInfo {
+		return nil, fmt.Errorf("стадия %s: неожиданный опкод 0x%02X", stage, len(reply))
+	}
+	v, ok := protocol.NewCharSelectionInfoView(reply)
+	if !ok {
+		return nil, fmt.Errorf("стадия %s: обрезанное тело (%d Б)", stage, len(reply))
+	}
+	entries := make([]protocol.CharSelectionEntry, 0, v.Count())
+	for i := 0; i < v.Count(); i++ {
+		e, ok := v.Char(i)
+		if !ok {
+			return nil, fmt.Errorf("стадия %s: запись %d обрезана", stage, i)
+		}
+		entries = append(entries, e)
+	}
+	gc.logRecv(protocol.NameCharSelectInfo, charSelectionFields(v)...)
+	return entries, nil
 }
 
 // EnterWorld — команда стационарной фазы: маркер входа (канонный порядок —

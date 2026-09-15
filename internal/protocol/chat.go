@@ -61,7 +61,7 @@ const (
 	SystemMessageChatDisabled                  SystemMessageID = 346
 )
 
-// OpCSay2 — публичный опкод C→GS Say2 (белый список шлюза, P3.6).
+// OpCSay2 — публичный опкод C→GS Say2 (белый список шлюза).
 const OpCSay2 = say2
 
 // Say2Size — размер кадра Say2 с опкодом; адресат пишется только при whisper

@@ -311,12 +311,18 @@ func TestFrameCapBreak(t *testing.T) {
 }
 
 // Close-on-overflow своего под-лимита: потребитель не выгребает события —
-// ридэр рвёт свой сокет после PerConnEvents невыгребенных.
+// ридэр рвёт свой сокет после PerConnEvents невыгребенных; соседний коннект
+// не страдает (под-лимит изолирует виновника).
 func TestPerConnOverflowOwnBreak(t *testing.T) {
 	cfg := testConfig()
 	cfg.PerConnEvents = 2
 	out := newFakeOutbounds()
 	addr, s := startServer(t, cfg, out)
+
+	neighbour := dial(t, addr)
+	neighbourOpen := recvEvent(t, s.Events())
+	neighbourOpen.Done()
+	defer func() { _ = neighbour.Close() }()
 
 	conn := dial(t, addr)
 	recvEvent(t, s.Events()) // открытие (не Done — слоты заняты)
@@ -336,6 +342,10 @@ func TestPerConnOverflowOwnBreak(t *testing.T) {
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := conn.Read(make([]byte, 1)); err == nil {
 		t.Error("сокет штормиста жив после переполнения своего под-лимита")
+	}
+	// Сосед жив: пишет и читает после разрыва виновника.
+	if _, err := neighbour.Write([]byte("alive")); err != nil {
+		t.Fatal("соседний коннект пострадал от шторма виновника")
 	}
 }
 

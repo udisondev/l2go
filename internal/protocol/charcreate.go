@@ -18,8 +18,8 @@ const (
 	charDeleteFail  = 0x24
 )
 
-// Публичные опкоды C→GS фазы создания — белый список шлюза (P3.6);
-// имена и опкоды GS→C-ответов для диспетчера клиента.
+// Публичные опкоды C→GS фазы создания — белый список шлюза; имена и опкоды
+// GS→C-ответов для диспетчера клиента.
 const (
 	OpCCharacterCreate = characterCreate
 	OpCCharacterDelete = characterDelete

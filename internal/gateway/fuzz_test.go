@@ -50,15 +50,19 @@ func FuzzGatewayFrames(f *testing.F) {
 				PanicLimit:     1000, // фазз: recover не должен рвать процесс
 				CompletionsCap: 4,
 			},
-			reg:      reg,
-			stage:    stage,
-			conn:     connSrv,
-			conns:    make(map[conn.ConnID]*gconn),
-			accounts: make(map[string]conn.ConnID),
+			reg:            reg,
+			stage:          stage,
+			conn:           connSrv,
+			conns:          make(map[conn.ConnID]*gconn),
+			accounts:       make(map[string]conn.ConnID),
+			closedUnopened: make(map[conn.ConnID]bool),
+			tornDown:       make(map[conn.ConnID]bool),
 		}
 		g.id = reg.Register(&g.box)
 		g.token = uint64(g.id)
-		gc := &gconn{id: 1, phase: phList, account: "fuzz"}
+		phases := []phase{phHandshake, phAuth, phList, phSelected, phWorld}
+		ph := phases[int(data[0])%len(phases)]
+		gc := &gconn{id: 1, phase: ph, account: "fuzz"}
 		g.conns[1] = gc
 		g.onFrame(gc, data) // паника — провал фазза
 	})

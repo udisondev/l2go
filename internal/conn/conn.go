@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,7 +52,8 @@ const (
 	// HandshakeTimeout): dribble байтами не продлевает.
 	ModeHandshake ReadMode = iota
 	// ModePresession — дедлайн до полного кадра, перезаводится каждым
-	// кадром (Config.IdleTimeout; человек в экране выбора).
+	// кадром; величина — канон LOGIN_TIMEOUT 5 мин (L2J LoginController,
+	// человек в экране выбора/анкете).
 	ModePresession
 	// ModeStationary — без read-дедлайна (молчаливый легитимный клиент не
 	// страдает); полумёртвый сокет ловит TCP keepalive.
@@ -136,8 +138,20 @@ type connState struct {
 	mode     atomic.Uint32
 	inflight atomic.Int32
 	conn     net.Conn
-	closing  atomic.Bool
 }
+
+// CloseReason — причина разрыва коннекта (метрики наблюдаемости).
+type CloseReason uint8
+
+const (
+	CloseEOF      CloseReason = iota // чистое закрытие клиента/flush
+	CloseTimeout                     // read-дедлайн фазы (timeout/RST-таймаут)
+	CloseProtocol                    // рамка кадра нарушена
+	CloseFrameCap                    // кадр/хвост сверх капа
+	CloseOverflow                    // свой под-лимит канала событий
+	CloseCrypto                      // расшифровка кадра
+	CloseKeyGen                      // отказ генерации ключа сессии
+)
 
 // Server — TCP-провода игрового процесса. События — каналами Events/Closes;
 // канал закрытий бездропов по построению: слот MaxConns резервируется до
@@ -154,7 +168,41 @@ type Server struct {
 	closing  chan struct{}
 	closeOne sync.Once
 	wg       sync.WaitGroup
+
+	closeBy [7]atomic.Uint64 // индекс — CloseReason
+	dropped atomic.Uint64    // дропы событий сверх под-лимита
 }
+
+// Stats — снимок метрик проводов.
+type ServerStats struct {
+	Conns          int64
+	ClosedEOF      uint64
+	ClosedTimeout  uint64
+	ClosedProtocol uint64
+	ClosedFrameCap uint64
+	ClosedOverflow uint64
+	ClosedCrypto   uint64
+	ClosedKeyGen   uint64
+	EventDrops     uint64
+}
+
+// Stats возвращает снимок метрик.
+func (s *Server) Stats() ServerStats {
+	return ServerStats{
+		Conns:          s.slots.Load(),
+		ClosedEOF:      s.closeBy[CloseEOF].Load(),
+		ClosedTimeout:  s.closeBy[CloseTimeout].Load(),
+		ClosedProtocol: s.closeBy[CloseProtocol].Load(),
+		ClosedFrameCap: s.closeBy[CloseFrameCap].Load(),
+		ClosedOverflow: s.closeBy[CloseOverflow].Load(),
+		ClosedCrypto:   s.closeBy[CloseCrypto].Load(),
+		ClosedKeyGen:   s.closeBy[CloseKeyGen].Load(),
+		EventDrops:     s.dropped.Load(),
+	}
+}
+
+// countClose учитывает причину разрыва.
+func (s *Server) countClose(r CloseReason) { s.closeBy[r].Add(1) }
 
 // New валидирует конфиг и собирает сервер; слушатель подаётся в Serve.
 func New(cfg Config, out Outbounds) (*Server, error) {
@@ -222,7 +270,10 @@ func (s *Server) handle(conn net.Conn) {
 
 	var key [8]byte
 	if _, err := rand.Read(key[:]); err != nil {
+		// Слот уже занят: закрытие обязано дойти, иначе слот утёкёт.
 		slog.Error("conn: ключ сессии не сгенерирован", "conn", id, "err", err)
+		s.countClose(CloseKeyGen)
+		s.emitClose(id, false)
 		return
 	}
 	if tcp, ok := conn.(*net.TCPConn); ok {
@@ -251,10 +302,16 @@ func (s *Server) handle(conn net.Conn) {
 	// Событие открытия: не влезло — коннект без обслуживания не живёт.
 	openSent := s.emit(Event{Conn: id, Open: true, Key: key}, st)
 	if openSent {
-		s.readLoop(conn, id, st, key)
+		s.countClose(s.readLoop(conn, id, st, key))
+	} else {
+		s.countClose(CloseOverflow)
 	}
-	// Закрытие: слот MaxConns освобождает потребитель (Release); ёмкость
-	// канала равна MaxConns и слот уже зарезервирован — дроп невозможен.
+	s.emitClose(id, openSent)
+}
+
+// emitClose ставит событие закрытия; ёмкость канала равна MaxConns и слот
+// уже зарезервирован — дроп невозможен по построению.
+func (s *Server) emitClose(id ConnID, openSent bool) {
 	select {
 	case s.closes <- ClosedEvent{Conn: id, OpenSent: openSent, release: s.releaseSlot}:
 	default:
@@ -271,6 +328,7 @@ func (s *Server) releaseSlot() { s.slots.Add(-1) }
 func (s *Server) emit(ev Event, st *connState) bool {
 	if st.inflight.Add(1) > int32(s.cfg.PerConnEvents) {
 		st.inflight.Add(-1)
+		s.dropped.Add(1)
 		return false
 	}
 	ev.release = &st.inflight
@@ -279,14 +337,19 @@ func (s *Server) emit(ev Event, st *connState) bool {
 		return true
 	default:
 		st.inflight.Add(-1)
+		s.dropped.Add(1)
 		return false
 	}
 }
 
 // readLoop читает поток, режет кадры, расшифровывает со второго кадра
 // (первый — ProtocolVersion открытым текстом, канон), передаёт владение
-// копией кадра. Дедлайны — по режиму чтения.
-func (s *Server) readLoop(conn net.Conn, id ConnID, st *connState, key [8]byte) {
+// копией кадра. Дедлайны вооружаются: при accept (абсолютный HandshakeTimeout
+// фазы accept→AuthLogin), при переводе режима (SetReadMode перевооружает и
+// заблокированный Read) и после каждого полного кадра в пресессии (dribble
+// байтами idle не перезаводит — перезавод только полным кадром); вершина
+// цикла дедлайны не трогает — иначе стационарный режим стирал бы их.
+func (s *Server) readLoop(conn net.Conn, id ConnID, st *connState, key [8]byte) (reason CloseReason) {
 	dec := crypto.NewGameCrypt(key)
 	dec.Enable()
 	buf := make([]byte, 8192)
@@ -294,12 +357,6 @@ func (s *Server) readLoop(conn net.Conn, id ConnID, st *connState, key [8]byte) 
 	first := true
 	_ = conn.SetReadDeadline(time.Now().Add(s.cfg.HandshakeTimeout))
 	for {
-		switch ReadMode(st.mode.Load()) {
-		case ModePresession:
-			_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
-		case ModeStationary:
-			_ = conn.SetReadDeadline(time.Time{})
-		}
 		n, err := conn.Read(buf)
 		if n > 0 {
 			pending = append(pending, buf[:n]...)
@@ -309,36 +366,40 @@ func (s *Server) readLoop(conn net.Conn, id ConnID, st *connState, key [8]byte) 
 					break
 				}
 				if ferr != nil {
-					slog.Warn("conn: рамка кадра нарушена — разрыв",
-						"conn", id, "err", ferr)
-					return
+					slog.Warn("conn: рамка кадра нарушена — разрыв", "conn", id, "err", ferr)
+					return CloseProtocol
 				}
 				if len(frame) > s.cfg.FrameCap {
 					slog.Warn("conn: кадр сверх капа — разрыв",
 						"conn", id, "len", len(frame), "cap", s.cfg.FrameCap)
-					return
+					return CloseFrameCap
 				}
 				body := frame
 				if !first {
 					if derr := dec.Decrypt(body); derr != nil {
-						slog.Warn("conn: расшифровка кадра — разрыв",
-							"conn", id, "err", derr)
-						return
+						slog.Warn("conn: расшифровка кадра — разрыв", "conn", id, "err", derr)
+						return CloseCrypto
 					}
 				}
 				first = false
 				if !s.emit(Event{Conn: id, Frame: append([]byte(nil), body...)}, st) {
-					return // close-on-overflow своего под-лимита
+					return CloseOverflow // close-on-overflow своего под-лимита
 				}
 				pending = pending[len(frame)+2:]
+				if ReadMode(st.mode.Load()) == ModePresession {
+					_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
+				}
 			}
 			if len(pending) > s.cfg.FrameCap+2 {
 				slog.Warn("conn: хвост сверх капа — разрыв", "conn", id)
-				return
+				return CloseFrameCap
 			}
 		}
 		if err != nil {
-			return
+			if errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, net.ErrClosed) {
+				return CloseTimeout
+			}
+			return CloseEOF
 		}
 	}
 }
@@ -367,29 +428,36 @@ func (s *Server) writeLoop(conn net.Conn, out Outbound) {
 	}
 }
 
-// SetReadMode переводит коннект в режим чтения (нисходящий шов потребителя).
+// SetReadMode переводит коннект в режим чтения (нисходящий шов потребителя)
+// и немедленно перевооружает read-дедлайн: заблокированный Read прерывается
+// новым дедлайном (иначе молчун жил бы по дедлайну предыдущей фазы).
 // Неизвестный id — no-op.
 func (s *Server) SetReadMode(id ConnID, mode ReadMode) {
-	s.mu.Lock()
-	st, ok := s.states[id]
-	s.mu.Unlock()
-	if ok {
-		st.mode.Store(uint32(mode))
-	}
-}
-
-// CloseAfterFlush помечает соединение закрываемым после флеша исходящей
-// очереди (сокет не рвётся до выдачи стоящих кадров). Неизвестный id — no-op.
-func (s *Server) CloseAfterFlush(id ConnID) {
 	s.mu.Lock()
 	st, ok := s.states[id]
 	s.mu.Unlock()
 	if !ok {
 		return
 	}
-	if st.closing.CompareAndSwap(false, true) {
-		s.out.Close(id)
+	st.mode.Store(uint32(mode))
+	var deadline time.Time
+	if mode == ModePresession {
+		deadline = time.Now().Add(s.cfg.IdleTimeout)
 	}
+	_ = st.conn.SetReadDeadline(deadline) // ModeStationary: без дедлайна
+}
+
+// CloseAfterFlush помечает соединение закрываемым после флеша исходящей
+// очереди (сокет не рвётся до выдачи стоящих кадров). Неизвестный id — no-op.
+func (s *Server) CloseAfterFlush(id ConnID) {
+	s.mu.Lock()
+	_, ok := s.states[id]
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	// Идемпотентно на стороне стейджа (повторный Close — no-op).
+	s.out.Close(id)
 }
 
 // Close останавливает сервер: слушатель закрывается снаружи, коннекты

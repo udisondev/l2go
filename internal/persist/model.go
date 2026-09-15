@@ -43,6 +43,20 @@ func lowercaseASCII(s string) string {
 	return string(b)
 }
 
+// MaxNameLen — верхняя граница домена имени (канон: 16 символов).
+const MaxNameLen = 16
+
+// Коды отказов операций — стабильный контракт для потребителей ответов
+// (причины UI канона маппятся по коду, не по тексту ошибки).
+const (
+	CodeNameInvalid = "name_invalid"
+	CodeNameTaken   = "name_taken"
+	CodeCharLimit   = "char_limit"
+	CodeAppearance  = "appearance"
+	CodeLogin       = "login"
+	CodeIO          = "io"
+)
+
 // ValidName сообщает, что имя персонажа в домене канона (1–16 alnum).
 func ValidName(name string) bool {
 	return nameRe.MatchString(name)

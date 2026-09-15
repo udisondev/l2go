@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -259,22 +260,13 @@ func TestGatewayFullFlow(t *testing.T) {
 	if entries, err := gc.Auth(testEndpoint(), "tester"); err != nil || len(entries) != 0 {
 		t.Fatalf("список на новом аккаунте: %v, %d записей", err, len(entries))
 	}
-	if err := gc.CreateChar(protocol.CharacterCreateData{Name: "Hero"}); err != nil {
-		t.Fatal(err)
-	}
-	// Свежий список — новым коннектом (канон: CharSelectionInfo идёт в
-	// ответ на AuthLogin).
-	_ = gc.Close()
-	gc = dialClient(t, h.addr)
-	if err := gc.Handshake(); err != nil {
-		t.Fatal(err)
-	}
-	entries, err := gc.Auth(testEndpoint(), "tester")
+	entries, err := gc.CreateChar(protocol.CharacterCreateData{Name: "Hero"})
 	if err != nil {
-		t.Fatalf("повторный список: %v", err)
+		t.Fatal(err)
 	}
+	// Канон: свежий CharSelectionInfo следует за CharCreateOk.
 	if len(entries) != 1 || entries[0].Name != "Hero" {
-		t.Fatalf("созданный персонаж не в списке: %+v", entries)
+		t.Fatalf("свежий список после создания: %+v", entries)
 	}
 	if err := gc.SelectChar(0); err != nil {
 		t.Fatal(err)
@@ -315,7 +307,7 @@ func TestGatewayFullFlow(t *testing.T) {
 		To:      transport.Addr{Entity: h.gw.id},
 		FromID:  h.region.id,
 		Kind:    transport.KindConnClose,
-		Payload: mustJSON(connRefMsg{Conn: 2}), // второй коннект харнесса (первый — до reconnect)
+		Payload: mustJSON(connRefMsg{Conn: 1}), // первый коннект харнесса
 	})
 	select {
 	case err := <-runDone:
@@ -339,15 +331,7 @@ func TestGatewayMoveCoalescing(t *testing.T) {
 	if _, err := gc.Auth(testEndpoint(), "tester"); err != nil {
 		t.Fatal(err)
 	}
-	if err := gc.CreateChar(protocol.CharacterCreateData{Name: "Hero"}); err != nil {
-		t.Fatal(err)
-	}
-	_ = gc.Close()
-	gc = dialClient(t, h.addr)
-	if err := gc.Handshake(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := gc.Auth(testEndpoint(), "tester"); err != nil {
+	if _, err := gc.CreateChar(protocol.CharacterCreateData{Name: "Hero"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := gc.SelectChar(0); err != nil {
@@ -418,7 +402,7 @@ func TestGatewayDisplacement(t *testing.T) {
 		t.Fatal("второй вход с неверными ключами прошёл")
 	}
 	valid.verdict.Store(true)
-	if err := first.CreateChar(protocol.CharacterCreateData{Name: "Alive"}); err != nil {
+	if _, err := first.CreateChar(protocol.CharacterCreateData{Name: "Alive"}); err != nil {
 		t.Fatalf("первый коннект повреждён ложной попыткой: %v", err)
 	}
 
@@ -432,7 +416,7 @@ func TestGatewayDisplacement(t *testing.T) {
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := first.CreateChar(protocol.CharacterCreateData{Name: "Alive2"}); err != nil {
+		if _, err := first.CreateChar(protocol.CharacterCreateData{Name: "Alive2"}); err != nil {
 			break // коннект вытеснен — стадия падает на записи/чтении
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -512,3 +496,181 @@ func TestGatewayPersistTimeout(t *testing.T) {
 		return h.gw.Stats().DeadLetters >= 1
 	})
 }
+
+// Recover-политика: шов инъекции паники — recover + failed-счётчик; серия
+// PanicLimit — паника наружу (let-it-crash).
+func TestGatewayRecoverPolicy(t *testing.T) {
+	h := newHarness(t, alwaysValid(), 2*time.Second, true)
+	g := h.gw
+	g.cfg.PanicLimit = 3
+	gc := &gconn{id: 1, phase: phHandshake, key: keyFixtureGW}
+	g.conns[1] = gc
+	g.testPanicOn = 0x77
+
+	g.safeCall(func() { g.onEvent(conn.Event{Conn: 1, Frame: []byte{0x77}}) })
+	g.safeCall(func() { g.onEvent(conn.Event{Conn: 1, Frame: []byte{0x77}}) })
+	if st := g.Stats(); st.Panics != 2 || st.Failures != 2 {
+		t.Fatalf("после двух паник Stats = %+v; want Panics=2 Failures=2", st)
+	}
+	g.safeCall(func() { g.onEvent(conn.Event{Conn: 1, Frame: []byte{0x78}}) }) // без паники — серия обнулена
+	if st := g.Stats(); st.Panics != 2 {
+		t.Fatalf("успешный шаг не обнулил серию: %+v", st)
+	}
+	g.safeCall(func() { panic("первая серии") })
+	g.safeCall(func() { panic("вторая серии") })
+	defer func() {
+		if recover() == nil {
+			t.Error("серия PanicLimit не перешла в панику наружу (let-it-crash)")
+		}
+	}()
+	g.safeCall(func() { panic("третья серии — наружу") })
+}
+
+var keyFixtureGW = [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
+
+// Смешанный регистр аккаунта — один бинд, вторая сущность не рождается
+// (оба входа сходятся в один нормализованный ключ).
+func TestGatewayAccountCaseFold(t *testing.T) {
+	h := newHarness(t, alwaysValid(), 2*time.Second, true)
+
+	upper := dialClient(t, h.addr)
+	if err := upper.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := upper.Auth(testEndpoint(), "Tester"); err != nil {
+		t.Fatalf("вход «Tester»: %v", err)
+	}
+	waitFor(t, "бинд верхнего регистра", func() bool { return h.gw.Stats().Bound == 1 })
+
+	lower := dialClient(t, h.addr)
+	if err := lower.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	// «tester» вытесняет «Tester» (один ключ) — не второй бинд.
+	if _, err := lower.Auth(testEndpoint(), "tester"); err != nil {
+		t.Fatalf("вход «tester»: %v", err)
+	}
+	waitFor(t, "вытеснение того же ключа", func() bool { return h.gw.Stats().Displaced == 1 })
+	if st := h.gw.Stats(); st.Bound != 1 {
+		t.Fatalf("Bound = %d; want 1 (регистр сведён)", st.Bound)
+	}
+}
+
+// ok=false ответа персиста: CharList → GSLoginFail+закрытие; create-ветка →
+// CharCreateFail по коду причины.
+func TestGatewayPersistRefusal(t *testing.T) {
+	h := newHarness(t, alwaysValid(), 2*time.Second, false)
+
+	gc := dialClient(t, h.addr)
+	if err := gc.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	authErr := make(chan error, 1)
+	go func() {
+		_, err := gc.Auth(testEndpoint(), "tester")
+		authErr <- err
+	}()
+	// Живое ожидание list: подменяем ответ отказом (шов отказывающего
+	// актора). Corr=1: первый коннект харнесса.
+	_ = keyFixtureGW
+	refuse, _ := persist.EncodeReply(persist.Reply{Op: persist.OpCharList, Corr: 1, Code: persist.CodeIO, Err: "io"})
+	h.reg.Send(transport.Envelope{
+		To:      transport.Addr{Entity: h.gw.id},
+		FromID:  h.persist.ID(),
+		Kind:    transport.KindPersistReply,
+		Payload: refuse,
+	})
+	if err := <-authErr; err == nil {
+		t.Fatal("отказ списка не отверг вход")
+	}
+}
+
+// Маппинг кодов персиста → причины канона (юнит).
+func TestCreateFailReasonMapping(t *testing.T) {
+	cases := []struct {
+		code string
+		want protocol.CharCreateFailReason
+	}{
+		{persist.CodeCharLimit, protocol.CharCreateReasonTooManyCharacters},
+		{persist.CodeNameTaken, protocol.CharCreateReasonNameAlreadyExists},
+		{persist.CodeNameInvalid, protocol.CharCreateReasonIncorrectName},
+		{persist.CodeAppearance, protocol.CharCreateReasonCreationFailed},
+		{"", protocol.CharCreateReasonCreationFailed},
+	}
+	for _, c := range cases {
+		if got := createFailReason(c.code, "текст"); got != c.want {
+			t.Errorf("createFailReason(%q) = %d; want %d", c.code, got, c.want)
+		}
+	}
+}
+
+// Churn connect+RST при занятом акторе: записи коннектов не накапливаются
+// (tombstone — только для необработанных OnOpen; разбор актором — без него).
+func TestGatewayChurnNoGrowth(t *testing.T) {
+	h := newHarness(t, alwaysValid(), 2*time.Second, true)
+	g := h.gw
+
+	// Путь 1: actor-initiated teardown (чужая версия) — без tombstone.
+	for i := 0; i < 8; i++ {
+		r := dialRaw(t, h.addr)
+		wire := make([]byte, protocol.ProtocolVersionSize)
+		protocol.WriteProtocolVersion(wire, 999)
+		r.write(wire)
+		if f := r.readFrame(2 * time.Second); f == nil {
+			t.Fatal("KeyPacket(result=0) не получен")
+		}
+	}
+	// Слоты возвращают потребители закрытий: ждём полного дрена проводов.
+	waitFor(t, "слоты чурна освобождены", func() bool {
+		return h.connSrv.Stats().Conns == 0
+	})
+	waitFor(t, "teardown-чурн разобран", func() bool {
+		h.tick()
+		return len(g.closedUnopened) == 0 && len(g.tornDown) == 0 && len(g.conns) == 0
+	})
+	// Путь 2: обрыв до обработки OnOpen — tombstone ставится и гасится
+	// поздним OnOpen (закрытие раньше открытия).
+	for i := 0; i < 8; i++ {
+		dialRaw(t, h.addr).conn.Close() // RST немедленно
+	}
+	waitFor(t, "слоты RST-чурна освобождены", func() bool {
+		return h.connSrv.Stats().Conns == 0
+	})
+	waitFor(t, "чурн погашен", func() bool {
+		h.tick()
+		return len(g.closedUnopened) == 0 && len(g.tornDown) == 0 && len(g.conns) == 0
+	})
+	if len(g.conns) > 2 {
+		t.Errorf("записей коннектов %d — рост от чурна", len(g.conns))
+	}
+	if len(g.closedUnopened) > 0 || len(g.tornDown) > 0 {
+		t.Errorf("память интерливингов: closedUnopened=%d tornDown=%d",
+			len(g.closedUnopened), len(g.tornDown))
+	}
+}
+
+// Восьмой персонаж — отказ TooManyCharacters (лимит домена).
+func TestGatewayEighthCharRejected(t *testing.T) {
+	h := newHarness(t, alwaysValid(), 2*time.Second, true)
+	gc := dialClient(t, h.addr)
+	if err := gc.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gc.Auth(testEndpoint(), "tester"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 7; i++ {
+		if _, err := gc.CreateChar(protocol.CharacterCreateData{Name: "Hero" + itoaGW(i)}); err != nil {
+			t.Fatalf("создание %d: %v", i+1, err)
+		}
+	}
+	_, err := gc.CreateChar(protocol.CharacterCreateData{Name: "Eight"})
+	if err == nil {
+		t.Fatal("восьмой персонаж принят")
+	}
+	if got := err.Error(); !strings.Contains(got, "0x01") {
+		t.Errorf("причина восьмого = %q; want TooManyCharacters (0x01)", got)
+	}
+}
+
+func itoaGW(i int) string { return string(rune('a' + i)) }

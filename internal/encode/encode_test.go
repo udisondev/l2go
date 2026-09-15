@@ -245,16 +245,27 @@ func TestConcurrentPushSingleTake(t *testing.T) {
 	const senders, perSender = 4, 256
 	var wg sync.WaitGroup
 	for i := 0; i < senders; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			for j := 0; j < perSender; j++ {
-				s.Push(8, []byte{byte(i), byte(j)}, false)
+		wg.Go(func(i int) func() {
+			return func() {
+				for j := 0; j < perSender; j++ {
+					// Чередование марок: граница plain/crypt в FIFO под
+					// параллельными пушерами (стресс закрытия F1);
+					// длины различны (2/3 байта) — классификация батча
+					// по заголовку провода без расшифровки.
+					if j%2 == 0 {
+						s.Push(8, []byte{byte(i), byte(j)}, false)
+					} else {
+						s.Push(8, []byte{byte(i), byte(j), 0xFF}, true)
+					}
+				}
 			}
-		}(i)
+		}(i))
 	}
 
+	// Plain-кадры сверяются по контенту (криптованные в батче — шифротекст,
+	// для них отдельный счётчик; расшифровка покадровости — своим тестом).
 	seen := make(map[[2]byte]int)
+	crypted := 0
 	var batch [][]byte
 	for total := 0; total < senders*perSender; {
 		next, closing := c.Take(batch)
@@ -262,17 +273,26 @@ func TestConcurrentPushSingleTake(t *testing.T) {
 			t.Fatal("close под стрессом: кап не должен срабатывать")
 		}
 		for _, slab := range next {
-			seen[[2]byte{slab[2], slab[3]}]++
+			if slab[0] == 4 { // wire 4 = plain-кадр {i,j}
+				seen[[2]byte{slab[2], slab[3]}]++
+			} else { // wire 5 = криптованный кадр
+				crypted++
+			}
 		}
 		total += len(next)
 		batch = next
 	}
 	wg.Wait()
+	plainTotal := 0
 	for i := 0; i < senders; i++ {
-		for j := 0; j < perSender; j++ {
-			if seen[[2]byte{byte(i), byte(j)}] != 1 {
-				t.Errorf("кадр (%d,%d): %d вхождений; want 1", i, j, seen[[2]byte{byte(i), byte(j)}])
+		for j := 0; j < perSender; j += 2 {
+			if n := seen[[2]byte{byte(i), byte(j)}]; n != 1 {
+				t.Errorf("plain-кадр (%d,%d): %d вхождений; want 1", i, j, n)
 			}
+			plainTotal++
 		}
+	}
+	if crypted != senders*perSender/2 {
+		t.Errorf("криптованных кадров %d; want %d", crypted, senders*perSender/2)
 	}
 }

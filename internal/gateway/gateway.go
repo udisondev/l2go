@@ -41,23 +41,28 @@ const (
 	phWorld                   // стационарная фаза
 )
 
-// pending — ожидание персист-ответа (Corr = connID).
+// pending — ожидание персист-ответа: op для сверки ответа, seq — монотонный
+// номер ожидания коннекта (сверка таймаута), timer снимается ответом/teardown.
 type pending struct {
-	op string
+	op    string
+	seq   uint64
+	timer *time.Timer
 }
 
 // gconn — состояние коннекта; владелец — актор шлюза.
 type gconn struct {
-	id      conn.ConnID
-	key     [8]byte
-	phase   phase
-	account string // нормализованный; с phList
-	chars   []persist.CharRecord
-	char    *persist.CharRecord // выбранный (phSelected/phWorld)
-	entity  transport.EntityID  // после KindConnBind
-	cryptOn bool                // марка крипты после KeyPacket
-	pending *pending
-	inbox   [][]byte // стационарные кадры до тика
+	id        conn.ConnID
+	key       [8]byte
+	phase     phase
+	account   string // нормализованный; с phList
+	sessionID int32  // playOk1 сессии (SessionID списков/выбора — канон)
+	waitSeq   uint64 // монотонный номер ожидания персиста
+	chars     []persist.CharRecord
+	char      *persist.CharRecord // выбранный (phSelected/phWorld)
+	entity    transport.EntityID  // после KindConnBind
+	cryptOn   bool                // марка крипты после KeyPacket
+	pending   *pending
+	inbox     [][]byte // стационарные кадры до тика
 }
 
 // Config — конфигурация шлюза; нулевые лимиты запрещены.
@@ -96,6 +101,7 @@ func (c Config) validate() error {
 type completion struct {
 	conn  conn.ConnID
 	kind  uint8
+	seq   uint64 // ожидание персиста (cpPersistTimeout); 0 для валидации
 	valid bool
 	err   error
 }
@@ -126,11 +132,17 @@ type Gateway struct {
 	conns          map[conn.ConnID]*gconn
 	accounts       map[string]conn.ConnID
 	closedUnopened map[conn.ConnID]bool // закрытие до обработки OnOpen
+	tornDown       map[conn.ConnID]bool // разобраны актором: tombstone не ставить
 
 	completions chan completion
 
 	panicSeries int
 	done        chan struct{}
+
+	connsN      atomic.Int64
+	boundN      atomic.Int64
+	phaseFrames [7]atomic.Uint64
+	testPanicOn byte // шов инъекции паники (тесты recover-политики)
 
 	deadLetters  atomic.Uint64
 	coalesced    atomic.Uint64
@@ -165,6 +177,7 @@ func New(cfg Config, reg *transport.Registry, validator SessionValidator,
 		conns:          make(map[conn.ConnID]*gconn),
 		accounts:       make(map[string]conn.ConnID),
 		closedUnopened: make(map[conn.ConnID]bool),
+		tornDown:       make(map[conn.ConnID]bool),
 		completions:    make(chan completion, cfg.CompletionsCap),
 		done:           make(chan struct{}),
 	}
@@ -176,21 +189,27 @@ func New(cfg Config, reg *transport.Registry, validator SessionValidator,
 // Done закрывается при выходе актора.
 func (g *Gateway) Done() <-chan struct{} { return g.done }
 
-// Stats — снимок метрик шлюза.
+// Stats — снимок метрик шлюза (карты читает только актор; счётчики жилых
+// коннектов/биндов и кадров по фазам — атомики, читаемые извне без гонки).
 type Stats struct {
-	Conns, Bound            int
+	Conns, Bound            int64
 	DeadLetters, Coalesced  uint64
 	InboxDropped, UnknownOp uint64
 	Pushed, Letters         uint64
 	Failures, Panics        uint64
 	Displaced               uint64
+	PhaseFrames             [7]uint64
 }
 
 // Stats возвращает снимок метрик.
 func (g *Gateway) Stats() Stats {
+	var phases [7]uint64
+	for i := range g.phaseFrames {
+		phases[i] = g.phaseFrames[i].Load()
+	}
 	return Stats{
-		Conns:        len(g.conns),
-		Bound:        len(g.accounts),
+		Conns:        g.connsN.Load(),
+		Bound:        g.boundN.Load(),
 		DeadLetters:  g.deadLetters.Load(),
 		Coalesced:    g.coalesced.Load(),
 		InboxDropped: g.inboxDropped.Load(),
@@ -261,6 +280,7 @@ func (g *Gateway) onEvent(ev conn.Event) {
 			return
 		}
 		g.conns[ev.Conn] = &gconn{id: ev.Conn, key: ev.Key, phase: phHandshake}
+		g.connsN.Add(1)
 		return
 	}
 	gc := g.conns[ev.Conn]
@@ -268,11 +288,21 @@ func (g *Gateway) onEvent(ev conn.Event) {
 		g.deadLetters.Add(1)
 		return
 	}
+	g.phaseFrames[gc.phase].Add(1)
+	if g.testPanicOn != 0 && ev.Frame[0] == g.testPanicOn {
+		panic("gateway: тестовая паника обработки")
+	}
 	g.onFrame(gc, ev.Frame)
 }
 
 // onClose — закрытие коннекта: LinkDead миру, снятие бинда, уборка.
 func (g *Gateway) onClose(ce conn.ClosedEvent) {
+	if g.tornDown[ce.Conn] {
+		// Коннект разобран актором (close-after-fail/вытеснение/ConnClose):
+		// tombstone не нужен — OnOpen этого connID давно обработан.
+		delete(g.tornDown, ce.Conn)
+		return
+	}
 	gc := g.conns[ce.Conn]
 	if gc == nil {
 		// Интерливинг close/OnOpen: поздний OnOpen закрытого погасится.
@@ -281,19 +311,36 @@ func (g *Gateway) onClose(ce conn.ClosedEvent) {
 		}
 		return
 	}
-	g.teardown(gc, true)
+	g.teardownMark(gc, true, true)
 }
 
 // teardown убирает коннект; notifyWorld — послать LinkDead (обрыв/вытеснение),
-// false — закрытие уже инициировано миром (KindConnClose).
+// false — закрытие уже инициировано миром (KindConnClose). Коннект помечается
+// разобранным актором: позднее ClosedEvent не создаёт tombstone (иначе каждый
+// close-after-fail оставлял бы вечную запись — записи не накапливаются).
 func (g *Gateway) teardown(gc *gconn, notifyWorld bool) {
+	g.teardownMark(gc, notifyWorld, false)
+}
+
+// teardownMark — teardown; byClose — вызов из обработки close-события
+// (tornDown не ставится: close уже обработан, помечать некому).
+func (g *Gateway) teardownMark(gc *gconn, notifyWorld, byClose bool) {
+	if gc.pending != nil && gc.pending.timer != nil {
+		gc.pending.timer.Stop()
+		gc.pending = nil
+	}
 	if notifyWorld && gc.entity != 0 {
 		g.sendRegion(transport.KindLinkDead, connRefMsg{Conn: uint64(gc.id)})
 	}
 	if g.accounts[gc.account] == gc.id {
 		delete(g.accounts, gc.account)
+		g.boundN.Add(-1)
 	}
 	delete(g.conns, gc.id)
+	g.connsN.Add(-1)
+	if !byClose {
+		g.tornDown[gc.id] = true
+	}
 	g.stage.Close(encode.ClientID(gc.id))
 	g.conn.CloseAfterFlush(gc.id)
 }
@@ -375,9 +422,17 @@ func (g *Gateway) onPersistReply(env *transport.Envelope) {
 		g.deadLetters.Add(1)
 		return
 	}
+	if gc.pending.timer != nil {
+		gc.pending.timer.Stop()
+	}
 	gc.pending = nil
 	switch reply.Op {
 	case persist.OpCharList:
+		if !reply.OK {
+			slog.Error("gateway: персист отказал в списке", "conn", gc.id, "err", reply.Err)
+			g.failLogin(gc, protocol.GSReasonSystemErrorLoginLater)
+			return
+		}
 		gc.chars = reply.Chars
 		g.replyCharList(gc)
 	case persist.OpCreateChar:
@@ -402,7 +457,8 @@ func (g *Gateway) onCompletion(cp completion) {
 		}
 		g.onValidated(gc, cp)
 	case cpPersistTimeout:
-		if gc.pending == nil {
+		if gc.pending == nil || gc.pending.seq != cp.seq {
+			// Устаревший таймер: ожидание закрыто или сменилось.
 			g.deadLetters.Add(1)
 			return
 		}

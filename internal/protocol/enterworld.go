@@ -17,7 +17,7 @@ const (
 	actionFail   = 0x25
 )
 
-// OpCEnterWorld — публичный опкод C→GS EnterWorld (белый список шлюза, P3.6).
+// OpCEnterWorld — публичный опкод C→GS EnterWorld (белый список шлюза).
 const (
 	OpCEnterWorld = enterWorld
 
