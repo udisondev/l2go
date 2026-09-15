@@ -169,7 +169,7 @@ func TestStationaryInboxPolicy(t *testing.T) {
 
 	other := make([]byte, protocol.ValidatePositionSize)
 	protocol.WriteValidatePosition(other, 1, 2, 3, 4, 0)
-	for i := 0; i < g.cfg.InboxCap; i++ { // move занимает слот: 63 влезут
+	for i := 0; i < g.cfg.InboxCap; i++ { // move занимает слот: InboxCap−1 влезут
 		g.onStationaryFrame(gc, other)
 	}
 	g.onStationaryFrame(gc, other) // кап: дроп нового некоалесцируемого

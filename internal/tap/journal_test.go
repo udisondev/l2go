@@ -143,7 +143,7 @@ func TestJournalEvilInputs(t *testing.T) {
 					t.Fatal("ожидалась ошибка формата, получен чистый EOF")
 				}
 				if err != nil {
-					if err == nil || !strings.Contains(err.Error(), "tap:") {
+					if !strings.Contains(err.Error(), "tap:") {
 						t.Fatalf("ошибка без контекста: %v", err)
 					}
 					return

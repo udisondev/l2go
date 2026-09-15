@@ -315,9 +315,10 @@ func (g *Gateway) onClose(ce conn.ClosedEvent) {
 	}
 	gc := g.conns[ce.Conn]
 	if gc == nil {
-		// Интерливинг close/OnOpen: поздний OnOpen закрытого погасится.
+		// Интерливинг close/OnOpen: поздний OnOpen закрытого погашится.
 		if ce.OpenSent {
 			g.closedUnopened[ce.Conn] = true
+			g.tombstonesN.Add(1)
 		}
 		return
 	}

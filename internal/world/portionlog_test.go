@@ -132,7 +132,9 @@ func TestPortionLogRotationAndChain(t *testing.T) {
 			t.Fatalf("LogStep: %v", err)
 		}
 	}
-	l.Close()
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	files, err := filepath.Glob(filepath.Join(dir, "portion-3-*.log"))
 	if err != nil || len(files) < 2 {
 		t.Fatalf("ротация не создала цепочку: %v (%v)", files, err)
@@ -161,12 +163,20 @@ func TestPortionLogRestartSeq(t *testing.T) {
 	if err := first.LogStep(StepInput{Tick: 1, Delta: 1}); err != nil {
 		t.Fatalf("LogStep: %v", err)
 	}
-	first.Close()
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	second, err := NewPortionLog(dir, 7, 100*time.Millisecond, false, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	defer second.Close()
+	// после закрытия second файл больше не читается — ошибка ловится здесь,
+	// а не молчаливым defer
+	t.Cleanup(func() {
+		if err := second.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	if second.seq != first.seq+1 {
 		t.Fatalf("seq новой сессии = %d; want %d (max существующих + 1)", second.seq, first.seq+1)
 	}
@@ -198,7 +208,9 @@ func TestPortionLogTruncatedTail(t *testing.T) {
 			t.Fatalf("LogStep: %v", err)
 		}
 	}
-	l.Close()
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	path := filepath.Join(dir, "portion-7-1.log")
 	info, err := os.Stat(path)
 	if err != nil {

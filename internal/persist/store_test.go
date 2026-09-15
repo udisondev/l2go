@@ -63,8 +63,8 @@ func TestStoreBadFiles(t *testing.T) {
 	dir := t.TempDir()
 	s := mustOpenStore(t, dir)
 	recs := []CharRecord{{Account: "acc", Name: "A"}}
-	_ = s.write("acc.json", recs)
-	good, _ := os.ReadFile(filepath.Join(dir, "acc.json"))
+	mustWrite(t, s, "acc.json", recs)
+	good := readFileT(t, filepath.Join(dir, "acc.json"))
 
 	write := func(content string) {
 		if err := os.WriteFile(filepath.Join(dir, "acc.json"), []byte(content), 0o600); err != nil {
@@ -145,7 +145,7 @@ func TestStorePerms(t *testing.T) {
 	if _, err := openStore(existing); err != nil {
 		t.Fatalf("openStore(существующий) error = %v", err)
 	}
-	info, _ = os.Stat(existing)
+	info = statT(t, existing)
 	if info.Mode().Perm() != 0o700 {
 		t.Errorf("предсозданный каталог 0755 остался %v; want chmod 0700", info.Mode().Perm())
 	}
@@ -153,7 +153,7 @@ func TestStorePerms(t *testing.T) {
 	if err := s.write("acc.json", []CharRecord{{Account: "acc"}}); err != nil {
 		t.Fatal(err)
 	}
-	info, _ = os.Stat(filepath.Join(dir, "root", "chars", "acc.json"))
+	info = statT(t, filepath.Join(dir, "root", "chars", "acc.json"))
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("файл = %v; want 0600", info.Mode().Perm())
 	}
@@ -167,8 +167,8 @@ func mkChar(account, name string, slot int) CharRecord {
 func TestCharStoreScan(t *testing.T) {
 	dir := t.TempDir()
 	s := mustOpenStore(t, dir)
-	_ = s.write("alpha.json", []CharRecord{mkChar("alpha", "Vasya", 0)})
-	_ = s.write("beta.json", []CharRecord{mkChar("beta", "Petya", 0)})
+	mustWrite(t, s, "alpha.json", []CharRecord{mkChar("alpha", "Vasya", 0)})
+	mustWrite(t, s, "beta.json", []CharRecord{mkChar("beta", "Petya", 0)})
 	// битый файл третьего аккаунта — не валит остальные
 	if err := os.WriteFile(filepath.Join(dir, "gamma.json"), []byte("мусор"), 0o600); err != nil {
 		t.Fatal(err)
@@ -203,8 +203,8 @@ func TestCharStoreScan(t *testing.T) {
 func TestCharStoreDuplicateName(t *testing.T) {
 	dir := t.TempDir()
 	s := mustOpenStore(t, dir)
-	_ = s.write("alpha.json", []CharRecord{mkChar("alpha", "Vasya", 0)})
-	_ = s.write("beta.json", []CharRecord{mkChar("beta", "VASYA", 0)})
+	mustWrite(t, s, "alpha.json", []CharRecord{mkChar("alpha", "Vasya", 0)})
+	mustWrite(t, s, "beta.json", []CharRecord{mkChar("beta", "VASYA", 0)})
 	_, err := openCharStore(dir)
 	if err == nil {
 		t.Fatal("openCharStore() с дубликатом имени = nil; want ошибка")
@@ -265,4 +265,22 @@ func readFileT(t *testing.T, path string) []byte {
 		t.Fatalf("os.ReadFile(%s): %v", path, err)
 	}
 	return b
+}
+
+// mustWrite — запись с проверкой ошибки (игнор через _ запрещён).
+func mustWrite(t *testing.T, s *store, name string, value any) {
+	t.Helper()
+	if err := s.write(name, value); err != nil {
+		t.Fatalf("write(%s): %v", name, err)
+	}
+}
+
+// statT — os.Stat с проверкой ошибки.
+func statT(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("os.Stat(%s): %v", path, err)
+	}
+	return info
 }

@@ -63,6 +63,7 @@ func (e *testEnv) start() {
 	go func() {
 		token := uint64(e.senderID)
 		if err := e.sender.Claim(token); err != nil {
+			e.t.Errorf("Claim: %v", err)
 			return
 		}
 		for {
@@ -242,7 +243,10 @@ func TestActorConcurrentSenders(t *testing.T) {
 			var box transport.Mailbox
 			id := env.reg.Register(&box)
 			token := uint64(id)
-			_ = box.Claim(token)
+			if err := box.Claim(token); err != nil {
+				t.Errorf("Claim: %v", err)
+				return
+			}
 			account := "acc" + string(rune('A'+s))
 			next := func(n int) Request {
 				if n < createsPerSender {

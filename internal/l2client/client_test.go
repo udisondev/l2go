@@ -25,7 +25,7 @@ import (
 // Logout) — трафик-лог совпадает с golden.
 func TestFullFlowGolden(t *testing.T) {
 	srv, out := startGolden(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	lc, err := DialLogin(ctx, srv.LoginAddr(), Options{Traffic: out})
 	if err != nil {
@@ -314,7 +314,7 @@ func TestEvilInputs(t *testing.T) {
 			} else {
 				go func() { _ = srv.RunGameScript(GoldenGameScript()) }()
 			}
-			ctx := context.Background()
+			ctx := t.Context()
 			opts := Options{Timeout: 300 * time.Millisecond}
 
 			err = runFlowTo(t, srv, ctx, opts, tt.stage)
@@ -423,7 +423,7 @@ func TestScenarioAuthCheck(t *testing.T) {
 // Конкурентный стресс: Run + Logout + Close из разных горутин (гонки — CI -race).
 func TestGameClientStress(t *testing.T) {
 	srv, out := startGolden(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	lc, err := DialLogin(ctx, srv.LoginAddr(), Options{Traffic: out})
 	mustFlow(t, err, "DialLogin")
 	mustFlow(t, lc.Handshake(), "Handshake")
@@ -469,7 +469,7 @@ func TestEvilInputsExtra(t *testing.T) {
 		mustFlow(t, err, "StartScenarioServer")
 		defer srv.Close()
 		go func() { _ = srv.RunLoginScript(LoginScript{Modulus: make([]byte, 128)}) }()
-		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 2 * time.Second})
+		lc, err := DialLogin(t.Context(), srv.LoginAddr(), Options{Timeout: 2 * time.Second})
 		mustFlow(t, err, "DialLogin")
 		defer lc.Close()
 		if err := lc.Handshake(); err == nil {
@@ -481,7 +481,7 @@ func TestEvilInputsExtra(t *testing.T) {
 		mustFlow(t, err, "StartScenarioServer")
 		defer srv.Close()
 		go func() { _ = srv.RunLoginScript(LoginScript{Raw: []byte{}, Close: true}) }()
-		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 2 * time.Second})
+		lc, err := DialLogin(t.Context(), srv.LoginAddr(), Options{Timeout: 2 * time.Second})
 		mustFlow(t, err, "DialLogin")
 		defer lc.Close()
 		if err := lc.Handshake(); err == nil {
@@ -497,7 +497,7 @@ func TestEvilInputsExtra(t *testing.T) {
 		}}
 		go func() { _ = srv.RunLoginScript(GoldenLoginScript(srv)) }()
 		go func() { _ = srv.RunGameScript(game) }()
-		if err := runFlowTo(t, srv, context.Background(), Options{Timeout: 2 * time.Second}, "GameHandshake"); err == nil {
+		if err := runFlowTo(t, srv, t.Context(), Options{Timeout: 2 * time.Second}, "GameHandshake"); err == nil {
 			t.Fatal("Handshake с обрезанным KeyPacket: err = nil; want ошибку стадии")
 		} else if !strings.Contains(err.Error(), "KeyPacket") {
 			t.Errorf("err = %v; want подстроку KeyPacket", err)
@@ -515,7 +515,7 @@ func TestEvilInputsExtra(t *testing.T) {
 		go func() {
 			_ = srv.RunLoginScript(LoginScript{Steps: []LoginStep{{Expect: protocol.OpAuthGameGuard, Reply: huge}}})
 		}()
-		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 2 * time.Second, Traffic: &syncBuffer{}})
+		lc, err := DialLogin(t.Context(), srv.LoginAddr(), Options{Timeout: 2 * time.Second, Traffic: &syncBuffer{}})
 		mustFlow(t, err, "DialLogin")
 		defer lc.Close()
 		if err := lc.Handshake(); err == nil {
@@ -545,7 +545,7 @@ func TestRunDrainsFrames(t *testing.T) {
 	go func() { _ = srv.RunGameScript(pushes) }()
 
 	out := &syncBuffer{}
-	ctx := context.Background()
+	ctx := t.Context()
 	lc, err := DialLogin(ctx, srv.LoginAddr(), Options{Traffic: out})
 	mustFlow(t, err, "DialLogin")
 	mustFlow(t, lc.Handshake(), "Handshake")
@@ -593,8 +593,9 @@ func TestMutationPack(t *testing.T) {
 			{Expect: protocol.OpRequestServerList, Reply: mutateWire(rng, mustLSFixture("SERVER_LIST"))},
 		}}
 		go func(sc LoginScript) { _ = srv.RunLoginScript(sc) }(mut)
-		lc, err := DialLogin(context.Background(), srv.LoginAddr(), Options{Timeout: 500 * time.Millisecond})
+		lc, err := DialLogin(t.Context(), srv.LoginAddr(), Options{Timeout: 500 * time.Millisecond})
 		if err != nil {
+			t.Logf("итерация %d: DialLogin: %v — пропущена", i, err)
 			srv.Close()
 			continue
 		}
@@ -618,7 +619,7 @@ func mutateWire(rng *rand.Rand, w []byte) []byte {
 // Команда после Close без запуска Run — ошибка, не висение.
 func TestCommandAfterClose(t *testing.T) {
 	srv, _ := startGolden(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	gc, err := DialGame(ctx, srv.GameAddr(), Options{})
 	mustFlow(t, err, "DialGame")
 	mustFlow(t, gc.Close(), "Close")
@@ -686,7 +687,7 @@ func TestCmdScenario(t *testing.T) {
 func TestErrorsWrapped(t *testing.T) {
 	// никто не слушает — ошибка DialLogin с адресом
 	addr := deadAddr(t)
-	_, err := DialLogin(context.Background(), addr, Options{Timeout: 300 * time.Millisecond})
+	_, err := DialLogin(t.Context(), addr, Options{Timeout: 300 * time.Millisecond})
 	if err == nil {
 		t.Fatal("DialLogin на закрытый порт: err = nil")
 	}

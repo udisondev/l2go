@@ -225,7 +225,7 @@ func (h *harness) tick() {
 
 func dialClient(t *testing.T, addr string) *l2client.GameClient {
 	t.Helper()
-	gc, err := l2client.DialGame(context.Background(), addr, l2client.Options{})
+	gc, err := l2client.DialGame(t.Context(), addr, l2client.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestGatewayFullFlow(t *testing.T) {
 	}
 
 	runDone := make(chan error, 1)
-	go func() { runDone <- gc.Run(context.Background()) }()
+	go func() { runDone <- gc.Run(t.Context()) }()
 	if err := gc.EnterWorld(); err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +286,10 @@ func TestGatewayFullFlow(t *testing.T) {
 		h.tick()
 		return h.region.binds.Load() == 1
 	})
+	if st := h.gw.Stats(); st.PhaseFrames[phAuth] < 1 {
+		t.Errorf("PhaseFrames[phAuth] = %d; want ≥1 (AuthLogin обработан в фазе phAuth)",
+			st.PhaseFrames[phAuth])
+	}
 
 	if err := gc.MoveToLocation(1, 2, 3, 4, 5, 6, 1); err != nil {
 		t.Fatal(err)
@@ -339,7 +343,7 @@ func TestGatewayMoveCoalescing(t *testing.T) {
 		t.Fatal(err)
 	}
 	runDone := make(chan error, 1)
-	go func() { runDone <- gc.Run(context.Background()) }()
+	go func() { runDone <- gc.Run(t.Context()) }()
 	if err := gc.EnterWorld(); err != nil {
 		t.Fatal(err)
 	}

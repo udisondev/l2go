@@ -48,11 +48,9 @@ func TestRegionStressSenders(t *testing.T) {
 	var sentReliable, sentFAF, sentCtrl atomic.Int64
 	var swg sync.WaitGroup
 	for s := range senders {
-		swg.Add(1)
-		go func(seed int) {
-			defer swg.Done()
+		swg.Go(func() {
 			for i := range perSender {
-				id := ids[(seed+i)%population]
+				id := ids[(s+i)%population]
 				switch i % 3 {
 				case 0:
 					reg.Send(transport.Envelope{To: transport.Addr{Entity: id}, FromID: 5, Kind: transport.KindAggro})
@@ -65,7 +63,7 @@ func TestRegionStressSenders(t *testing.T) {
 					sentCtrl.Add(1)
 				}
 			}
-		}(s)
+		})
 	}
 	// целевая волна сверх FAF-капа одного ящика (1024): классовый дроп обязателен
 	for range 2048 {
@@ -84,7 +82,7 @@ func TestRegionStressSenders(t *testing.T) {
 			wg.Wait()
 			t.Fatalf("затишье не наступило: глубина %d", depthTotal(r))
 		default:
-			time.Sleep(time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	cancel()

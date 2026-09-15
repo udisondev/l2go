@@ -131,19 +131,19 @@ func TestLinkValidateSessionVerdicts(t *testing.T) {
 	}
 	srv.sessions.SetPlayKeys("sergei", 3, 4)
 
-	valid, err := c.ValidateSession(context.Background(), "sergei", 1, 2, 3, 4)
+	valid, err := c.ValidateSession(t.Context(), "sergei", 1, 2, 3, 4)
 	if err != nil || !valid {
 		t.Fatalf("ValidateSession(верные) = (%v, %v); want (true, nil)", valid, err)
 	}
-	valid, err = c.ValidateSession(context.Background(), "sergei", 1, 2, 3, 4)
+	valid, err = c.ValidateSession(t.Context(), "sergei", 1, 2, 3, 4)
 	if err != nil || valid {
 		t.Fatalf("ValidateSession(replay изъятых) = (%v, %v); want (false, nil)", valid, err)
 	}
-	valid, err = c.ValidateSession(context.Background(), "sergei", 9, 9, 9, 9)
+	valid, err = c.ValidateSession(t.Context(), "sergei", 9, 9, 9, 9)
 	if err != nil || valid {
 		t.Fatalf("ValidateSession(неверные ключи) = (%v, %v); want (false, nil)", valid, err)
 	}
-	valid, err = c.ValidateSession(context.Background(), "ghost", 1, 2, 3, 4)
+	valid, err = c.ValidateSession(t.Context(), "ghost", 1, 2, 3, 4)
 	if err != nil || valid {
 		t.Fatalf("ValidateSession(чужой аккаунт) = (%v, %v); want (false, nil)", valid, err)
 	}

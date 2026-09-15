@@ -61,7 +61,7 @@ func TestTapHalfClose(t *testing.T) {
 	}()
 
 	listen := freeAddr(t)
-	var journal countingWriter
+	var journal lockedBuffer
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	runDone := make(chan error, 1)
@@ -153,7 +153,7 @@ func TestTapShutdown(t *testing.T) {
 	}()
 
 	listen := freeAddr(t)
-	var journal countingWriter
+	var journal lockedBuffer
 	ctx, cancel := context.WithCancel(t.Context())
 	runDone := make(chan error, 1)
 	go func() {
@@ -208,7 +208,7 @@ func TestTapShutdown(t *testing.T) {
 // Недоступный upstream: соединение закрыто, connOpen+connClose в журнале.
 func TestTapEvilUpstream(t *testing.T) {
 	listen := freeAddr(t)
-	var journal countingWriter
+	var journal lockedBuffer
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	runDone := make(chan error, 1)

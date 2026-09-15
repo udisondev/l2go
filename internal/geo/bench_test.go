@@ -46,6 +46,9 @@ func buildBenchFixtures() {
 	}
 	mlData = mb.build()
 
+	// Ошибки decodeRegion здесь пропускаются осознанно: фикстуры
+	// детерминированы построением выше, отказ проявится nil-паникой бенча —
+	// Must-семантика сетапа.
 	flatReg, _, _ := decodeRegion(16, 10, flatData)
 	complexReg, _, _ := decodeRegion(16, 10, complexData)
 	mlReg, _, _ := decodeRegion(16, 10, mlData)

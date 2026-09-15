@@ -112,7 +112,7 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
 	}
-	defer log.Close()
+	defer log.Close() // осознанный игнор: после теста файл лога не читается, ошибка Close на оракул не влияет
 	for range 100 {
 		if _, err := r.Spawn(Entity{Owner: 1, HP: 100}); err != nil {
 			t.Fatalf("Spawn: %v", err)

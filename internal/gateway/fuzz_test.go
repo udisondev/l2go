@@ -2,23 +2,32 @@ package gateway
 
 import (
 	"context"
+	"encoding/binary"
 	"testing"
 	"time"
 
 	"github.com/udisondev/l2go/internal/conn"
 	"github.com/udisondev/l2go/internal/encode"
+	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
 // FuzzGatewayFrames — злые кадры предсессионной стейт-машины: паники нет,
 // детерминированный отказ/разрыв. Гоняется в смоуке CI (Makefile fuzz-smoke).
 func FuzzGatewayFrames(f *testing.F) {
-	f.Add(byte(0), []byte{0x0B, 0x00})            // CharacterCreate обрезанный в phList
+	f.Add(byte(2), []byte{0x0B, 0x00})            // CharacterCreate обрезанный в phList
 	f.Add(byte(1), []byte{0x08, 'a', 0x00, 0x01}) // AuthLogin без хвоста ключей в phAuth
 	f.Add(byte(3), []byte{0x0D, 0x00, 0x00})      // CharacterSelect обрезанный в phSelected
-	f.Add(byte(0), []byte{0x0E})                  // NewCharacter в phList
+	f.Add(byte(2), []byte{0x0E})                  // NewCharacter в phList
 	f.Add(byte(4), []byte{0x77})                  // неизвестный опкод в phWorld
-	f.Add(byte(2), []byte{0x03})                  // EnterWorld-опкод в phValidating (вне окна)
+	f.Add(byte(5), []byte{0x03})                  // EnterWorld-опкод в phValidating (вне окна)
+	// Create-ветка с валидным началом: опкод + имя «a» UTF-16LE с
+	// терминатором + хвост 12×D нулями (раса/класс HumanFighter, облик 0) —
+	// кадр минимально валиден по длине, локальные проверки пройдены.
+	createValid := make([]byte, 1+4+12*4)
+	createValid[0] = protocol.OpCCharacterCreate
+	binary.LittleEndian.PutUint16(createValid[1:], uint16('a'))
+	f.Add(byte(2), createValid) // CharacterCreate валидный в phList
 	f.Fuzz(func(t *testing.T, phaseSel byte, data []byte) {
 		if len(data) == 0 || len(data) > 8192 {
 			return
@@ -61,7 +70,10 @@ func FuzzGatewayFrames(f *testing.F) {
 		// фазз доходил до кода ветвей, а не падал на nil-полях харнесса.
 		g.validator = fuzzValidator{}
 		g.completions = make(chan completion, 4)
-		phases := []phase{phHandshake, phAuth, phList, phSelected, phWorld}
+		// Порядок — контракт сидов выше: базовые фазы на индексах 0–4
+		// стабильны, phValidating/phCreating дописаны в хвост (значения
+		// сидов не зависят от расширения слайса).
+		phases := []phase{phHandshake, phAuth, phList, phSelected, phWorld, phValidating, phCreating}
 		ph := phases[int(phaseSel)%len(phases)]
 		gc := &gconn{id: 1, phase: ph, account: "fuzz"}
 		g.conns[1] = gc

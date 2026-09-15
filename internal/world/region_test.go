@@ -377,7 +377,7 @@ func TestRegionHeartbeatFallbackWakes(t *testing.T) {
 			wg.Wait()
 			t.Fatalf("фолбэк не разбудил регион с письмом без токена")
 		default:
-			time.Sleep(time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	cancel()
@@ -395,16 +395,15 @@ func TestRegionCloseLogOnExit(t *testing.T) {
 	spawnResident(t, r, 100)
 	ctx, cancel := context.WithCancel(t.Context())
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); r.metro.Run(ctx) }()
-	go func() { defer wg.Done(); r.Run(ctx) }()
+	wg.Go(func() { r.metro.Run(ctx) })
+	wg.Go(func() { r.Run(ctx) })
 	deadline := time.After(2 * time.Second)
 	for r.Stats().DoneTick < 3 {
 		select {
 		case <-deadline:
 			t.Fatalf("регион не тикает")
 		default:
-			time.Sleep(time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	cancel()

@@ -42,7 +42,7 @@ func TestCodecRoundtrip(t *testing.T) {
 
 	chars := []CharRecord{mkChar("acc", "Vasya", 0), mkChar("acc", "Petya", 1)}
 	listRep := Reply{Op: OpCharList, Corr: 7, OK: true, Chars: chars}
-	buf, _ = EncodeReply(listRep)
+	buf = mustReply(t, listRep)
 	gotList, err := DecodeReply(buf)
 	if err != nil || len(gotList.Chars) != 2 || gotList.Chars[1] != chars[1] {
 		t.Errorf("раундтрип CharList: (%+v, %v)", gotList.Chars, err)
@@ -101,6 +101,16 @@ func mustReq(t *testing.T, r Request) []byte {
 	b, err := EncodeRequest(r)
 	if err != nil {
 		t.Fatalf("EncodeRequest: %v", err)
+	}
+	return b
+}
+
+// mustReply — кодирование ответа с проверкой ошибки (игнор _ запрещён).
+func mustReply(t *testing.T, r Reply) []byte {
+	t.Helper()
+	b, err := EncodeReply(r)
+	if err != nil {
+		t.Fatalf("EncodeReply: %v", err)
 	}
 	return b
 }

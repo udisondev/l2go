@@ -143,7 +143,7 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 	for range 40 {
 		batch := box.Extract(tok1)
 		if len(batch) == 0 {
-			time.Sleep(time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 			continue
 		}
 		half := len(batch) / 2

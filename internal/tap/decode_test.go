@@ -106,21 +106,22 @@ func TestJournalForeignMagicIsolated(t *testing.T) {
 	}
 }
 
-// countingWriter — журнал-приёмник с атомиком записанных байтов: тест
-// поллит прогресс без чтения буфера из чужой горутины (гонка bytes.Buffer).
-type countingWriter struct {
+// lockedBuffer — журнал-приёмник: Run пишет из своей горутины, тест
+// поллит прогресс через снимок bytes() под мьютексом (без мьютекса —
+// гонка bytes.Buffer из чужой горутины; атомики не нужны).
+type lockedBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
 }
 
-func (w *countingWriter) Write(p []byte) (int, error) {
+func (w *lockedBuffer) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.buf.Write(p)
 }
 
 // bytes возвращает снимок содержимого (после quiesce).
-func (w *countingWriter) bytes() []byte {
+func (w *lockedBuffer) bytes() []byte {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return append([]byte(nil), w.buf.Bytes()...)
@@ -161,7 +162,7 @@ func journalHasData(snapshot []byte) bool {
 
 // Хвост ноги без полного кадра журналируется записью data (S8-минор).
 func TestTapTailJournaled(t *testing.T) {
-	var journal countingWriter
+	var journal lockedBuffer
 	upLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("upstream: %v", err)
@@ -199,7 +200,11 @@ func TestTapTailJournaled(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	cancel()
-	<-runDone
+	select {
+	case <-runDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run не завершился после отмены за 5с")
+	}
 
 	if !journalHasTailData(t, journal.bytes()) {
 		t.Fatal("бескарровый хвост не журналирован")

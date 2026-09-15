@@ -93,27 +93,30 @@ func TestKindRegionalAndService(t *testing.T) {
 
 func TestDomainAllows(t *testing.T) {
 	cases := []struct {
+		name string
 		d    Domain
 		k    Kind
 		want bool
 	}{
-		{DomainWorld, KindApplyDamage, true},
-		{DomainWorld, KindClientFrame, true},
-		{DomainWorld, KindEnterWorld, true},
-		{DomainWorld, KindSuitcase, true},
-		{DomainWorld, KindMemberStatus, false},
-		{DomainParty, KindMemberStatus, true},
-		{DomainParty, KindApplyDamage, false},
-		{DomainChat, KindServiceMsg, true},
-		{DomainChat, KindMemberStatus, false},
-		{DomainMarket, KindReserve, false},
-		{Domain(0), KindXP, false}, // default deny
-		{Domain(99), KindXP, false},
+		{name: "world/ApplyDamage", d: DomainWorld, k: KindApplyDamage, want: true},
+		{name: "world/ClientFrame", d: DomainWorld, k: KindClientFrame, want: true},
+		{name: "world/EnterWorld", d: DomainWorld, k: KindEnterWorld, want: true},
+		{name: "world/Suitcase", d: DomainWorld, k: KindSuitcase, want: true},
+		{name: "world/MemberStatus", d: DomainWorld, k: KindMemberStatus, want: false},
+		{name: "party/MemberStatus", d: DomainParty, k: KindMemberStatus, want: true},
+		{name: "party/ApplyDamage", d: DomainParty, k: KindApplyDamage, want: false},
+		{name: "chat/ServiceMsg", d: DomainChat, k: KindServiceMsg, want: true},
+		{name: "chat/MemberStatus", d: DomainChat, k: KindMemberStatus, want: false},
+		{name: "market/Reserve", d: DomainMarket, k: KindReserve, want: false},
+		{name: "domain0/XP", d: Domain(0), k: KindXP, want: false}, // default deny
+		{name: "domain99/XP", d: Domain(99), k: KindXP, want: false},
 	}
 	for _, c := range cases {
-		if got := c.d.Allows(c.k); got != c.want {
-			t.Errorf("Domain(%d).Allows(%d) = %v; want %v", c.d, c.k, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.d.Allows(c.k); got != c.want {
+				t.Errorf("Domain(%d).Allows(%d) = %v; want %v", c.d, c.k, got, c.want)
+			}
+		})
 	}
 }
 

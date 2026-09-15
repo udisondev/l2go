@@ -227,7 +227,7 @@ func TestHappyPath(t *testing.T) {
 		t.Fatalf("ValidateSession(ключи GameEndpoint) = (%v, %v); want (true, nil)", valid, err)
 	}
 	// Однократность изъятия: replay теми же ключами невалиден.
-	valid, err = e.linkClient.ValidateSession(context.Background(), "sergei",
+	valid, err = e.linkClient.ValidateSession(t.Context(), "sergei",
 		ep.LoginOk1, ep.LoginOk2, ep.PlayOk1, ep.PlayOk2)
 	if err != nil || valid {
 		t.Fatalf("ValidateSession(replay) = (%v, %v); want (false, nil)", valid, err)

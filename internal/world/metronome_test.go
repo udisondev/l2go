@@ -21,20 +21,25 @@ func TestMetronomePeriodPrecision(t *testing.T) {
 }
 
 func TestMetronomeConfigValidation(t *testing.T) {
-	bad := []Config{
-		{Hz: 0, HeartbeatTicks: 10, WatchdogTicks: 30},
-		{Hz: 10, HeartbeatTicks: 0, WatchdogTicks: 30},
-		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 0},
-		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, CtrlBudget: 0},
-		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, DrainBudget: 0},
-		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, PhaseBCap: 0},
-		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, FreezePanics: 0},
-		{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, LogMaxFileBytes: -1},
+	bad := []struct {
+		name string
+		cfg  Config
+	}{
+		{name: "Hz=0", cfg: Config{Hz: 0, HeartbeatTicks: 10, WatchdogTicks: 30}},
+		{name: "HeartbeatTicks=0", cfg: Config{Hz: 10, HeartbeatTicks: 0, WatchdogTicks: 30}},
+		{name: "WatchdogTicks=0", cfg: Config{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 0}},
+		{name: "CtrlBudget=0", cfg: Config{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, CtrlBudget: 0}},
+		{name: "DrainBudget=0", cfg: Config{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, DrainBudget: 0}},
+		{name: "PhaseBCap=0", cfg: Config{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, PhaseBCap: 0}},
+		{name: "FreezePanics=0", cfg: Config{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, FreezePanics: 0}},
+		{name: "LogMaxFileBytes=-1", cfg: Config{Hz: 10, HeartbeatTicks: 10, WatchdogTicks: 30, LogMaxFileBytes: -1}},
 	}
-	for i, cfg := range bad {
-		if _, err := NewMetronome(cfg); err == nil {
-			t.Errorf("конфиг %d (%+v) прошёл валидацию; want ошибка", i, cfg)
-		}
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := NewMetronome(c.cfg); err == nil {
+				t.Errorf("конфиг (%+v) прошёл валидацию; want ошибка", c.cfg)
+			}
+		})
 	}
 }
 
@@ -156,6 +161,7 @@ func TestMetronomeDroppedMetric(t *testing.T) {
 			cancel()
 			t.Fatalf("дроп звонка не посчитан")
 		default:
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	m.Deactivate(r)

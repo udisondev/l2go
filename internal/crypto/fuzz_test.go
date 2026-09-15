@@ -12,8 +12,10 @@ func FuzzLoginDecrypt(f *testing.F) {
 	f.Add(make([]byte, 64))
 	f.Add([]byte{0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef})
 	f.Fuzz(func(t *testing.T, frame []byte) {
+		// фильтр домена: login-кадр обязан быть непустым и кратным 8 Б —
+		// прочие входы вне контракта расшифровки, не дефект
 		if len(frame) == 0 || len(frame)%8 != 0 {
-			t.Skip()
+			return
 		}
 		lc1 := NewLoginCrypt()
 		if err := lc1.DecryptInit(frame); err != nil && err.Error() == "" {
@@ -35,8 +37,9 @@ func FuzzGameDecrypt(f *testing.F) {
 	f.Add([]byte{1, 2, 3})
 	f.Add(make([]byte, 256))
 	f.Fuzz(func(t *testing.T, payload []byte) {
+		// фильтр домена: пустой кадр вне контракта расшифровки game-ноги
 		if len(payload) == 0 {
-			t.Skip()
+			return
 		}
 		var wire [8]byte
 		copy(wire[:], "abcdefgh")

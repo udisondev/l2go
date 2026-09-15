@@ -70,7 +70,7 @@ func TestAccountsAutoCreate(t *testing.T) {
 
 func TestAccountsEvilLogins(t *testing.T) {
 	dir := t.TempDir()
-	acc, _ := OpenAccounts(dir, true)
+	acc := mustOpenAccounts(t, dir, true)
 	for _, login := range []string{"", "a", "../x", "ab/cd", "привет", "fifteenchars155"} {
 		if got := acc.Verify(login, "pass"); got != VerdictNoAccount {
 			t.Errorf("Verify(злой логин %q) = %v; want %v", login, got, VerdictNoAccount)
@@ -87,8 +87,10 @@ func TestAccountsEvilLogins(t *testing.T) {
 
 func TestAccountsBadFileSurvives(t *testing.T) {
 	dir := t.TempDir()
-	acc, _ := OpenAccounts(dir, false)
-	_ = acc.Create("good", "pass")
+	acc := mustOpenAccounts(t, dir, false)
+	if err := acc.Create("good", "pass"); err != nil {
+		t.Fatalf("Create(good) error = %v", err)
+	}
 	root := filepath.Join(dir, "accounts")
 	if err := os.WriteFile(filepath.Join(root, "broken.json"), []byte("мусор"), 0o600); err != nil {
 		t.Fatal(err)
@@ -107,7 +109,7 @@ func TestAccountsBadFileSurvives(t *testing.T) {
 
 func TestAccountsConcurrent(t *testing.T) {
 	dir := t.TempDir()
-	acc, _ := OpenAccounts(dir, true)
+	acc := mustOpenAccounts(t, dir, true)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Go(func() {
@@ -135,4 +137,14 @@ func readDirT(t *testing.T, dir string) []os.DirEntry {
 		t.Fatalf("os.ReadDir(%s): %v", dir, err)
 	}
 	return e
+}
+
+// mustOpenAccounts — открытие аккаунтов с проверкой ошибки (игнор через _ запрещён).
+func mustOpenAccounts(t *testing.T, dir string, autoCreate bool) *Accounts {
+	t.Helper()
+	acc, err := OpenAccounts(dir, autoCreate)
+	if err != nil {
+		t.Fatalf("OpenAccounts(%s): %v", dir, err)
+	}
+	return acc
 }
