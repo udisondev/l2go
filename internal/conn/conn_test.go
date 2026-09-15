@@ -269,7 +269,9 @@ func TestStationarySilentAlive(t *testing.T) {
 	ev.Done()
 	s.SetReadMode(ev.Conn, ModeStationary)
 
-	time.Sleep(450 * time.Millisecond) // дольше IdleTimeout
+	// Дольше и IdleTimeout, и HandshakeTimeout: заблокированный Read с
+	// дедлайном предыдущей фазы был бы разорван (блокер F47).
+	time.Sleep(700 * time.Millisecond)
 	if _, err := conn.Write([]byte("x")); err != nil {
 		t.Fatal("стационарный молчун разорван: записать нельзя")
 	}

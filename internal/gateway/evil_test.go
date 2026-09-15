@@ -222,3 +222,87 @@ func TestEvilAuthLoginStorm(t *testing.T) {
 	}
 	_ = l2client.Options{}
 }
+
+// Ветки домена создания и удаления (канон-ответы, коннект жив):
+// CharacterDelete → CharDeleteFail; чужая раса → CreationFailed; имя 17
+// символов → NameTooLong (0x03); недопустимый символ → IncorrectName (0x04).
+func TestEvilCreateDomainBranches(t *testing.T) {
+	h := newHarness(t, alwaysValid(), 2*time.Second, true)
+	r := dialRaw(t, h.addr)
+
+	wire := make([]byte, protocol.ProtocolVersionSize)
+	protocol.WriteProtocolVersion(wire, protocol.ProtocolVersionInterlude)
+	r.write(wire)
+	kp := r.readFrame(2 * time.Second)
+	kv, ok := protocol.NewKeyPacketView(kp)
+	if !ok {
+		t.Fatal("KeyPacket обрезан")
+	}
+	var key [8]byte
+	copy(key[:], kv.Key())
+	crypt := crypto.NewGameCrypt(key)
+	crypt.Enable()
+	enc := func(b []byte) {
+		if err := crypt.Encrypt(b); err != nil {
+			t.Fatal(err)
+		}
+		r.write(b)
+	}
+	expect := func(stage string, op byte) []byte {
+		frame := r.readFrame(2 * time.Second)
+		if frame == nil {
+			t.Fatalf("%s: ответ не получен", stage)
+		}
+		if err := crypt.Decrypt(frame); err != nil {
+			t.Fatalf("%s: расшифровка: %v", stage, err)
+		}
+		if frame[0] != op {
+			t.Fatalf("%s: опкод 0x%02X; want 0x%02X", stage, frame[0], op)
+		}
+		return frame
+	}
+
+	// Вход: AuthLogin → CharSelectionInfo (фаза списка).
+	auth := make([]byte, protocol.AuthLoginSize("tester"))
+	protocol.WriteAuthLogin(auth, "tester", 1, 2, 3, 4)
+	enc(auth)
+	expect("AuthLogin", protocol.OpCharSelectInfo)
+
+	// Delete: CharDeleteFail, коннект жив.
+	del := make([]byte, protocol.CharacterDeleteSize)
+	protocol.WriteCharacterDelete(del, 0)
+	enc(del)
+	fail := expect("CharacterDelete", protocol.OpCharDeleteFail)
+	dv, ok := protocol.NewCharDeleteFailView(fail)
+	if !ok || dv.Reason() != protocol.CharDeleteReasonDeletionFailed {
+		t.Errorf("CharDeleteFail = ok:%v reason:%d; want DeletionFailed", ok, dv.Reason())
+	}
+
+	// Имя 17 символов валидного алфавита → 0x03.
+	long := protocol.CharacterCreateData{Name: "Abcdefghijklmnopq", Race: 0, ClassID: 0}
+	create := make([]byte, protocol.CharacterCreateSize(long))
+	protocol.WriteCharacterCreate(create, long)
+	enc(create)
+	expectFailReason(t, expect("create длинное имя", protocol.OpCharCreateFail), 0x03)
+
+	// Чужая раса → CreationFailed (0x00).
+	elf := protocol.CharacterCreateData{Name: "Elfhero", Race: 2, ClassID: 1}
+	create = make([]byte, protocol.CharacterCreateSize(elf))
+	protocol.WriteCharacterCreate(create, elf)
+	enc(create)
+	expectFailReason(t, expect("create чужая раса", protocol.OpCharCreateFail), 0x00)
+
+	// Коннект жив: NewChar получает CharTemplates.
+	nc := make([]byte, protocol.NewCharacterSize)
+	protocol.WriteNewCharacter(nc)
+	enc(nc)
+	expect("NewChar после отказов", protocol.OpCharTemplates)
+}
+
+func expectFailReason(t *testing.T, frame []byte, want byte) {
+	t.Helper()
+	v, ok := protocol.NewCharCreateFailView(frame)
+	if !ok || byte(v.Reason()) != want {
+		t.Errorf("CharCreateFail = ok:%v reason:0x%02X; want 0x%02X", ok, v.Reason(), want)
+	}
+}

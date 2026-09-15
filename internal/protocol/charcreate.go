@@ -28,6 +28,7 @@ const (
 	OpCharTemplates  = charTemplates
 	OpCharCreateOk   = charCreateOk
 	OpCharCreateFail = charCreateFail
+	OpCharDeleteFail = charDeleteFail
 
 	NameNewCharacter    = "NEW_CHARACTER"
 	NameCharTemplates   = "CHAR_TEMPLATES"

@@ -17,6 +17,7 @@ type benchState struct {
 	g       *Gateway
 	players []*transport.Mailbox
 	tokens  []uint64
+	batches [][]transport.Envelope // ретейновые дрен-буферы (нулевая цена харнесса)
 }
 
 func newBenchState(tb testing.TB, conns int) *benchState {
@@ -58,6 +59,7 @@ func newBenchState(tb testing.TB, conns int) *benchState {
 		g.conns[conn.ConnID(i)] = &gconn{id: conn.ConnID(i), phase: phWorld, entity: pid}
 		bs.players = append(bs.players, player)
 		bs.tokens = append(bs.tokens, uint64(pid))
+		bs.batches = append(bs.batches, nil)
 	}
 	return bs
 }
@@ -65,9 +67,8 @@ func newBenchState(tb testing.TB, conns int) *benchState {
 // drainPlayers вычитывает faf-ящики игроков (в проде это регион).
 func (bs *benchState) drainPlayers() {
 	for i, box := range bs.players {
-		batch := box.ExtractInto(bs.tokens[i], nil)
+		bs.batches[i] = box.ExtractInto(bs.tokens[i], bs.batches[i])
 		box.AckNotify()
-		_ = batch
 	}
 }
 
@@ -121,4 +122,33 @@ func cloneBytes(b []byte) []byte {
 	out := make([]byte, len(b))
 	copy(out, b)
 	return out
+}
+
+// TestGatewayDrainAllocBudget — машинный бюджет пер-тикового пути:
+// коалесинг MoveToLocation и дрен тика — 0 аллокаций вне роста inbox/конвертов
+// (спека P3.6; недостижимость фиксируется здесь же).
+func TestGatewayDrainAllocBudget(t *testing.T) {
+	bs := newBenchState(t, 4)
+	move := make([]byte, protocol.MoveToLocationSize)
+	protocol.WriteMoveToLocation(move, 1, 2, 3, 4, 5, 6, 1)
+	var gc *gconn
+	for _, c := range bs.g.conns {
+		gc = c
+		break
+	}
+
+	// Прогрев: inbox с коалесированным move; конверты дрена уходят в
+	// зарегистрированные ящики (Send — 0 аллок по P3.1).
+	bs.g.onStationaryFrame(gc, move)
+	bs.g.onTick()
+	bs.drainPlayers()
+
+	allocs := testing.AllocsPerRun(200, func() {
+		bs.g.onStationaryFrame(gc, move) // коалесинг: замена в inbox
+		bs.g.onTick()                    // дрен: конверт + слепой push
+		bs.drainPlayers()                // дрен ящиков (не путь шлюза)
+	})
+	if allocs != 0 {
+		t.Errorf("коалесинг+дрен тика: %.0f аллокаций; want 0 (вне роста inbox/конвертов)", allocs)
+	}
 }

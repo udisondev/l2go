@@ -289,7 +289,7 @@ func (g *Gateway) onEvent(ev conn.Event) {
 		return
 	}
 	g.phaseFrames[gc.phase].Add(1)
-	if g.testPanicOn != 0 && ev.Frame[0] == g.testPanicOn {
+	if g.testPanicOn != 0 && len(ev.Frame) > 0 && ev.Frame[0] == g.testPanicOn {
 		panic("gateway: тестовая паника обработки")
 	}
 	g.onFrame(gc, ev.Frame)

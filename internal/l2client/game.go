@@ -248,8 +248,11 @@ func (gc *GameClient) readCharList(stage string) ([]protocol.CharSelectionEntry,
 	if err != nil {
 		return nil, fmt.Errorf("стадия %s: %w", stage, err)
 	}
-	if len(reply) == 0 || reply[0] != protocol.OpCharSelectInfo {
-		return nil, fmt.Errorf("стадия %s: неожиданный опкод 0x%02X", stage, len(reply))
+	if len(reply) == 0 {
+		return nil, fmt.Errorf("стадия %s: пустой кадр", stage)
+	}
+	if reply[0] != protocol.OpCharSelectInfo {
+		return nil, fmt.Errorf("стадия %s: неожиданный опкод 0x%02X", stage, reply[0])
 	}
 	v, ok := protocol.NewCharSelectionInfoView(reply)
 	if !ok {

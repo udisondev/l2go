@@ -138,6 +138,11 @@ type connState struct {
 	mode     atomic.Uint32
 	inflight atomic.Int32
 	conn     net.Conn
+
+	// dlMu сериализует смену режима и посткадровый перезавод: чтение режима
+	// и установку дедлайна как одну пару — иначе перезавод из readLoop мог
+	// перезаписать очистку от SetReadMode(stationary).
+	dlMu sync.Mutex
 }
 
 // CloseReason — причина разрыва коннекта (метрики наблюдаемости).
@@ -168,6 +173,7 @@ type Server struct {
 	closing  chan struct{}
 	closeOne sync.Once
 	wg       sync.WaitGroup
+	stopping atomic.Bool
 
 	closeBy [7]atomic.Uint64 // индекс — CloseReason
 	dropped atomic.Uint64    // дропы событий сверх под-лимита
@@ -386,8 +392,12 @@ func (s *Server) readLoop(conn net.Conn, id ConnID, st *connState, key [8]byte) 
 					return CloseOverflow // close-on-overflow своего под-лимита
 				}
 				pending = pending[len(frame)+2:]
-				if ReadMode(st.mode.Load()) == ModePresession {
-					_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
+				if ReadMode(st.mode.Load()) == ModePresession && !s.stopping.Load() {
+					st.dlMu.Lock()
+					if ReadMode(st.mode.Load()) == ModePresession {
+						_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
+					}
+					st.dlMu.Unlock()
 				}
 			}
 			if len(pending) > s.cfg.FrameCap+2 {
@@ -439,6 +449,8 @@ func (s *Server) SetReadMode(id ConnID, mode ReadMode) {
 	if !ok {
 		return
 	}
+	st.dlMu.Lock()
+	defer st.dlMu.Unlock()
 	st.mode.Store(uint32(mode))
 	var deadline time.Time
 	if mode == ModePresession {
@@ -464,6 +476,7 @@ func (s *Server) CloseAfterFlush(id ConnID) {
 // растормашиваются дедлайном в прошлом, дрен горутин до выхода.
 func (s *Server) Close() {
 	s.closeOne.Do(func() {
+		s.stopping.Store(true)
 		close(s.closing)
 		past := time.Now().Add(-time.Second)
 		s.mu.Lock()

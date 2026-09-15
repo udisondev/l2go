@@ -209,13 +209,14 @@ func (g *Gateway) onCreate(gc *gconn, frame []byte) {
 		g.replyCreateFail(gc, protocol.CharCreateReasonIncorrectName)
 		return
 	}
-	if len(name) > persist.MaxNameLen {
-		// Канон различает превышение длины (REASON_16_ENG_CHARS).
-		g.replyCreateFail(gc, protocol.CharCreateReasonNameTooLong)
+	// Порядок канона: сначала домен символов (INCORRECT_NAME), потом длина
+	// (REASON_16_ENG_CHARS); домен и длина различаются отдельно.
+	if !isAlnumASCII(name) {
+		g.replyCreateFail(gc, protocol.CharCreateReasonIncorrectName)
 		return
 	}
-	if !persist.ValidName(name) {
-		g.replyCreateFail(gc, protocol.CharCreateReasonIncorrectName)
+	if len(name) > persist.MaxNameLen {
+		g.replyCreateFail(gc, protocol.CharCreateReasonNameTooLong)
 		return
 	}
 	// Единственный шаблон фазы: чужая раса/класс — отказ канона, не подмена
@@ -377,6 +378,18 @@ func (g *Gateway) replyCreateFail(gc *gconn, reason protocol.CharCreateFailReaso
 	wire := make([]byte, protocol.CharCreateFailSize)
 	protocol.WriteCharCreateFail(wire, reason)
 	g.reply(gc, wire)
+}
+
+// isAlnumASCII — домен имени создания: 1+ букв/цифр ASCII (длину проверяет
+// отдельная ветка причин канона).
+func isAlnumASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9') {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 // lastSeenSlot — предвыбор записи с последним входом (канон: при отсутствии
