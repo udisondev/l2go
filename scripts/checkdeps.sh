@@ -17,7 +17,7 @@ allowed() {
 	internal/protocol) echo "internal/protocol/fixture" ;;
 	internal/protocol/fixture) echo "" ;;
 	internal/conn) echo "internal/protocol internal/crypto" ;;
-	internal/gateway) echo "internal/conn internal/protocol internal/transport internal/persist" ;;
+	internal/gateway) echo "internal/conn internal/protocol internal/transport internal/persist internal/encode internal/l2client internal/protocol/fixture internal/crypto" ;;
 	internal/replica) echo "internal/transport" ;;
 	internal/encode) echo "internal/protocol internal/crypto pkg/bufpool" ;;
 	internal/world) echo "internal/transport internal/replica internal/encode internal/data internal/geo internal/persist" ;;

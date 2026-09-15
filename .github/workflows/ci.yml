@@ -44,6 +44,7 @@ jobs:
             go test -fuzz="^${t}$" -fuzztime=10s ./internal/geo/
           done
           go test -fuzz='^FuzzArtifactDecode$' -fuzztime=10s ./internal/artifact/
+          go test -fuzz='^FuzzGatewayFrames$' -fuzztime=10s ./internal/gateway/
 
       # Embed-транспорт (фаза 2): шаг 1 обязан идти до записи артефакта.
       - name: Embed-транспорт (фаза 2)

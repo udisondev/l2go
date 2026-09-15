@@ -43,6 +43,7 @@ fuzz-smoke:
 	$(GO) test -fuzz='^FuzzLoadNpcSpawns$$' -fuzztime=10s ./internal/data/
 	$(GO) test -fuzz='^FuzzDecodeRegion$$' -fuzztime=10s ./internal/geo/
 	$(GO) test -fuzz='^FuzzValidLocation$$' -fuzztime=10s ./internal/geo/
+	$(GO) test -fuzz='^FuzzGatewayFrames$$' -fuzztime=10s ./internal/gateway/
 	$(GO) test -fuzz='^FuzzArtifactDecode$$' -fuzztime=10s ./internal/artifact/
 
 # Длинный локальный фаззинг: make fuzz-long FUZZTIME=30m (находки — в testdata/fuzz).

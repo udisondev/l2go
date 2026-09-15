@@ -32,6 +32,16 @@ const (
 	DeleteObjectSize       = 9  // опкод + D + D
 )
 
+// Публичные опкоды C→GS стационарной фазы — белый список шлюза (P3.6):
+// неизвестные стационарные опкоды шлюз дропает с метрикой, коннект жив.
+const (
+	OpCMoveToLocation    = moveToLocation
+	OpCValidatePosition  = validatePosition
+	OpCCannotMoveAnymore = cannotMoveAnymore
+
+	NameMoveToLocation = "MOVE_TO_LOCATION"
+)
+
 // WriteMoveToLocation пишет кадр MoveToLocation (C→GS): цель, точка
 // отправления, режим (0 — клавиатура, 1 — мышь). Возвращает размер кадра.
 func WriteMoveToLocation(dst []byte, targetX, targetY, targetZ, originX, originY, originZ, movementMode int32) int {

@@ -5,7 +5,7 @@ import "testing"
 // KindCount — мощность реестра: без дыр между первым и последним типом,
 // счётчики свёртки мира индексируются без выхода за границы.
 func TestKindCount(t *testing.T) {
-	if got, want := int(KindCount), int(KindConnClose); got != want {
+	if got, want := int(KindCount), int(KindConnBind); got != want {
 		t.Errorf("KindCount = %d; want %d (последний тип реестра)", got, want)
 	}
 	for k := 1; k <= int(KindCount); k++ {

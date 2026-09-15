@@ -104,6 +104,7 @@ const (
 	KindEnterWorld // вход в мир: {connID, account, снимок персонажа} региону
 	KindLinkDead   // обрыв коннекта региону
 	KindConnClose  // регион→шлюз «закрыть коннект»
+	KindConnBind   // регион→шлюз «игрок вошёл»: {connID, EntityID} — адрес ящика игрока
 
 	kindSentinel // маркер конца реестра (не тип письма)
 )
@@ -122,7 +123,7 @@ func (k Kind) Class() Class {
 	case KindAggro, KindKillCredit, KindXP, KindControlEffect,
 		KindMemberStatus, KindServiceMsg, KindInstallAck, KindConfirmAck,
 		KindRetire, KindSeed, KindPersistRequest, KindPersistReply,
-		KindEnterWorld, KindLinkDead, KindConnClose:
+		KindEnterWorld, KindLinkDead, KindConnClose, KindConnBind:
 		return ClassReliable
 	case KindReserve, KindCommit, KindAbort, KindLootPickup, KindSpoil,
 		KindSweep, KindSuitcase:

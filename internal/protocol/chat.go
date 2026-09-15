@@ -61,6 +61,9 @@ const (
 	SystemMessageChatDisabled                  SystemMessageID = 346
 )
 
+// OpCSay2 — публичный опкод C→GS Say2 (белый список шлюза, P3.6).
+const OpCSay2 = say2
+
 // Say2Size — размер кадра Say2 с опкодом; адресат пишется только при whisper
 // (читающая сторона канона разбирает его условно).
 func Say2Size(text string, chatType ChatType, target string) int {

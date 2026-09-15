@@ -17,6 +17,13 @@ const (
 	actionFail   = 0x25
 )
 
+// OpCEnterWorld — публичный опкод C→GS EnterWorld (белый список шлюза, P3.6).
+const (
+	OpCEnterWorld = enterWorld
+
+	NameEnterWorld = "ENTER_WORLD"
+)
+
 // EnterWorldSize — размер кадра EnterWorld с опкодом: 32 Б hwinfo + 4×D +
 // 32 Б hwinfo + D + 20 Б tracert.
 const EnterWorldSize = 105

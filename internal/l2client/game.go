@@ -186,6 +186,83 @@ func (gc *GameClient) SelectChar(slot int32) error {
 // чтение сокета.
 const framesCap = 16
 
+// CreateChar — синхронная стадия создания: NewChar → CharTemplates →
+// CharacterCreate → CharCreateOk/Fail.
+func (gc *GameClient) CreateChar(d protocol.CharacterCreateData) error {
+	var nc [protocol.NewCharacterSize]byte
+	protocol.WriteNewCharacter(nc[:])
+	if err := gc.sendEnc(nc[:]); err != nil {
+		return fmt.Errorf("стадия NewChar: %w", err)
+	}
+	gc.logSend(protocol.NameNewCharacter)
+	reply, err := gc.readDec()
+	if err != nil {
+		return fmt.Errorf("стадия CharTemplates: %w", err)
+	}
+	if reply[0] != protocol.OpCharTemplates {
+		return fmt.Errorf("стадия CharTemplates: неожиданный опкод 0x%02X", reply[0])
+	}
+	tv, ok := protocol.NewCharTemplatesView(reply)
+	if !ok {
+		return fmt.Errorf("стадия CharTemplates: обрезанное тело (%d Б)", len(reply))
+	}
+	gc.logRecv(protocol.NameCharTemplates, Field{K: "count", V: num(int64(tv.Count()))})
+
+	wire := make([]byte, protocol.CharacterCreateSize(d))
+	protocol.WriteCharacterCreate(wire, d)
+	if err := gc.sendEnc(wire); err != nil {
+		return fmt.Errorf("стадия CharacterCreate: %w", err)
+	}
+	gc.logSend(protocol.NameCharacterCreate, Field{K: "name", V: d.Name})
+
+	reply, err = gc.readDec()
+	if err != nil {
+		return fmt.Errorf("стадия CharCreateOk: %w", err)
+	}
+	switch reply[0] {
+	case protocol.OpCharCreateOk:
+		gc.logRecv(protocol.NameCharCreateOk)
+		return nil
+	case protocol.OpCharCreateFail:
+		v, ok := protocol.NewCharCreateFailView(reply)
+		if !ok {
+			return fmt.Errorf("стадия CharCreateFail: обрезанное тело (%d Б)", len(reply))
+		}
+		gc.logRecv(protocol.NameCharCreateFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		return fmt.Errorf("создание отклонено: reason=0x%02X", v.Reason())
+	default:
+		return fmt.Errorf("неожиданный ответ создания: опкод 0x%02X", reply[0])
+	}
+}
+
+// EnterWorld — команда стационарной фазы: маркер входа (канонный порядок —
+// сразу после CharSelected; hwinfo-поля нулевые, серверу безразличны).
+func (gc *GameClient) EnterWorld() error {
+	var wire [protocol.EnterWorldSize]byte
+	protocol.WriteEnterWorld(wire[:])
+	return gc.command(wire[:], protocol.NameEnterWorld)
+}
+
+// MoveToLocation — команда стационарной фазы: намерение движения (цель,
+// точка отправления, режим 0 — клавиатура / 1 — мышь). Пишатель и
+// представление — movement.go протокола.
+func (gc *GameClient) MoveToLocation(targetX, targetY, targetZ, originX, originY, originZ, mode int32) error {
+	var wire [protocol.MoveToLocationSize]byte
+	protocol.WriteMoveToLocation(wire[:], targetX, targetY, targetZ, originX, originY, originZ, mode)
+	return gc.command(wire[:], protocol.NameMoveToLocation,
+		Field{K: "target", V: num32(targetX)})
+}
+
+// command — отправка команды стационарной фазы (отправляет только Run).
+func (gc *GameClient) command(wire []byte, name string, fields ...Field) error {
+	select {
+	case gc.commands <- command{wire: wire, name: name, fields: fields}:
+		return nil
+	case <-gc.done:
+		return ErrClosed
+	}
+}
+
 // priorityBurst — сколько готовых кадров обрабатывается подряд с приоритетом
 // над командами: ограничивает голодание команд/ctx при непрерывном потоке.
 const priorityBurst = 8

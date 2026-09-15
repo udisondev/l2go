@@ -1,0 +1,116 @@
+# P3.6 — encode/gateway baseline (рев. 1)
+# env: go1.27.1 / Linux 7.0.0-31-generic x86_64 / AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+# методология: benchstat-совместимо, -count=10 (прецедент P3.2); benchtime=1000x (быстрый фиксирующий прогон; полный -count=10 3s — при первом тюнинге)
+# B/op в GatewayTickDrain — клоны кадров самим бенчем (владение кадром уходит в inbox); дрег-путь и Send — 0 аллок (TestStageAllocBudgets, P3.1-baseline)
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/encode
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkPushTake40Plain-16         	    1000	        21.52 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        67.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        20.97 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        54.48 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        23.98 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        21.14 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        21.27 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        20.84 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        24.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Plain-16         	    1000	        30.27 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	       105.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	        35.91 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	       102.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	        36.11 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	        41.26 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	        35.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	        35.78 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	        45.31 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	        36.02 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake40Crypt-16         	    1000	        36.07 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       121.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       136.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       121.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       121.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       121.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       297.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       121.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       125.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       121.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake256Crypt-16        	    1000	       272.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	       598.7 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	      1439 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	      1107 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	      1146 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	       957.0 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	       974.2 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	      1406 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	      1367 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	      1124 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTake1456Crypt-16       	    1000	       604.5 ns/op	       3 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       261.2 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       266.4 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       587.8 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       632.1 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       465.5 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       593.6 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       584.8 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       262.6 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       260.7 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch8Crypt-16     	    1000	       270.1 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1639 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1235 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1122 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1669 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1813 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1220 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1115 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      2022 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1441 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Crypt-16    	    1000	      1884 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	       869.1 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	       904.2 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	       952.4 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	      1087 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	       936.8 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	       775.1 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	      1006 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	      1115 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	       616.1 ns/op	       8 B/op	       0 allocs/op
+BenchmarkPushTakeBatch32Plain-16    	    1000	       618.1 ns/op	       8 B/op	       0 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/encode	0.060s
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/gateway
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkGatewayIngest1-16      	    1000	        73.54 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        71.27 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        77.83 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        70.12 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        75.05 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        71.98 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        75.26 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        74.78 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        74.73 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest1-16      	    1000	        80.87 ns/op	       4 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1394 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      2022 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1637 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1587 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1535 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1873 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1952 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1313 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1331 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayIngest50-16     	    1000	      1322 ns/op	     206 B/op	       0 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     12355 ns/op	    9849 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     12487 ns/op	    9849 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     11001 ns/op	    9849 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     12497 ns/op	    9855 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     13563 ns/op	    9849 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     12269 ns/op	    9849 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     12487 ns/op	    9849 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     12741 ns/op	    9849 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     14568 ns/op	    9849 B/op	     400 allocs/op
+BenchmarkGatewayTickDrain-16    	    1000	     11331 ns/op	    9849 B/op	     400 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/gateway	0.157s

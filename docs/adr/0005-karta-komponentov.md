@@ -56,7 +56,7 @@ slog, простота, гайды стиля и производительно�
 | `internal/protocol/fixture` | — |
 | `internal/protocol` | protocol/fixture |
 | `internal/conn` | protocol, crypto |
-| `internal/gateway` | conn, protocol, transport, persist |
+| `internal/gateway` | conn, protocol, transport, persist, encode; l2client, protocol/fixture, crypto (тесты интеграционного контура) |
 | `internal/replica` | transport |
 | `internal/encode` | protocol, crypto, pkg/bufpool |
 | `internal/world` | transport, replica, encode, data, geo, persist |

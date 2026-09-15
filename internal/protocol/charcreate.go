@@ -18,6 +18,24 @@ const (
 	charDeleteFail  = 0x24
 )
 
+// Публичные опкоды C→GS фазы создания — белый список шлюза (P3.6);
+// имена и опкоды GS→C-ответов для диспетчера клиента.
+const (
+	OpCCharacterCreate = characterCreate
+	OpCCharacterDelete = characterDelete
+	OpCNewCharacter    = newCharacter
+
+	OpCharTemplates  = charTemplates
+	OpCharCreateOk   = charCreateOk
+	OpCharCreateFail = charCreateFail
+
+	NameNewCharacter    = "NEW_CHARACTER"
+	NameCharTemplates   = "CHAR_TEMPLATES"
+	NameCharacterCreate = "CHARACTER_CREATE"
+	NameCharCreateOk    = "CHAR_CREATE_OK"
+	NameCharCreateFail  = "CHAR_CREATE_FAIL"
+)
+
 // CharCreateFailReason — причины отказа создания (CharCreateFail.java канона).
 type CharCreateFailReason int32
 

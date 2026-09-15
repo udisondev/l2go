@@ -39,6 +39,7 @@ func TestKindClassRegistry(t *testing.T) {
 		KindEnterWorld:     ClassReliable,
 		KindLinkDead:       ClassReliable,
 		KindConnClose:      ClassReliable,
+		KindConnBind:       ClassReliable,
 		KindReserve:        ClassTransfer,
 		KindCommit:         ClassTransfer,
 		KindAbort:          ClassTransfer,
@@ -48,7 +49,7 @@ func TestKindClassRegistry(t *testing.T) {
 		KindSuitcase:       ClassTransfer,
 	}
 	// полнота реестра: каждый тип от первого до последнего имеет класс
-	for k := KindApplyDamage; k <= KindConnClose; k++ {
+	for k := KindApplyDamage; k <= KindConnBind; k++ {
 		c, ok := want[k]
 		if !ok {
 			t.Errorf("тип %d не покрыт таблицей теста", k)
@@ -58,7 +59,7 @@ func TestKindClassRegistry(t *testing.T) {
 			t.Errorf("Kind(%d).Class() = %d; want %d", k, got, c)
 		}
 	}
-	if extra := len(want) - int(KindConnClose); extra != 0 {
+	if extra := len(want) - int(KindConnBind); extra != 0 {
 		t.Errorf("в таблице %d лишних типов", extra)
 	}
 	if unknown := Kind(999).Class(); unknown != 0 {
@@ -72,7 +73,7 @@ func TestKindRegionalAndService(t *testing.T) {
 		KindRetire: true, KindSeed: true, KindEnterWorld: true, KindLinkDead: true,
 	}
 	service := map[Kind]bool{KindMemberStatus: true, KindServiceMsg: true}
-	for k := KindApplyDamage; k <= KindConnClose; k++ {
+	for k := KindApplyDamage; k <= KindConnBind; k++ {
 		if got := k.Regional(); got != regional[k] {
 			t.Errorf("Kind(%d).Regional() = %v; want %v", k, got, regional[k])
 		}
