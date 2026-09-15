@@ -11,6 +11,7 @@ import (
 // а не одна проводная пара «шифртекст→расшифровка».
 
 func TestGameCryptGoldenSequence(t *testing.T) {
+	t.Parallel()
 	golden := []struct {
 		payload          []byte
 		wantAfterEncrypt []byte
@@ -58,6 +59,7 @@ func TestGameCryptGoldenSequence(t *testing.T) {
 }
 
 func TestGameCryptCounterAdvances(t *testing.T) {
+	t.Parallel()
 	// Один и тот же пакет дважды подряд шифруется по-разному: счётчик сдвигается.
 	var wire [8]byte
 	copy(wire[:], mustHex(t, "0102030405060708"))
@@ -77,6 +79,7 @@ func TestGameCryptCounterAdvances(t *testing.T) {
 }
 
 func TestGameCryptPeerToPeer(t *testing.T) {
+	t.Parallel()
 	// Встречный обмен: пара движков с одним ключом; каждая сторона шифрует своим
 	// направлением и расшифровывает встречное; оба счётчика идут в ногу.
 	var wire [8]byte
@@ -114,6 +117,7 @@ func TestGameCryptPeerToPeer(t *testing.T) {
 }
 
 func TestGameCryptPassthroughBeforeEnable(t *testing.T) {
+	t.Parallel()
 	var wire [8]byte
 	gc := NewGameCrypt(wire)
 	if gc.IsEnabled() {
@@ -136,6 +140,7 @@ func TestGameCryptPassthroughBeforeEnable(t *testing.T) {
 }
 
 func TestGameCryptGuards(t *testing.T) {
+	t.Parallel()
 	var wire [8]byte
 	gc := NewGameCrypt(wire)
 	gc.Enable()

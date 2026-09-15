@@ -11,6 +11,7 @@ import (
 // серверные поля (hwinfo/tracert) не потребляются — представление проверяет
 // только длину. Формат — Mobius CT_0_Interlude clientpackets/EnterWorld.java.
 func TestEnterWorldGolden(t *testing.T) {
+	t.Parallel()
 	f := enterworldFixture(t, "ENTER_WORLD")
 	if len(f.Payload) != 104 {
 		t.Fatalf("payload фикстуры = %d Б; want 104", len(f.Payload))
@@ -42,6 +43,7 @@ func TestEnterWorldGolden(t *testing.T) {
 // false)), SkillList/ShortCutInit — нулевые счётчики, ActionFailed — маркер
 // из одного опкода.
 func TestEnterWorldBurstGolden(t *testing.T) {
+	t.Parallel()
 	fixes := enterworldFixtures(t)
 
 	il := fixes["ITEM_LIST"]

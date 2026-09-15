@@ -76,7 +76,7 @@ func TestHashVerifyEmptyAndLong(t *testing.T) {
 }
 
 func TestVerifyTiming(t *testing.T) {
-	salt, _ := newSalt()
+	salt := mustSalt(t)
 	start := time.Now()
 	hash, err := hashPassword("timing", salt)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestVerifyTiming(t *testing.T) {
 func TestBurnDummyTiming(t *testing.T) {
 	hashMin, dummyMin := time.Hour, time.Hour
 	for i := 0; i < 3; i++ {
-		salt, _ := newSalt()
+		salt := mustSalt(t)
 		start := time.Now()
 		// ошибка вывода невозможна (валидные константы) и не имеет получателя
 		_, _ = hashPassword("probe", salt)
@@ -115,4 +115,14 @@ func TestBurnDummyTiming(t *testing.T) {
 	if dummyMin < hashMin/3 {
 		t.Errorf("фиктивный вывод %v дешевле трети честного %v", dummyMin, hashMin)
 	}
+}
+
+// mustSalt — соль с проверкой ошибки (пустая соль прошла бы тайминг молча).
+func mustSalt(t *testing.T) []byte {
+	t.Helper()
+	s, err := newSalt()
+	if err != nil {
+		t.Fatalf("newSalt: %v", err)
+	}
+	return s
 }

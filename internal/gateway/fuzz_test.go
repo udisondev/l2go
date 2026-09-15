@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,17 +13,13 @@ import (
 // FuzzGatewayFrames — злые кадры предсессионной стейт-машины: паники нет,
 // детерминированный отказ/разрыв. Гоняется в смоуке CI (Makefile fuzz-smoke).
 func FuzzGatewayFrames(f *testing.F) {
-	for _, seed := range [][]byte{
-		{0x0B, 0x00},            // CharacterCreate обрезанный
-		{0x0D, 0x00, 0x00},      // CharacterSelect обрезанный
-		{0x0E},                  // NewCharacter
-		{0x08, 'a', 0x00, 0x01}, // AuthLogin без хвоста ключей
-		{0x77},                  // неизвестный опкод
-		{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-	} {
-		f.Add(seed)
-	}
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Add(byte(0), []byte{0x0B, 0x00})            // CharacterCreate обрезанный в phList
+	f.Add(byte(1), []byte{0x08, 'a', 0x00, 0x01}) // AuthLogin без хвоста ключей в phAuth
+	f.Add(byte(3), []byte{0x0D, 0x00, 0x00})      // CharacterSelect обрезанный в phSelected
+	f.Add(byte(0), []byte{0x0E})                  // NewCharacter в phList
+	f.Add(byte(4), []byte{0x77})                  // неизвестный опкод в phWorld
+	f.Add(byte(2), []byte{0x03})                  // EnterWorld-опкод в phValidating (вне окна)
+	f.Fuzz(func(t *testing.T, phaseSel byte, data []byte) {
 		if len(data) == 0 || len(data) > 8192 {
 			return
 		}
@@ -60,10 +57,22 @@ func FuzzGatewayFrames(f *testing.F) {
 		}
 		g.id = reg.Register(&g.box)
 		g.token = uint64(g.id)
+		// Достижимые ветки зовут валидатор и completions: заглушки, чтобы
+		// фазз доходил до кода ветвей, а не падал на nil-полях харнесса.
+		g.validator = fuzzValidator{}
+		g.completions = make(chan completion, 4)
 		phases := []phase{phHandshake, phAuth, phList, phSelected, phWorld}
-		ph := phases[int(data[0])%len(phases)]
+		ph := phases[int(phaseSel)%len(phases)]
 		gc := &gconn{id: 1, phase: ph, account: "fuzz"}
 		g.conns[1] = gc
 		g.onFrame(gc, data) // паника — провал фазза
 	})
+}
+
+// fuzzValidator — заглушка шва валидации для фазз-харнесса: мгновенный отказ
+// (ветка valid=false детерминирована и не порождает горутин-мусора).
+type fuzzValidator struct{}
+
+func (fuzzValidator) ValidateSession(context.Context, string, int32, int32, int32, int32) (bool, error) {
+	return false, nil
 }

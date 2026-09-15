@@ -2,7 +2,6 @@ package tap
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"bytes"
 	"context"
@@ -112,15 +111,12 @@ func TestJournalForeignMagicIsolated(t *testing.T) {
 type countingWriter struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
-	n   atomic.Int64
 }
 
 func (w *countingWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
-	n, err := w.buf.Write(p)
-	w.mu.Unlock()
-	w.n.Add(int64(n))
-	return n, err
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
 }
 
 // bytes возвращает снимок содержимого (после quiesce).
@@ -184,7 +180,7 @@ func TestTapTailJournaled(t *testing.T) {
 		}
 	}()
 	listen := freeAddr(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	runDone := make(chan error, 1)
 	go func() {

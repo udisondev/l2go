@@ -175,7 +175,7 @@ func waitFor(t *testing.T, timeout time.Duration, desc string, cond func() bool)
 		if time.Now().After(deadline) {
 			t.Fatalf("условие не наступило за %s: %s", timeout, desc)
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -397,7 +397,7 @@ func TestConnLimit(t *testing.T) {
 			_ = lc.Close()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	third, err := l2client.DialLogin(ctx, e.addr, l2client.Options{Timeout: time.Second})
 	if err != nil {

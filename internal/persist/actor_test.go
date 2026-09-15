@@ -238,9 +238,7 @@ func TestActorConcurrentSenders(t *testing.T) {
 	const perSender = 10       // 7 create + 3 charlist
 	var wg sync.WaitGroup
 	for s := 0; s < senders; s++ {
-		wg.Add(1)
-		go func(s int) {
-			defer wg.Done()
+		wg.Go(func() {
 			var box transport.Mailbox
 			id := env.reg.Register(&box)
 			token := uint64(id)
@@ -298,7 +296,7 @@ func TestActorConcurrentSenders(t *testing.T) {
 					return
 				}
 			}
-		}(s)
+		})
 	}
 	wg.Wait()
 	list := env.ask(Request{Op: OpCharList, Corr: 999, Account: "accA"}, 5*time.Second)

@@ -30,6 +30,7 @@ func fill(n int) []byte {
 }
 
 func TestBFCipherGoldenBlock(t *testing.T) {
+	t.Parallel()
 	c, err := newBFCipher(staticLoginKey)
 	if err != nil {
 		t.Fatalf("newBFCipher: %v", err)
@@ -52,6 +53,7 @@ func TestBFCipherGoldenBlock(t *testing.T) {
 }
 
 func TestBFCipherLENotBE(t *testing.T) {
+	t.Parallel()
 	// Инвариант LE-упаковки: BE-шифрование того же блока (слова в BE-представлении —
 	// эквивалент реверса 4-байтовых групп до и после) обязано давать ДРУГИЕ байты.
 	c, err := newBFCipher(staticLoginKey)
@@ -81,6 +83,7 @@ func swapWords(b []byte) {
 }
 
 func TestBFCipherRoundtripProperty(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{8, 16, 64, 256, 1024} {
 		key := fill(16)
 		c, err := newBFCipher(key)
@@ -105,6 +108,7 @@ func TestBFCipherRoundtripProperty(t *testing.T) {
 }
 
 func TestBFCipherKeyValidation(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name  string
 		n     int
@@ -126,6 +130,7 @@ func TestBFCipherKeyValidation(t *testing.T) {
 }
 
 func TestBFCipherGuards(t *testing.T) {
+	t.Parallel()
 	c, err := newBFCipher(staticLoginKey)
 	if err != nil {
 		t.Fatalf("newBFCipher: %v", err)

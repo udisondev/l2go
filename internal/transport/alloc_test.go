@@ -23,7 +23,7 @@ func TestEnqueueZeroAllocsOutsideGrowth(t *testing.T) {
 	env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
 	res := testing.Benchmark(func(b *testing.B) {
 		var sink []Envelope
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			box.enqueue(env)
 			if box.length.Load() >= segCap {
 				sink = box.extractInto(token, sink[:0])
@@ -51,7 +51,7 @@ func TestExtractEmptyZeroAllocs(t *testing.T) {
 	box.enqueue(Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]})
 	benchSink = box.extractInto(token, nil)
 	res := testing.Benchmark(func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			benchSink = box.extractInto(token, nil)
 		}
 	})
@@ -73,7 +73,7 @@ func TestExtractNonEmptyZeroAllocs(t *testing.T) {
 	env := Envelope{FromID: 1, Kind: KindClientFrame, Payload: payloadFixed[:]}
 	buf := make([]Envelope, 0, segCap)
 	res := testing.Benchmark(func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			box.enqueue(env)
 			buf = box.extractInto(token, buf[:0])
 		}

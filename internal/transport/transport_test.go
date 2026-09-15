@@ -81,6 +81,14 @@ func TestKindRegionalAndService(t *testing.T) {
 			t.Errorf("Kind(%d).Service() = %v; want %v", k, got, service[k])
 		}
 	}
+	// Полнота в обе стороны: лишний ключ карты — тип вне диапазона, молча
+	// пропущенный циклом выше.
+	if extra := len(regional) - 7; extra != 0 {
+		t.Errorf("таблица regional: %d лишних ключей", extra)
+	}
+	if extra := len(service) - 2; extra != 0 {
+		t.Errorf("таблица service: %d лишних ключей", extra)
+	}
 }
 
 func TestDomainAllows(t *testing.T) {

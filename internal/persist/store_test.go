@@ -35,7 +35,7 @@ func TestStoreRoundtrip(t *testing.T) {
 
 func TestStoreDeterministicBytes(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := openStore(dir)
+	s := mustOpenStore(t, dir)
 	recs := []CharRecord{{Account: "acc", Slot: 0, Name: "A", Level: 1}}
 	if err := s.write("acc.json", recs); err != nil {
 		t.Fatalf("write() #1 error = %v", err)
@@ -61,7 +61,7 @@ func TestStoreDeterministicBytes(t *testing.T) {
 
 func TestStoreBadFiles(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := openStore(dir)
+	s := mustOpenStore(t, dir)
 	recs := []CharRecord{{Account: "acc", Name: "A"}}
 	_ = s.write("acc.json", recs)
 	good, _ := os.ReadFile(filepath.Join(dir, "acc.json"))
@@ -103,22 +103,22 @@ func TestStoreBadFiles(t *testing.T) {
 
 func TestStoreAtomicFail(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := openStore(dir)
+	s := mustOpenStore(t, dir)
 	recs := []CharRecord{{Account: "acc", Name: "Old"}}
 	if err := s.write("acc.json", recs); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.ReadFile(filepath.Join(dir, "acc.json"))
+	before := readFileT(t, filepath.Join(dir, "acc.json"))
 
 	s.testFailRename = func() error { return errors.New("инъекция: обрыв между temp и rename") }
 	if err := s.write("acc.json", []CharRecord{{Account: "acc", Name: "New"}}); err == nil {
 		t.Fatal("write() при инъекции сбоя = nil; want ошибка")
 	}
-	after, _ := os.ReadFile(filepath.Join(dir, "acc.json"))
+	after := readFileT(t, filepath.Join(dir, "acc.json"))
 	if string(before) != string(after) {
 		t.Error("прежний файл повреждён сбоем записи")
 	}
-	entries, _ := os.ReadDir(dir)
+	entries := readDirT(t, dir)
 	if len(entries) != 1 {
 		t.Errorf("после сбоя в каталоге %d файлов; want 1 (осиротевший temp убран)", len(entries))
 	}
@@ -166,7 +166,7 @@ func mkChar(account, name string, slot int) CharRecord {
 
 func TestCharStoreScan(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := openStore(dir)
+	s := mustOpenStore(t, dir)
 	_ = s.write("alpha.json", []CharRecord{mkChar("alpha", "Vasya", 0)})
 	_ = s.write("beta.json", []CharRecord{mkChar("beta", "Petya", 0)})
 	// битый файл третьего аккаунта — не валит остальные
@@ -202,7 +202,7 @@ func TestCharStoreScan(t *testing.T) {
 
 func TestCharStoreDuplicateName(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := openStore(dir)
+	s := mustOpenStore(t, dir)
 	_ = s.write("alpha.json", []CharRecord{mkChar("alpha", "Vasya", 0)})
 	_ = s.write("beta.json", []CharRecord{mkChar("beta", "VASYA", 0)})
 	_, err := openCharStore(dir)
@@ -245,4 +245,24 @@ func TestGitignoreGuard(t *testing.T) {
 		}
 	}
 	t.Error(".gitignore не содержит /var/ — дефолтный каталог персиста коммитится")
+}
+
+// mustOpenStore — открытие с проверкой ошибки (игнор через _ запрещён).
+func mustOpenStore(t *testing.T, dir string) *store {
+	t.Helper()
+	st, err := openStore(dir)
+	if err != nil {
+		t.Fatalf("openStore(%s): %v", dir, err)
+	}
+	return st
+}
+
+// readFileT — os.ReadFile с проверкой ошибки.
+func readFileT(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%s): %v", path, err)
+	}
+	return b
 }

@@ -123,13 +123,11 @@ func TestSessionsConsumeAtomic(t *testing.T) {
 	var wins atomic.Int32
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if s.Consume("sergei", 1, 2, 3, 4) {
 				wins.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := wins.Load(); got != 1 {
@@ -147,15 +145,13 @@ func TestSessionsParallelDoublePut(t *testing.T) {
 	var ok, busy atomic.Int32
 	var wg sync.WaitGroup
 	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := s.Put("sergei", 1, 2); err == nil {
 				ok.Add(1)
 			} else if errors.Is(err, ErrAccountInUse) {
 				busy.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if ok.Load() != 1 || busy.Load() != 1 {
@@ -175,11 +171,10 @@ func TestSessionsRace(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 8 {
 		account := string(rune('a' + i%4))
-		wg.Add(4)
-		go func() { defer wg.Done(); s.Put(account, int32(i), int32(i+1)) }()
-		go func() { defer wg.Done(); s.CheckLoginPair(account, int32(i), int32(i+1)) }()
-		go func() { defer wg.Done(); s.SetPlayKeys(account, int32(i), int32(i+2)) }()
-		go func() { defer wg.Done(); s.Consume(account, int32(i), int32(i+1), int32(i), int32(i+2)) }()
+		wg.Go(func() { s.Put(account, int32(i), int32(i+1)) })
+		wg.Go(func() { s.CheckLoginPair(account, int32(i), int32(i+1)) })
+		wg.Go(func() { s.SetPlayKeys(account, int32(i), int32(i+2)) })
+		wg.Go(func() { s.Consume(account, int32(i), int32(i+1), int32(i), int32(i+2)) })
 	}
 	wg.Wait()
 }

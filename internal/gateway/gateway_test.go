@@ -4,6 +4,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"net"
 	"strings"
@@ -193,7 +194,7 @@ func newHarness(t *testing.T, validator SessionValidator, persistTimeout time.Du
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	go connSrv.Serve(ln)
 	go gw.Run(ctx)
 	if startPersist {
@@ -356,8 +357,24 @@ func TestGatewayMoveCoalescing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Ворота полного коалесинга: пока тест не звонит, onTick недостижим
+	// (дрен по звонку — единственный путь конверта в ящик игрока), и все
+	// 8 кадров сходятся в один в inbox актора. Coalesced ≥ 7 значит:
+	// заменены все кадры, кроме первого, — в inbox остался ровно последний
+	// (цель 7). Тик здесь недопустим: преждевременный дрен вынес бы
+	// в ящик промежуточный кадр.
+	waitFor(t, "полный коалесинг 8 кадров (Coalesced ≥ 7)", func() bool {
+		return h.gw.Stats().Coalesced >= 7
+	})
+
+	// Дрен после ворот: звонок небуферизован и теряется, пока актор не
+	// запаркован в select, — звеним на каждом шаге опроса до появления
+	// конверта. После ворот в inbox ровно один кадр и новых не прибудет
+	// (клиент в Run шлёт только явные команды), так что повторные звонки
+	// второго конверта не породят: moves == 1 детерминирован.
 	var moves int
-	waitFor(t, "дрен коалесированного движения", func() bool {
+	var lastTarget int32 = -1
+	waitFor(t, "конверт коалесированного движения в ящике игрока", func() bool {
 		h.tick()
 		h.region.drain(false)
 		for _, p := range h.region.players {
@@ -365,6 +382,9 @@ func TestGatewayMoveCoalescing(t *testing.T) {
 				if env.Kind == transport.KindClientFrame &&
 					len(env.Payload) > 0 && env.Payload[0] == protocol.OpCMoveToLocation {
 					moves++
+					// Цель — первый D после опкода: писатель пишет targetX
+					// первым полем; сверка «последний побеждает» по контенту.
+					lastTarget = int32(binary.LittleEndian.Uint32(env.Payload[1:5]))
 				}
 			}
 		}
@@ -373,8 +393,11 @@ func TestGatewayMoveCoalescing(t *testing.T) {
 	if moves != 1 {
 		t.Errorf("MoveToLocation-конвертов %d; want 1 (последний побеждает)", moves)
 	}
-	if st := h.gw.Stats(); st.Coalesced == 0 {
-		t.Error("метрика коалесинга не выросла")
+	if lastTarget != 7 {
+		t.Errorf("целевая координата конверта = %d; want 7 (последний MoveToLocation)", lastTarget)
+	}
+	if st := h.gw.Stats(); st.Coalesced < 7 {
+		t.Errorf("Coalesced = %d; want ≥7 (8 кадров, 7 замен)", st.Coalesced)
 	}
 }
 

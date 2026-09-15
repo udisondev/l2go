@@ -38,12 +38,11 @@ func TestRegionStressSenders(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); m.Run(ctx) }()
-	go func() { defer wg.Done(); r.Run(ctx) }()
+	wg.Go(func() { m.Run(ctx) })
+	wg.Go(func() { r.Run(ctx) })
 
 	const senders, perSender = 8, 300
 	var sentReliable, sentFAF, sentCtrl atomic.Int64

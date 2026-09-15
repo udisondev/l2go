@@ -104,12 +104,21 @@ func BenchmarkGatewayTickDrain(b *testing.B) {
 			bs.g.onStationaryFrame(gc, cloneBytes(other))
 		}
 	}
+	// Кольцо подготовленных кадров: кадр уходит в inbox владением —
+	// повторные итерации берут следующий кадр кольца, без клонов в Loop.
+	frames := make([][]byte, 0, 8*len(bs.g.conns))
+	for range 8 * len(bs.g.conns) {
+		frames = append(frames, cloneBytes(other))
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		for _, gc := range bs.g.conns {
 			for i := 0; i < 8; i++ {
-				bs.g.onStationaryFrame(gc, cloneBytes(other))
+				f := frames[0]
+				frames = frames[1:]
+				bs.g.onStationaryFrame(gc, f)
+				frames = append(frames, f)
 			}
 		}
 		bs.g.onTick()

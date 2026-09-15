@@ -215,6 +215,9 @@ func (g *Gateway) Stats() Stats {
 	return Stats{
 		Conns:        g.connsN.Load(),
 		Bound:        g.boundN.Load(),
+		Tombstones:   g.tombstonesN.Load(),
+		TornDown:     g.tornDownN.Load(),
+		PhaseFrames:  phases,
 		DeadLetters:  g.deadLetters.Load(),
 		Coalesced:    g.coalesced.Load(),
 		InboxDropped: g.inboxDropped.Load(),

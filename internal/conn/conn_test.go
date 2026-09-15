@@ -231,7 +231,6 @@ func TestHandshakeAbsoluteTimeout(t *testing.T) {
 	conn := dial(t, addr) // молчим
 	ce := recvClose(t, s.Closes())
 	ce.Release()
-	_ = conn
 	if _, err := conn.Read(make([]byte, 1)); err == nil {
 		t.Error("молчаливый коннект жив после HandshakeTimeout")
 	}
@@ -297,10 +296,20 @@ func TestStationarySilentAlive(t *testing.T) {
 	s.SetReadMode(ev.Conn, ModeStationary)
 
 	// Дольше и IdleTimeout, и HandshakeTimeout: заблокированный Read с
-	// дедлайном предыдущей фазы был бы разорван (блокер F47).
-	time.Sleep(700 * time.Millisecond)
+	// дедлайном предыдущей фазы был бы разорван (блокер F47). Один Write
+	// не ловит FIN (RST приходит только второй операцией) — оракул метрики:
+	// коннект жив и ни одна причина закрытия не сработала.
+	time.Sleep(700 * time.Millisecond) // тайминг-инвариант: молчание > дедлайнов, не синхронизация
 	if _, err := conn.Write([]byte("x")); err != nil {
-		t.Fatal("стационарный молчун разорван: записать нельзя")
+		t.Fatalf("первая запись после молчания: %v (разорван)", err)
+	}
+	st := s.Stats()
+	if st.Conns != 1 {
+		t.Fatalf("Conns = %d; want 1 (молчун жив)", st)
+	}
+	if st.ClosedEOF+st.ClosedTimeout+st.ClosedProtocol+st.ClosedFrameCap+
+		st.ClosedOverflow+st.ClosedCrypto+st.ClosedKeyGen != 0 {
+		t.Fatalf("молчун разорван: %+v", st)
 	}
 }
 
@@ -310,8 +319,9 @@ func TestMaxConnsReject(t *testing.T) {
 	out := newFakeOutbounds()
 	addr, s := startServer(t, cfg, out)
 
-	first := dial(t, addr)
-	recvEvent(t, s.Events()) // первый занял слот
+	// dial с Cleanup: первый коннект занимает слот и держит его до конца теста.
+	dial(t, addr)
+	recvEvent(t, s.Events())
 
 	second, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -328,7 +338,6 @@ func TestMaxConnsReject(t *testing.T) {
 	if got := s.Stats().Conns; got != 1 {
 		t.Errorf("Conns = %d; want 1 (второй не занял слот)", got)
 	}
-	_ = first
 }
 
 func TestFrameCapBreak(t *testing.T) {

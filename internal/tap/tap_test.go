@@ -62,7 +62,7 @@ func TestTapHalfClose(t *testing.T) {
 
 	listen := freeAddr(t)
 	var journal countingWriter
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	runDone := make(chan error, 1)
 	go func() {
@@ -154,7 +154,7 @@ func TestTapShutdown(t *testing.T) {
 
 	listen := freeAddr(t)
 	var journal countingWriter
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	runDone := make(chan error, 1)
 	go func() {
 		runDone <- Run(ctx, Options{Maps: []Map{{Listen: listen, Upstream: upLn.Addr().String()}}, Log: &journal})
@@ -165,10 +165,14 @@ func TestTapShutdown(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	// data обязан попасть в журнал ДО отмены целиком: ждём полную
-	// data-запись (парсинг среза), не сон и не первый байт.
+	// data-запись (парсинг среза), не сон и не первый байт; после ожидания
+	// наличие — ассерт (истечение бюджета не должно проходить молча).
 	deadline := time.Now().Add(2 * time.Second)
 	for !journalHasData(journal.bytes()) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
+	}
+	if !journalHasData(journal.bytes()) {
+		t.Fatal("data-запись не попала в журнал до отмены")
 	}
 
 	cancel()
@@ -205,11 +209,11 @@ func TestTapShutdown(t *testing.T) {
 func TestTapEvilUpstream(t *testing.T) {
 	listen := freeAddr(t)
 	var journal countingWriter
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	runDone := make(chan error, 1)
+	upstream := deadAddr(t) // ephemeral-порт без слушателя; t.Fatal — только из основной горутины
 	go func() {
-		upstream := deadAddr(t) // ephemeral-порт без слушателя
 		runDone <- Run(ctx, Options{Maps: []Map{{Listen: listen, Upstream: upstream}}, Log: &journal})
 	}()
 
@@ -241,7 +245,7 @@ func dialReady(t *testing.T, addr string) net.Conn {
 		if err == nil {
 			return conn
 		}
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("слушатель %s не готов за 5с", addr)
 	return nil

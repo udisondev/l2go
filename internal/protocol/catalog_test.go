@@ -25,6 +25,7 @@ func catalogGroups(t *testing.T) map[string]catalogGroup {
 // Полнота: счёт записей по группам равен источнику (interlude docs/opcodes.md@34fe4c8);
 // сумма 494.
 func TestCatalogCounts(t *testing.T) {
+	t.Parallel()
 	total := 0
 	for name, g := range catalogGroups(t) {
 		if got := len(g.table); got != g.want {
@@ -39,6 +40,7 @@ func TestCatalogCounts(t *testing.T) {
 
 // Уникальность значений и имён внутри группы; взаимная однозначность имя↔значение.
 func TestCatalogUniqueWithinGroup(t *testing.T) {
+	t.Parallel()
 	for name, g := range catalogGroups(t) {
 		byValue := map[uint16]string{}
 		byName := map[string]uint16{}
@@ -57,6 +59,7 @@ func TestCatalogUniqueWithinGroup(t *testing.T) {
 
 // Диапазон: у основных групп опкод — один байт.
 func TestCatalogValueRange(t *testing.T) {
+	t.Parallel()
 	for name, g := range catalogGroups(t) {
 		if !g.isMain {
 			continue
@@ -73,6 +76,7 @@ func TestCatalogValueRange(t *testing.T) {
 // с тем же значением и тем же именем (Name* — строковые константы каталога
 // для трафик-лога; пустое имя — константа ещё не родилась).
 func TestConstantsMatchCatalog(t *testing.T) {
+	t.Parallel()
 	consts := []struct {
 		name      string
 		value     byte

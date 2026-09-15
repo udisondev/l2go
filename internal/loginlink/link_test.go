@@ -24,7 +24,7 @@ func waitFor(t *testing.T, timeout time.Duration, desc string, cond func() bool)
 		if time.Now().After(deadline) {
 			t.Fatalf("условие не наступило за %s: %s", timeout, desc)
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -279,7 +279,7 @@ func TestClientValidateUnreachable(t *testing.T) {
 		t.Fatalf("Dial: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	ctx, cancel := context.WithTimeout(context.Background(), 2*ValidateTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*ValidateTimeout)
 	defer cancel()
 	if _, err := c.ValidateSession(ctx, "sergei", 1, 2, 3, 4); err == nil {
 		t.Fatal("ValidateSession на недоступном LS: want err")

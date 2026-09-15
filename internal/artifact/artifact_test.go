@@ -325,7 +325,10 @@ func TestBuildWithoutGeo(t *testing.T) {
 	if res.Meta.Regions != 0 {
 		t.Errorf("regions = %d, хочу 0", res.Meta.Regions)
 	}
-	b, _ := os.ReadFile(out)
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("os.ReadFile: %v", err)
+	}
 	_, m2, meta, err := artifact.Decode(b)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)

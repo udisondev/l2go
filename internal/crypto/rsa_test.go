@@ -26,6 +26,7 @@ func testPublicKey(t *testing.T) *rsa.PublicKey {
 }
 
 func TestRSAScrambleGolden(t *testing.T) {
+	t.Parallel()
 	n := testPublicKey(t)
 	mod := n.N.Bytes()
 	if len(mod) != 128 {
@@ -50,6 +51,7 @@ func TestRSAScrambleGolden(t *testing.T) {
 }
 
 func TestRSAEncryptNoPaddingGolden(t *testing.T) {
+	t.Parallel()
 	pub := testPublicKey(t)
 	pt := mustHex(t, "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f")
 	want := mustHex(t, "1cbe09f13b5902040d73fab8c47a0d515b5cd7194f05a3ed7ce1871bc3032c18413bb5ba451e7d19732c0521cda1bfc6b16d1add1442b80055ee66df104f6c62524309068834694ab7fe672cd12ae7d4fa541a5e28fc7aacc0da163339b967559fb10e875da40cb469bc777acdd29bfb7efede80d9794087974610afdc7f7eef")
@@ -66,6 +68,7 @@ func TestRSAEncryptNoPaddingGolden(t *testing.T) {
 }
 
 func TestRSAGuards(t *testing.T) {
+	t.Parallel()
 	pub := testPublicKey(t)
 	if _, err := RSAScrambleModulus(make([]byte, 64)); err == nil {
 		t.Fatal("RSAScrambleModulus(64): ожидалась ошибка")
@@ -100,17 +103,21 @@ func TestRSADecryptRoundtrip(t *testing.T) {
 		t.Fatalf("GenerateKey: %v", err)
 	}
 	for _, tc := range []struct {
-		name string
-		seed byte
+		name   string
+		seed   byte
+		leader byte // маска старшего байта: m обязана быть < N (textbook
+		// no-padding), у RSA-1024 N ∈ [1.125·2^1023, 2^1024) — блок с
+		// лидером ≥ 0xC0 не проходит с вероятностью до ~30% по ключу.
 	}{
-		{"заполненный", 0xA5},
-		{"с ведущими нулями", 0x00},
+		{"заполненный", 0xA5, 0x3F},
+		{"с ведущими нулями", 0x00, 0xFF},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			block := make([]byte, 128)
 			for i := range block {
 				block[i] = tc.seed + byte(i)
 			}
+			block[0] &= tc.leader
 			ct, err := RSAEncryptNoPadding(&priv.PublicKey, block)
 			if err != nil {
 				t.Fatalf("шифрование: %v", err)

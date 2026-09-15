@@ -1,7 +1,8 @@
 # P3.6 — encode/gateway baseline (рев. 2)
 # env: go1.27.1 / Linux 7.0.0-31-generic x86_64 / AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
 # методология: benchstat-совместимо, -count=10 -benchtime=100ms (прецедент P3.2)
-# GatewayTickDrain/Ingest: клон кадра (cloneBytes) и дрен faf-ящиков входят в итерацию (владение кадром + полный Send-путь без дроп-ветки)
+# GatewayTickDrain: дрен faf-ящиков в итерации (полный Send-путь без дроп-ветки); кадры — кольцо подготовленных (без клонов в Loop)
+# PushTakeParallelCrypt: спавн 4 горутин-пушеров на итерацию — часть харнесса; абсолют читать как верхнюю оценку контенции
 goos: linux
 goarch: amd64
 pkg: github.com/udisondev/l2go/internal/encode

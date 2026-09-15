@@ -154,9 +154,7 @@ func TestStressOwnership(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for w := range workers {
-		wg.Add(1)
-		go func(w int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range cycles {
 				size := 1 + (w*cycles+i)%5000 // все границы + overflow
 				b := p.Get(size)
@@ -183,7 +181,7 @@ func TestStressOwnership(t *testing.T) {
 					expPuts.Add(1) // overflow-буферы Put отбрасывает: ёмкость не из сетки бакетов
 				}
 			}
-		}(w)
+		})
 	}
 	wg.Wait()
 	s := p.Stats()

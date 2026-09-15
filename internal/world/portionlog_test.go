@@ -200,7 +200,10 @@ func TestPortionLogTruncatedTail(t *testing.T) {
 	}
 	l.Close()
 	path := filepath.Join(dir, "portion-7-1.log")
-	info, _ := os.Stat(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("os.Stat: %v", err)
+	}
 	if err := os.Truncate(path, info.Size()-3); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}

@@ -10,6 +10,7 @@ import (
 // Golden пакета MoveToLocation (C→GS): писатель l2client против независимо
 // собранного вектора. Формат — Mobius CT_0_Interlude clientpackets/MoveToLocation.java.
 func TestWriteMoveToLocationGolden(t *testing.T) {
+	t.Parallel()
 	f := movementFixture(t, "MOVE_TO_LOCATION")
 	var dst [MoveToLocationSize]byte
 	n := WriteMoveToLocation(dst[:], 100, 200, -300, -10, 20, 30, 1)
@@ -26,6 +27,7 @@ func TestWriteMoveToLocationGolden(t *testing.T) {
 
 // Разбор MoveToLocation сервером: представление против того же вектора.
 func TestMoveToLocationViewGolden(t *testing.T) {
+	t.Parallel()
 	v, ok := NewMoveToLocationView(wire(movementFixture(t, "MOVE_TO_LOCATION")))
 	if !ok {
 		t.Fatal("NewMoveToLocationView: ok = false")
@@ -43,6 +45,7 @@ func TestMoveToLocationViewGolden(t *testing.T) {
 
 // Golden ValidatePosition (C→GS) в обе стороны.
 func TestValidatePositionGolden(t *testing.T) {
+	t.Parallel()
 	f := movementFixture(t, "VALIDATE_POSITION")
 	var dst [ValidatePositionSize]byte
 	n := WriteValidatePosition(dst[:], -71338, 258271, -3104, 1251, 0)
@@ -64,6 +67,7 @@ func TestValidatePositionGolden(t *testing.T) {
 
 // Golden CannotMoveAnymore (C→GS) в обе стороны.
 func TestCannotMoveAnymoreGolden(t *testing.T) {
+	t.Parallel()
 	f := movementFixture(t, "CANNOT_MOVE_ANYMORE")
 	var dst [CannotMoveAnymoreSize]byte
 	n := WriteCannotMoveAnymore(dst[:], 1, 2, 3, 456)
@@ -85,6 +89,7 @@ func TestCannotMoveAnymoreGolden(t *testing.T) {
 // Golden CharMoveToLocation (GS→C): писатель сервера + представление-оракул
 // против независимого вектора. Порядок полей — serverpackets/MoveToLocation.java.
 func TestCharMoveToLocationGolden(t *testing.T) {
+	t.Parallel()
 	f := movementFixture(t, "CHAR_MOVE_TO_LOCATION")
 	var dst [CharMoveToLocationSize]byte
 	n := WriteCharMoveToLocation(dst[:], 777, 1000, 2000, 3000, 10, 20, 30)
@@ -108,6 +113,7 @@ func TestCharMoveToLocationGolden(t *testing.T) {
 
 // Golden StopMove (GS→C) в обе стороны.
 func TestStopMoveGolden(t *testing.T) {
+	t.Parallel()
 	f := movementFixture(t, "STOP_MOVE")
 	var dst [StopMoveSize]byte
 	n := WriteStopMove(dst[:], 5, 100, 200, 300, 64)
@@ -128,6 +134,7 @@ func TestStopMoveGolden(t *testing.T) {
 
 // Golden TeleportToLocation (GS→C) в обе стороны; флаг fade — константа 0 канона.
 func TestTeleportToLocationGolden(t *testing.T) {
+	t.Parallel()
 	f := movementFixture(t, "TELEPORT_TO_LOCATION")
 	var dst [TeleportToLocationSize]byte
 	n := WriteTeleportToLocation(dst[:], 9, 1, 2, 3, 4)
@@ -149,6 +156,7 @@ func TestTeleportToLocationGolden(t *testing.T) {
 
 // Golden ValidateLocation (GS→C, snap-back коррекции P3.9) в обе стороны.
 func TestValidateLocationGolden(t *testing.T) {
+	t.Parallel()
 	f := movementFixture(t, "VALIDATE_LOCATION")
 	var dst [ValidateLocationSize]byte
 	n := WriteValidateLocation(dst[:], 3, 7, 8, 9, 10)
@@ -170,6 +178,7 @@ func TestValidateLocationGolden(t *testing.T) {
 // Golden DeleteObject (GS→C): за objId следует D 1 (смонтированные исчезают, а
 // не спешиваются) — serverpackets/DeleteObject.java.
 func TestDeleteObjectGolden(t *testing.T) {
+	t.Parallel()
 	f := movementFixture(t, "DELETE_OBJECT")
 	var dst [DeleteObjectSize]byte
 	n := WriteDeleteObject(dst[:], 42)
@@ -192,6 +201,7 @@ func TestDeleteObjectGolden(t *testing.T) {
 // формы — детерминированный отказ/допуск конструктора, не паника; лишний
 // хвост терпится (hex-дамп диспетчера), недобор — отказ.
 func TestMovementViewsEvil(t *testing.T) {
+	t.Parallel()
 	fixtures := movementFixtures(t)
 	for _, c := range []struct {
 		name  string

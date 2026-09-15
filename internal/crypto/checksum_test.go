@@ -8,6 +8,7 @@ import (
 )
 
 func TestAppendChecksumGolden(t *testing.T) {
+	t.Parallel()
 	in := mustHex(t, "000102030405060708090a0b0f0e0d0c")
 	want := mustHex(t, "000102030405060708090a0b0c0d0e0f")
 	out := bytes.Clone(in)
@@ -20,6 +21,7 @@ func TestAppendChecksumGolden(t *testing.T) {
 }
 
 func TestVerifyChecksum(t *testing.T) {
+	t.Parallel()
 	frame := mustHex(t, "000102030405060708090a0b0c0d0e0f")
 	ok, err := verifyChecksum(frame)
 	if err != nil || !ok {
@@ -33,6 +35,7 @@ func TestVerifyChecksum(t *testing.T) {
 }
 
 func TestEncXORPassGolden(t *testing.T) {
+	t.Parallel()
 	in := bytes.Clone(mustHex(t, "303132333435363738393a3b3c3d3e3f4041424344454647"))
 	want := mustHex(t, "303132334c5d6e7f8898a8b8d0e3eefdecded0c244454647")
 	out := bytes.Clone(in)
@@ -59,6 +62,7 @@ func TestEncXORPassGolden(t *testing.T) {
 }
 
 func TestChecksumGuards(t *testing.T) {
+	t.Parallel()
 	if err := appendChecksum(nil); err == nil {
 		t.Fatal("appendChecksum(nil): ожидалась ошибка")
 	}

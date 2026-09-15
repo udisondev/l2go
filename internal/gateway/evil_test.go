@@ -2,7 +2,9 @@ package gateway
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -36,17 +38,39 @@ func (r *rawConn) write(body []byte) {
 	}
 }
 
-// readFrame читает один кадр с таймаутом; EOF — nil.
-func (r *rawConn) readFrame(timeout time.Duration) []byte {
+// readFrameErr читает кадр с таймаутом; ошибка несёт класс: EOF/RST —
+// разрыв, os.ErrDeadlineExceeded — коннект жив и молчит (дефект для
+// ассертов close-after-fail).
+func (r *rawConn) readFrameErr(timeout time.Duration) ([]byte, error) {
 	r.t.Helper()
 	_ = r.conn.SetReadDeadline(time.Now().Add(timeout))
 	head := make([]byte, 2)
 	if _, err := readFull(r.conn, head); err != nil {
-		return nil
+		return nil, err
 	}
 	n := binary.LittleEndian.Uint16(head)
 	body := make([]byte, n-2)
 	if _, err := readFull(r.conn, body); err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+// expectDead: коннект обязан разорваться (EOF/RST) именно до дедлайна —
+// таймаут чтения означает живой молчащий коннект.
+func (r *rawConn) expectDead(stage string) {
+	r.t.Helper()
+	if _, err := r.readFrameErr(2 * time.Second); err == nil ||
+		errors.Is(err, os.ErrDeadlineExceeded) {
+		r.t.Fatalf("%s: коннект жив (err=%v); want разрыв EOF/RST", stage, err)
+	}
+}
+
+// readFrame — кадр или nil при любом сбое (для «ответ обязан прийти»).
+func (r *rawConn) readFrame(timeout time.Duration) []byte {
+	r.t.Helper()
+	body, err := r.readFrameErr(timeout)
+	if err != nil {
 		return nil
 	}
 	return body
@@ -85,9 +109,7 @@ func TestEvilWrongProtocolVersion(t *testing.T) {
 	if !ok || result != 0 {
 		t.Fatalf("KeyPacket = ok:%v result:%d; want result 0 (отклонение версии)", ok, result)
 	}
-	if tail := r.readFrame(2 * time.Second); tail != nil {
-		t.Fatalf("коннект жив после отклонения версии: % x", tail)
-	}
+	r.expectDead("после отклонения версии")
 }
 
 // AuthLogin до ProtocolVersion — кадр вне окна: GSLoginFail + разрыв.
@@ -103,9 +125,7 @@ func TestEvilAuthLoginOutOfWindow(t *testing.T) {
 	if frame == nil || frame[0] != protocol.OpGSLoginFail {
 		t.Fatalf("ответ вне окна = %v; want GSLoginFail", frame)
 	}
-	if tail := r.readFrame(2 * time.Second); tail != nil {
-		t.Fatalf("коннект жив после GSLoginFail: % x", tail)
-	}
+	r.expectDead("после GSLoginFail вне окна")
 }
 
 // Слот вне домена (−1) на аутентифицированном входе — GSLoginFail, не паника.
@@ -211,9 +231,7 @@ func TestEvilAuthLoginStorm(t *testing.T) {
 	if frame[0] != protocol.OpGSLoginFail {
 		t.Fatalf("повторный AuthLogin в окне = опкод 0x%02X; want GSLoginFail", frame[0])
 	}
-	if tail := r.readFrame(2 * time.Second); tail != nil {
-		t.Fatalf("коннект жив: % x", tail)
-	}
+	r.expectDead("после повторного AuthLogin в окне")
 	close(gate)
 	waitFor(t, "единственная валидация", func() bool { return v.calls.Load() == 1 })
 	if got := v.calls.Load(); got != 1 {

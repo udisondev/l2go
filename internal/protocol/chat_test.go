@@ -11,6 +11,7 @@ import (
 // адресата. Формат — Mobius CT_0_Interlude clientpackets/Say2.java: строка
 // читается до типа, адресат — только при WHISPER.
 func TestSay2Golden(t *testing.T) {
+	t.Parallel()
 	fixes := chatFixtures(t)
 
 	all := fixes["SAY2"]
@@ -60,6 +61,7 @@ func TestSay2Golden(t *testing.T) {
 // Отрицательная таблица Say2: нетерминированный текст, обрезанный тип,
 // whisper без строки адресата — отказ без паники.
 func TestSay2ViewEvil(t *testing.T) {
+	t.Parallel()
 	if _, ok := NewSay2View([]byte{byte(say2)}); ok {
 		t.Error("пустой кадр: ok = true; want false")
 	}
@@ -87,6 +89,7 @@ func TestSay2ViewEvil(t *testing.T) {
 
 // Golden CreatureSay (GS→C): минимальный режим имя+текст канона.
 func TestCreatureSayGolden(t *testing.T) {
+	t.Parallel()
 	f := chatFixtures(t)["CREATURE_SAY"]
 	if CreatureSaySize("Vasya", "Hello") != 1+12+12+4+4 {
 		t.Errorf("CreatureSaySize = %d; want %d", CreatureSaySize("Vasya", "Hello"), 33)
@@ -116,6 +119,7 @@ func TestCreatureSayGolden(t *testing.T) {
 
 // Golden SystemMessage (GS→C): Id без параметров.
 func TestSystemMessageGolden(t *testing.T) {
+	t.Parallel()
 	f := chatFixtures(t)["SYSTEM_MESSAGE"]
 	var dst [SystemMessageSize]byte
 	n := WriteSystemMessage(dst[:], SystemMessageWelcomeToTheWorldOfLineageII)
@@ -137,6 +141,7 @@ func TestSystemMessageGolden(t *testing.T) {
 // Реестр Id и таблица ChatType — выборочные значения против SystemMessageId.java
 // и network/enums/ChatType.java @43ac8878 (машина против магических чисел).
 func TestChatConstants(t *testing.T) {
+	t.Parallel()
 	ids := []struct {
 		id   SystemMessageID
 		want int32

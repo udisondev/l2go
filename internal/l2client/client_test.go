@@ -139,7 +139,7 @@ func waitForLog(t *testing.T, out *syncBuffer, sub string) {
 		if strings.Contains(out.String(), sub) {
 			return
 		}
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("подстрока %q не появилась в логе за 5с", sub)
 }
@@ -445,9 +445,11 @@ func TestGameClientStress(t *testing.T) {
 	runErr := make(chan error, 1)
 	go func() { runErr <- gc.Run(ctx) }()
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); _ = gc.Logout() }()
-	go func() { defer wg.Done(); time.Sleep(time.Millisecond); _ = gc.Close() }()
+	wg.Go(func() { _ = gc.Logout() })
+	wg.Go(func() {
+		time.Sleep(time.Millisecond) // стаггер интерливинга Logout/Close (нагрузка), не синхронизация
+		_ = gc.Close()
+	})
 	wg.Wait()
 	select {
 	case <-runErr:

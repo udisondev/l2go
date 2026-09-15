@@ -79,7 +79,7 @@ func TestAccountsEvilLogins(t *testing.T) {
 			t.Errorf("Create(злой логин %q) = nil; want ошибка", login)
 		}
 	}
-	entries, _ := os.ReadDir(filepath.Join(dir, "accounts"))
+	entries := readDirT(t, filepath.Join(dir, "accounts"))
 	if len(entries) != 0 {
 		t.Errorf("злые логины создали файлы: %d", len(entries))
 	}
@@ -110,9 +110,7 @@ func TestAccountsConcurrent(t *testing.T) {
 	acc, _ := OpenAccounts(dir, true)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			login := "user" + string(rune('a'+i))
 			for j := 0; j < 10; j++ {
 				if got := acc.Verify(login, "pass"+string(rune('a'+i))); got != VerdictOK {
@@ -120,11 +118,21 @@ func TestAccountsConcurrent(t *testing.T) {
 					return
 				}
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
-	entries, _ := os.ReadDir(filepath.Join(dir, "accounts"))
+	entries := readDirT(t, filepath.Join(dir, "accounts"))
 	if len(entries) != 8 {
 		t.Errorf("создано аккаунтов %d; want 8", len(entries))
 	}
+}
+
+// readDirT — чтение каталога с проверкой ошибки (игнор через _ запрещён).
+func readDirT(t *testing.T, dir string) []os.DirEntry {
+	t.Helper()
+	e, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("os.ReadDir(%s): %v", dir, err)
+	}
+	return e
 }

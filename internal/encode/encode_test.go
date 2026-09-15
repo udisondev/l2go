@@ -111,7 +111,10 @@ func TestPerFrameCryptoBatch(t *testing.T) {
 // FIFO: порядок кадров одного клиента не перемешивается.
 func TestFIFOOrder(t *testing.T) {
 	t.Parallel()
-	s, _ := NewStage(1 << 18)
+	s, err := NewStage(1 << 18)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.Unregister(2)
 	c := s.Register(2, keyFixture)
 	for i := byte(0); i < 8; i++ {
@@ -131,7 +134,10 @@ func TestFIFOOrder(t *testing.T) {
 // Кап байтов: push сверх капа не встаёт в очередь, Take возвращает ActClose.
 func TestByteCapDisconnect(t *testing.T) {
 	t.Parallel()
-	s, _ := NewStage(64)
+	s, err := NewStage(64)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.Unregister(3)
 	c := s.Register(3, keyFixture)
 
@@ -154,7 +160,10 @@ func TestByteCapDisconnect(t *testing.T) {
 // Close-after-flush: стоящие кадры выдаются, сокет рвётся после флеша.
 func TestCloseAfterFlush(t *testing.T) {
 	t.Parallel()
-	s, _ := NewStage(1 << 16)
+	s, err := NewStage(1 << 16)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.Unregister(4)
 	c := s.Register(4, keyFixture)
 	s.Push(4, []byte{0x01, 0x02}, false)
@@ -172,7 +181,10 @@ func TestCloseAfterFlush(t *testing.T) {
 // Паркинг: пустой Take спит до push (или close), не поллит. Timing-зависим
 // (негативное окно 50мс) — без t.Parallel.
 func TestTakeParksUntilPush(t *testing.T) {
-	s, _ := NewStage(1 << 16)
+	s, err := NewStage(1 << 16)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.Unregister(5)
 	c := s.Register(5, keyFixture)
 
@@ -202,7 +214,10 @@ func TestTakeParksUntilPush(t *testing.T) {
 // аллокаций нет.
 func TestSlabReuse(t *testing.T) {
 	t.Parallel()
-	s, _ := NewStage(1 << 16)
+	s, err := NewStage(1 << 16)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.Unregister(6)
 	c := s.Register(6, keyFixture)
 
@@ -225,7 +240,10 @@ func TestSlabReuse(t *testing.T) {
 // Unknown id: Push/Close на ушедшего — no-op, паники нет.
 func TestUnknownClientNoop(t *testing.T) {
 	t.Parallel()
-	s, _ := NewStage(1 << 12)
+	s, err := NewStage(1 << 12)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s.Push(999, []byte{1}, false) // не зарегистрирован
 	s.Close(999)
 	s.Unregister(999)
@@ -238,7 +256,10 @@ func TestUnknownClientNoop(t *testing.T) {
 // Стресс: параллельные Push (шлюз/мир) против единственного Take под -race —
 // порядок каждого батча FIFO, потерь нет.
 func TestConcurrentPushSingleTake(t *testing.T) {
-	s, _ := NewStage(1 << 22)
+	s, err := NewStage(1 << 22)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.Unregister(8)
 	c := s.Register(8, keyFixture)
 

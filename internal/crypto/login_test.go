@@ -20,6 +20,7 @@ func newDynLogin(t *testing.T) *LoginCrypt {
 }
 
 func TestLoginCryptDynamicGolden(t *testing.T) {
+	t.Parallel()
 	// payload ≡ 4 (mod 8) — дискриминирующий размер: различает все три формы паддинга.
 	lc := newDynLogin(t)
 	payload := mustHex(t, "05000000")
@@ -47,6 +48,7 @@ func TestLoginCryptDynamicGolden(t *testing.T) {
 }
 
 func TestLoginCryptInitGolden(t *testing.T) {
+	t.Parallel()
 	// payload ≡ 0 (mod 8) — дискриминирующий размер static-ветки (безусловное
 	// добивание против условного: 32 против 24 байт).
 	lc := NewLoginCrypt()
@@ -75,6 +77,7 @@ func TestLoginCryptInitGolden(t *testing.T) {
 }
 
 func TestLoginCryptDecryptTolerance(t *testing.T) {
+	t.Parallel()
 	// Один payload в трёх формах кадра (классическая 16 / CT0 24 / условная 8 для
 	// выровненного случая): Decrypt принимает любую — приём форм-агностичен.
 	payload := []byte{0x05, 0x00, 0x00, 0x00}
@@ -132,6 +135,7 @@ func buildFrame(t *testing.T, key, payload []byte, conditional, tail bool) []byt
 }
 
 func TestLoginCryptFrameSize(t *testing.T) {
+	t.Parallel()
 	for p := 1; p <= 64; p++ {
 		for _, static := range []bool{false, true} {
 			fs := frameSize(p, static)
@@ -158,6 +162,7 @@ func TestLoginCryptFrameSize(t *testing.T) {
 }
 
 func TestLoginCryptLifecycle(t *testing.T) {
+	t.Parallel()
 	lc := NewLoginCrypt()
 	dst := make([]byte, 64)
 
@@ -183,6 +188,7 @@ func TestLoginCryptLifecycle(t *testing.T) {
 }
 
 func TestLoginCryptRoundtripProperty(t *testing.T) {
+	t.Parallel()
 	// Полный цикл обеих веток на всех остатках длины payload mod 8 и много
 	// блоков: ловит residue-специфичные ошибки построения кадра (копирование,
 	// зануление паддинга, зона XOR-pass коротких static-кадров).
@@ -227,6 +233,7 @@ func TestLoginCryptRoundtripProperty(t *testing.T) {
 }
 
 func TestLoginCryptBadChecksum(t *testing.T) {
+	t.Parallel()
 	lc := newDynLogin(t)
 	frame := buildFrame(t, mustHex(t, dynKeyHex), []byte{0x05, 0x00, 0x00, 0x00}, false, true)
 	frame[2] ^= 0xFF // ломаем шифртекст
@@ -236,6 +243,7 @@ func TestLoginCryptBadChecksum(t *testing.T) {
 }
 
 func TestLoginCryptGuards(t *testing.T) {
+	t.Parallel()
 	lc := newDynLogin(t)
 	dst := make([]byte, MaxFrameOverhead)
 
@@ -261,6 +269,7 @@ func TestLoginCryptGuards(t *testing.T) {
 }
 
 func TestLoginCryptErrorsWrapped(t *testing.T) {
+	t.Parallel()
 	lc := NewLoginCrypt()
 	err := lc.SetKey(nil)
 	if err == nil {

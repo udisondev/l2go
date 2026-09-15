@@ -88,14 +88,12 @@ func TestStressCompetingClaims(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := range contenders {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			if err := box.Claim(uint64(i + 1)); err == nil {
 				wins.Add(1)
 			}
-		}(i)
+		})
 	}
 	close(start)
 	wg.Wait()
@@ -116,7 +114,7 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 	for s := range senders {
 		wgSenders.Go(func() {
 			for i := range perSender {
-				seq := uint64(s*perSender + i)
+				seq := uint64(s*perSender + i) // s — уникальный префикс отправителя
 				r.Send(Envelope{To: Addr{Entity: 1}, FromID: 1, Kind: KindAggro,
 					Payload: testSeq(seq)})
 				sent.Add(1)
@@ -222,10 +220,8 @@ func TestStressRegistryBirthsRetiresSenders(t *testing.T) {
 			delivered.Add(own)
 		})
 	}
-	for s := range senders {
-		wgSenders.Add(1)
-		go func(s int) {
-			defer wgSenders.Done()
+	for range senders {
+		wgSenders.Go(func() {
 			for i := range lettersPerSender {
 				liveMu.Lock()
 				n := len(live)
@@ -247,7 +243,7 @@ func TestStressRegistryBirthsRetiresSenders(t *testing.T) {
 				r.Send(Envelope{To: Addr{Entity: id}, FromID: 1, Kind: KindAggro})
 				sent.Add(1)
 			}
-		}(s)
+		})
 	}
 	wgSenders.Wait()
 	wgSpawners.Wait()

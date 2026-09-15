@@ -17,6 +17,7 @@ func attackViewBytes(extra ...byte) []byte {
 }
 
 func TestNewAttackView(t *testing.T) {
+	t.Parallel()
 	full := attackViewBytes()
 	if _, ok := NewAttackView(full[:len(full)-1]); ok {
 		t.Error("NewAttackView(39 байт): ok=true; want false")
@@ -46,6 +47,7 @@ func TestNewAttackView(t *testing.T) {
 // Длинный пакет (extraHits > 0) принимается; ExtraHits читается, координаты
 // цели читаются от хвоста (после доп-ударов) — не смещаются.
 func TestAttackViewExtraHits(t *testing.T) {
+	t.Parallel()
 	// первый hit + один extra {targetID, damage, flags}
 	extra := append([]byte{},
 		0x2C, 0x01, 0, 0, // targetID 300
@@ -70,6 +72,7 @@ func TestAttackViewExtraHits(t *testing.T) {
 
 // Нулевое значение представления недействительно — конструктор обязателен.
 func TestAttackViewZeroInvalid(t *testing.T) {
+	t.Parallel()
 	if _, ok := NewAttackView(nil); ok {
 		t.Error("NewAttackView(nil): ok=true")
 	}

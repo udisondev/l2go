@@ -5,6 +5,7 @@ import "testing"
 // Lookup-имена пакетов: выборочные значения по направлениям S→C и полнота
 // против таблиц каталога (мапы строятся из тех же таблиц).
 func TestPacketNames(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		gs   bool
@@ -38,6 +39,7 @@ func TestPacketNames(t *testing.T) {
 
 // Ex-семейство GS→C: sub — uint16, старший байт не теряется.
 func TestGameServerExName(t *testing.T) {
+	t.Parallel()
 	if name, ok := GameServerExName(0x38); !ok || name != "EX_SHOW_SCREEN_MESSAGE" {
 		t.Errorf("GameServerExName(0x38) = %q, %v; want EX_SHOW_SCREEN_MESSAGE", name, ok)
 	}
@@ -51,6 +53,7 @@ func TestGameServerExName(t *testing.T) {
 
 // Полнота: каждая запись таблицы находится lookup'ом своего направления.
 func TestPacketNamesComplete(t *testing.T) {
+	t.Parallel()
 	for _, def := range loginClientOpcodes {
 		if name, ok := LoginClientPacketName(byte(def.Value)); !ok || name != def.Name {
 			t.Errorf("LC: %02X → %q, %v; want %q", def.Value, name, ok, def.Name)

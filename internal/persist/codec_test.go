@@ -50,7 +50,7 @@ func TestCodecRoundtrip(t *testing.T) {
 }
 
 func TestCodecCorrEchoField(t *testing.T) {
-	buf, _ := EncodeRequest(Request{Op: OpCharList, Corr: 12345, Account: "acc"})
+	buf := mustReq(t, Request{Op: OpCharList, Corr: 12345, Account: "acc"})
 	var raw map[string]any
 	if err := json.Unmarshal(buf, &raw); err != nil {
 		t.Fatal(err)
@@ -93,4 +93,14 @@ func ExampleEncodeRequest() {
 	}
 	fmt.Println(req.Op, req.Corr, req.Account)
 	// Output: charlist 7 player1
+}
+
+// mustReq — кодирование с проверкой ошибки (игнор _ запрещён).
+func mustReq(t *testing.T, r Request) []byte {
+	t.Helper()
+	b, err := EncodeRequest(r)
+	if err != nil {
+		t.Fatalf("EncodeRequest: %v", err)
+	}
+	return b
 }

@@ -11,6 +11,7 @@ import (
 // Формат — Mobius CT_0_Interlude clientpackets/CharacterCreate.java: имя и
 // 12×D в порядке race, sex, classId, INT, STR, CON, MEN, DEX, WIT, внешность.
 func TestCharacterCreateGolden(t *testing.T) {
+	t.Parallel()
 	f := charcreateFixture(t, "CHARACTER_CREATE")
 	d := CharacterCreateData{
 		Name: "Newbie", Race: 0, Sex: 1, ClassID: 0,
@@ -46,6 +47,7 @@ func TestCharacterCreateGolden(t *testing.T) {
 // CharacterCreateView: строка без терминатора и обрезанный хвост после имени —
 // детерминированный отказ.
 func TestCharacterCreateViewEvil(t *testing.T) {
+	t.Parallel()
 	full := wire(charcreateFixture(t, "CHARACTER_CREATE"))
 	// нетерминированная строка: затираем все терминаторы нулями-единицами.
 	none := append([]byte{}, full...)
@@ -81,6 +83,7 @@ func TestCharacterCreateViewEvil(t *testing.T) {
 
 // Golden CharacterDelete и NewCharacter (C→GS) — маркеры флоу создания.
 func TestCharacterDeleteAndNewCharGolden(t *testing.T) {
+	t.Parallel()
 	fDel := charcreateFixture(t, "CHARACTER_DELETE")
 	var dst [CharacterDeleteSize]byte
 	n := WriteCharacterDelete(dst[:], 3)
@@ -111,6 +114,7 @@ func TestCharacterDeleteAndNewCharGolden(t *testing.T) {
 // Golden CharTemplates (GS→C): один шаблон Human Fighter; числа — константы
 // канона HumanFighter.xml (дубль persist.HumanFighter осознан, решение P3.3).
 func TestCharTemplatesGolden(t *testing.T) {
+	t.Parallel()
 	f := charcreateFixture(t, "CHAR_TEMPLATES")
 	templates := []CharTemplate{{
 		Race: 0, ClassID: 0,
@@ -146,6 +150,7 @@ func TestCharTemplatesGolden(t *testing.T) {
 // Отрицательная таблица CharTemplatesView: недоверенный счётчик — знаковый
 // мусор и завышенный count при коротком теле дают отказ без паники.
 func TestCharTemplatesViewEvil(t *testing.T) {
+	t.Parallel()
 	full := wire(charcreateFixture(t, "CHAR_TEMPLATES"))
 	neg := append([]byte{}, full...)
 	WriteD(neg[1:], -1) // count = 0xFFFFFFFF
@@ -166,6 +171,7 @@ func TestCharTemplatesViewEvil(t *testing.T) {
 
 // Golden ответов создания/удаления (GS→C): фиксированные D-кадры канона.
 func TestCharCreateResponsesGolden(t *testing.T) {
+	t.Parallel()
 	okFix := charcreateFixture(t, "CHAR_CREATE_OK")
 	var okDst [CharCreateOkSize]byte
 	n := WriteCharCreateOk(okDst[:])

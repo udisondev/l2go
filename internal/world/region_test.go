@@ -393,7 +393,7 @@ func TestRegionCloseLogOnExit(t *testing.T) {
 	cfg.Hz = 1000
 	_, r := newTestRegion(t, cfg)
 	spawnResident(t, r, 100)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); r.metro.Run(ctx) }()

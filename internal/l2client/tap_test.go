@@ -121,7 +121,7 @@ func freeAddr(t *testing.T) string {
 
 // Полный флоу через тап: лог декодера побайтово равен логу прямой сессии.
 func TestTapFullFlowLogParity(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// прямая сессия — эталон лога
 	srvDirect, outDirect := startScripted(t, singleServerLoginScript)
