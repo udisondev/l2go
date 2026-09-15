@@ -142,6 +142,10 @@ type Gateway struct {
 	connsN      atomic.Int64
 	boundN      atomic.Int64
 	phaseFrames [7]atomic.Uint64
+	// Длины карт интерливингов — атомики-зеркала: единственный мутатор карт
+	// актор, но наблюдение извне (тесты/телеметрия) не должно лезть к картам.
+	tombstonesN atomic.Int64
+	tornDownN   atomic.Int64
 	testPanicOn byte // шов инъекции паники (тесты recover-политики)
 
 	deadLetters  atomic.Uint64
@@ -199,6 +203,7 @@ type Stats struct {
 	Failures, Panics        uint64
 	Displaced               uint64
 	PhaseFrames             [7]uint64
+	Tombstones, TornDown    int64
 }
 
 // Stats возвращает снимок метрик.
@@ -276,6 +281,7 @@ func (g *Gateway) onEvent(ev conn.Event) {
 		if g.closedUnopened[ev.Conn] {
 			// Закрытие обработано раньше открытия — коннекта больше нет.
 			delete(g.closedUnopened, ev.Conn)
+			g.tombstonesN.Add(-1)
 			g.deadLetters.Add(1)
 			return
 		}
@@ -301,6 +307,7 @@ func (g *Gateway) onClose(ce conn.ClosedEvent) {
 		// Коннект разобран актором (close-after-fail/вытеснение/ConnClose):
 		// tombstone не нужен — OnOpen этого connID давно обработан.
 		delete(g.tornDown, ce.Conn)
+		g.tornDownN.Add(-1)
 		return
 	}
 	gc := g.conns[ce.Conn]
@@ -340,6 +347,7 @@ func (g *Gateway) teardownMark(gc *gconn, notifyWorld, byClose bool) {
 	g.connsN.Add(-1)
 	if !byClose {
 		g.tornDown[gc.id] = true
+		g.tornDownN.Add(1)
 	}
 	g.stage.Close(encode.ClientID(gc.id))
 	g.conn.CloseAfterFlush(gc.id)

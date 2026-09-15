@@ -2,7 +2,9 @@ package conn
 
 import (
 	"bytes"
+	"errors"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -245,17 +247,42 @@ func TestPresessionIdlePerFrame(t *testing.T) {
 	ev := recvEvent(t, s.Events()) // открытие
 	ev.Done()
 	s.SetReadMode(ev.Conn, ModePresession)
+	// Со второго кадра поток шифруется (канон): события несут расшифрованные
+	// ридэром байты — сверяем содержимое честно.
+	enc := crypto.NewGameCrypt(ev.Key)
+	enc.Enable()
+	sendCrypt := func(body []byte) {
+		t.Helper()
+		wire := append([]byte(nil), body...)
+		if err := enc.Encrypt(wire); err != nil {
+			t.Fatal(err)
+		}
+		sendFrame(t, conn, wire)
+	}
 
-	// Кадры перезаводят idle: три кадра с интервалом короче таймаута.
+	// Кадры перезаводят idle. Фальсификация: без перезавода дедлайн истёк
+	// бы к t=IdleTimeout(200мс) от SetReadMode; с перезаводом — к t≈320мс
+	// от последнего кадра (t≈200мс). 4-й кадр на t≈320мс (пауза 120мс
+	// после третьего, сон-каданс — только между кадрами) жив только при
+	// перезаводе; запас до дедлайна 80мс.
 	for i := 0; i < 3; i++ {
-		sendFrame(t, conn, []byte{0x01, byte(i)})
-		ev := recvEvent(t, s.Events())
-		if ev.Open {
+		sendCrypt([]byte{0x01, byte(i)})
+		e := recvEvent(t, s.Events())
+		if e.Open {
 			t.Fatal("ожидался кадр, пришло открытие")
 		}
-		ev.Done()
-		time.Sleep(100 * time.Millisecond)
+		e.Done()
+		if i < 2 {
+			time.Sleep(100 * time.Millisecond) // каданс кадров, не синхронизация
+		}
 	}
+	time.Sleep(120 * time.Millisecond) // молчание внутри окна перезавода
+	sendCrypt([]byte{0x01, 0x63})
+	fourth := recvEvent(t, s.Events())
+	if fourth.Open || fourth.Frame[1] != 0x63 {
+		t.Fatalf("живость после паузы: коннект разорван без перезавода idle: %+v", fourth)
+	}
+	fourth.Done()
 }
 
 func TestStationarySilentAlive(t *testing.T) {
@@ -291,9 +318,15 @@ func TestMaxConnsReject(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
+	// Отказ — быстрый EOF/RST; таймаут означал бы «принят и молчит» (лимит
+	// сломан) — различаем класс ошибки, а не просто «есть ошибка».
 	_ = second.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := second.Read(make([]byte, 1)); err == nil {
-		t.Error("второй коннект сверх лимита обслуживается")
+	if _, err := second.Read(make([]byte, 1)); err == nil ||
+		errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("второй коннект сверх лимита обслуживается: err=%v", err)
+	}
+	if got := s.Stats().Conns; got != 1 {
+		t.Errorf("Conns = %d; want 1 (второй не занял слот)", got)
 	}
 	_ = first
 }
@@ -310,6 +343,9 @@ func TestFrameCapBreak(t *testing.T) {
 	sendFrame(t, conn, big)
 	ce := recvClose(t, s.Closes())
 	ce.Release()
+	if st := s.Stats(); st.ClosedFrameCap != 1 {
+		t.Errorf("ClosedFrameCap = %d; want 1 (разрыв именно по капу, не по дедлайну)", st.ClosedFrameCap)
+	}
 }
 
 // Close-on-overflow своего под-лимита: потребитель не выгребает события —
@@ -330,8 +366,10 @@ func TestPerConnOverflowOwnBreak(t *testing.T) {
 	recvEvent(t, s.Events()) // открытие (не Done — слоты заняты)
 
 	// Обрыв записи на середине лавины — ожидаем: сервер рвёт виновника.
+	// rec — полный валидный кадр (заявленная длина совпадает с записью:
+	// лишний байт оставлял бы хвост, склеивающийся в мусорные кадры).
 	for i := 0; i < 10; i++ {
-		rec := []byte{3, 0, 0x02, byte(i)}
+		rec := []byte{3, 0, 0x02}
 		if _, err := conn.Write(rec); err != nil {
 			break
 		}
@@ -342,8 +380,13 @@ func TestPerConnOverflowOwnBreak(t *testing.T) {
 	}
 	ce.Release()
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := conn.Read(make([]byte, 1)); err == nil {
-		t.Error("сокет штормиста жив после переполнения своего под-лимита")
+	if _, err := conn.Read(make([]byte, 1)); err == nil ||
+		errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("сокет штормиста жив после переполнения: err=%v", err)
+	}
+	st := s.Stats()
+	if st.ClosedOverflow != 1 {
+		t.Errorf("ClosedOverflow = %d; want 1 (разрыв именно overflow, не дедлайн)", st.ClosedOverflow)
 	}
 	// Сосед жив: пишет и читает после разрыва виновника.
 	if _, err := neighbour.Write([]byte("alive")); err != nil {
@@ -375,9 +418,12 @@ func TestWriteLoopBatchAndClose(t *testing.T) {
 	if !bytes.Equal(buf, []byte{3, 0, 1}) {
 		t.Errorf("батч = % x; want 03 00 01", buf)
 	}
+	// Close-вердикт должен разорвать сокет сразу после флеша — раньше
+	// handshake-дедлайна; таймаут чтения означал бы игнор вердикта.
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := conn.Read(make([]byte, 1)); err == nil {
-		t.Error("сокет жив после close-after-flush")
+	if _, err := conn.Read(make([]byte, 1)); err == nil ||
+		errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("сокет жив после close-after-flush: err=%v", err)
 	}
 	ce := recvClose(t, s.Closes())
 	ce.Release()

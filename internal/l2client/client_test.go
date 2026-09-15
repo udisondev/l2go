@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,6 +119,19 @@ func (sb *syncBuffer) String() string {
 }
 
 // waitForLog ждёт появления подстроки в трафик-логе (кадры в полёте).
+// deadAddr — гарантированно мёртвый адрес: ephemeral-порт, освобождённый
+// закрытием слушателя (фиксированный порт мог быть занят сервисом).
+func deadAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	return addr
+}
+
 func waitForLog(t *testing.T, out *syncBuffer, sub string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -669,11 +683,12 @@ func TestCmdScenario(t *testing.T) {
 // Ошибки сетевой стадии оборачиваются с контекстом стадии.
 func TestErrorsWrapped(t *testing.T) {
 	// никто не слушает — ошибка DialLogin с адресом
-	_, err := DialLogin(context.Background(), "127.0.0.1:1", Options{Timeout: 300 * time.Millisecond})
+	addr := deadAddr(t)
+	_, err := DialLogin(context.Background(), addr, Options{Timeout: 300 * time.Millisecond})
 	if err == nil {
 		t.Fatal("DialLogin на закрытый порт: err = nil")
 	}
-	if !errors.Is(err, errDial) && !strings.Contains(err.Error(), "127.0.0.1:1") {
+	if !errors.Is(err, errDial) && !strings.Contains(err.Error(), addr) {
 		t.Errorf("ошибка без контекста адреса: %v", err)
 	}
 }

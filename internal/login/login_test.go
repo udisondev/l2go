@@ -865,11 +865,16 @@ func TestParallelDoubleLogin(t *testing.T) {
 		alive := make([]*l2client.LoginClient, 0, 2)
 		var mu sync.Mutex
 		var wg sync.WaitGroup
+		// Барьер фазы хендшейка: оба клиента дошли до Auth — старт
+		// одновременного логина детерминирован, без сна.
+		var hsWG sync.WaitGroup
+		hsWG.Add(2)
 		for range 2 {
 			wg.Go(func() {
 				lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 5 * time.Second})
 				if err != nil {
 					results <- err
+					hsWG.Done()
 					return
 				}
 				mu.Lock()
@@ -877,13 +882,15 @@ func TestParallelDoubleLogin(t *testing.T) {
 				mu.Unlock()
 				if err := lc.Handshake(); err != nil {
 					results <- err
+					hsWG.Done()
 					return
 				}
+				hsWG.Done()
 				<-start
 				results <- lc.Login("dupe", "pass123")
 			})
 		}
-		time.Sleep(50 * time.Millisecond) // оба коннекта дошли до фазы Auth
+		hsWG.Wait()
 		close(start)
 		wg.Wait()
 		close(results)

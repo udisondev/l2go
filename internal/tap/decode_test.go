@@ -1,6 +1,9 @@
 package tap
 
 import (
+	"sync"
+	"sync/atomic"
+
 	"bytes"
 	"context"
 	"errors"
@@ -104,9 +107,65 @@ func TestJournalForeignMagicIsolated(t *testing.T) {
 	}
 }
 
+// countingWriter — журнал-приёмник с атомиком записанных байтов: тест
+// поллит прогресс без чтения буфера из чужой горутины (гонка bytes.Buffer).
+type countingWriter struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+	n   atomic.Int64
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	n, err := w.buf.Write(p)
+	w.mu.Unlock()
+	w.n.Add(int64(n))
+	return n, err
+}
+
+// bytes возвращает снимок содержимого (после quiesce).
+func (w *countingWriter) bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.buf.Bytes()...)
+}
+
+// journalHasTailData — в снимке журнала есть целая data-запись с 3-байтовым
+// телом (хвост без полного кадра).
+func journalHasTailData(t *testing.T, snapshot []byte) bool {
+	t.Helper()
+	rd := newJournalReader(bytes.NewReader(snapshot))
+	for {
+		rec, err := rd.Next()
+		if errors.Is(err, io.EOF) {
+			return false
+		}
+		if err != nil {
+			return false // полу-запись: ждём дальше
+		}
+		if rec.Type == recData && len(rec.Bytes) == 3 {
+			return true
+		}
+	}
+}
+
+// journalHasData — в снимке есть целая data-запись любого размера.
+func journalHasData(snapshot []byte) bool {
+	rd := newJournalReader(bytes.NewReader(snapshot))
+	for {
+		rec, err := rd.Next()
+		if err != nil {
+			return false
+		}
+		if rec.Type == recData {
+			return true
+		}
+	}
+}
+
 // Хвост ноги без полного кадра журналируется записью data (S8-минор).
 func TestTapTailJournaled(t *testing.T) {
-	var journal bytes.Buffer
+	var journal countingWriter
 	upLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("upstream: %v", err)
@@ -136,25 +195,17 @@ func TestTapTailJournaled(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	_ = conn.Close()
-	time.Sleep(200 * time.Millisecond) // нога успевает увидеть EOF и журналировать хвост
+	// Нога журналирует хвост после EOF: ждём ПОЛНУЮ data-запись (парсинг
+	// среза журнала в каждой итерации — запись из двух Write не должна
+	// быть оборвана отменой), не сон.
+	deadline := time.Now().Add(2 * time.Second)
+	for !journalHasTailData(t, journal.bytes()) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	cancel()
 	<-runDone
 
-	rd := newJournalReader(bytes.NewReader(journal.Bytes()))
-	sawPartialData := false
-	for {
-		rec, err := rd.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			t.Fatalf("Next: %v", err)
-		}
-		if rec.Type == recData && len(rec.Bytes) == 3 {
-			sawPartialData = true
-		}
-	}
-	if !sawPartialData {
+	if !journalHasTailData(t, journal.bytes()) {
 		t.Fatal("бескарровый хвост не журналирован")
 	}
 }

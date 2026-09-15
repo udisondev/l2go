@@ -448,14 +448,12 @@ func TestGatewayCloseDuringValidation(t *testing.T) {
 	close(gate)
 	<-authErr
 
-	// Поздний valid=true на закрытый коннект: бинда нет.
-	waitFor(t, "завершение обработано", func() bool {
+	// Поздний valid=true на закрытый коннект: бинд не возникает (обе ветки
+	// порядка completion/close сходятся в Bound==0 — зомби-бинд фальсифицируется).
+	waitFor(t, "бинд снят после окна валидации", func() bool {
 		h.tick()
-		return true
+		return h.gw.Stats().Bound == 0
 	})
-	if st := h.gw.Stats(); st.Bound != 0 {
-		t.Fatalf("бинд возник на закрытом коннекте: %+v", st)
-	}
 
 	// Повторный вход проходит.
 	again := dialClient(t, h.addr)
@@ -497,12 +495,45 @@ func TestGatewayPersistTimeout(t *testing.T) {
 	})
 }
 
+// newTestGateway — Gateway без запущенного актора: прямые вызовы обработчиков
+// без гонки за карты (живой актор харнесса остаётся запаркованным, но гарантия
+// нигде не зафиксирована — здесь её даёт отсутствие Run).
+func newTestGateway(t *testing.T) *Gateway {
+	t.Helper()
+	stage, err := encode.NewStage(1 << 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := transport.NewRegistry(8)
+	connSrv, err := conn.New(conn.Config{
+		MaxConns: 4, HandshakeTimeout: time.Second, IdleTimeout: time.Second,
+		WriteTimeout: time.Second, KeepAlive: time.Second,
+		FrameCap: 8192, EventQueue: 4, PerConnEvents: 2,
+	}, StageOutbounds{Stage: stage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &Gateway{
+		cfg: Config{
+			Persist: 1, Region: transport.Addr{Entity: 2},
+			PersistTimeout: time.Second, InboxCap: 4, DrainCap: 2,
+			PanicLimit: 3, CompletionsCap: 4,
+		},
+		reg: reg, stage: stage, conn: connSrv,
+		conns:          make(map[conn.ConnID]*gconn),
+		accounts:       make(map[string]conn.ConnID),
+		closedUnopened: make(map[conn.ConnID]bool),
+		tornDown:       make(map[conn.ConnID]bool),
+	}
+	g.id = reg.Register(&g.box)
+	g.token = uint64(g.id)
+	return g
+}
+
 // Recover-политика: шов инъекции паники — recover + failed-счётчик; серия
 // PanicLimit — паника наружу (let-it-crash).
 func TestGatewayRecoverPolicy(t *testing.T) {
-	h := newHarness(t, alwaysValid(), 2*time.Second, true)
-	g := h.gw
-	g.cfg.PanicLimit = 3
+	g := newTestGateway(t)
 	gc := &gconn{id: 1, phase: phHandshake, key: keyFixtureGW}
 	g.conns[1] = gc
 	g.testPanicOn = 0x77
@@ -570,18 +601,31 @@ func TestGatewayPersistRefusal(t *testing.T) {
 		_, err := gc.Auth(testEndpoint(), "tester")
 		authErr <- err
 	}()
-	// Живое ожидание list: подменяем ответ отказом (шов отказывающего
-	// актора). Corr=1: первый коннект харнесса.
-	_ = keyFixtureGW
-	refuse, _ := persist.EncodeReply(persist.Reply{Op: persist.OpCharList, Corr: 1, Code: persist.CodeIO, Err: "io"})
+	// Живое ожидание list (Corr=1: первый коннект харнесса): отказ шлюётся
+	// только на вооружённое ожидание, иначе дед-леттерится и тест молча
+	// проходит по ветке таймаута (PersistTimeout=2с).
+	waitFor(t, "бинд и запрос списка вооружены", func() bool {
+		h.tick()
+		return h.gw.Stats().Bound == 1
+	})
+	refuse, err := persist.EncodeReply(persist.Reply{Op: persist.OpCharList, Corr: 1, Code: persist.CodeIO, Err: "io"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.reg.Send(transport.Envelope{
 		To:      transport.Addr{Entity: h.gw.id},
 		FromID:  h.persist.ID(),
 		Kind:    transport.KindPersistReply,
 		Payload: refuse,
 	})
-	if err := <-authErr; err == nil {
-		t.Fatal("отказ списка не отверг вход")
+	// Отказ отвечает быстро; таймаут-ветка (2 с) отличима по времени.
+	select {
+	case err := <-authErr:
+		if err == nil {
+			t.Fatal("отказ списка не отверг вход")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("отказ не обработан за 500мс — прошла не ветка ok=false (см. PersistTimeout)")
 	}
 }
 
@@ -606,9 +650,17 @@ func TestCreateFailReasonMapping(t *testing.T) {
 
 // Churn connect+RST при занятом акторе: записи коннектов не накапливаются
 // (tombstone — только для необработанных OnOpen; разбор актором — без него).
+// Quiesce — по атомикам-зеркалам шлюза (Conns/Tombstones/TornDown) и слотам
+// проводов: Release/гашение tombstone происходят в акторе ПОСЛЕ последних
+// мутаций карт, значит нулевые атомики — happens-before чистых карт.
 func TestGatewayChurnNoGrowth(t *testing.T) {
 	h := newHarness(t, alwaysValid(), 2*time.Second, true)
 	g := h.gw
+	quiesced := func() bool {
+		st := g.Stats()
+		return h.connSrv.Stats().Conns == 0 &&
+			st.Conns == 0 && st.Tombstones == 0 && st.TornDown == 0
+	}
 
 	// Путь 1: actor-initiated teardown (чужая версия) — без tombstone.
 	for i := 0; i < 8; i++ {
@@ -620,26 +672,18 @@ func TestGatewayChurnNoGrowth(t *testing.T) {
 			t.Fatal("KeyPacket(result=0) не получен")
 		}
 	}
-	// Слоты возвращают потребители закрытий: ждём полного дрена проводов;
-	// после него актор разобрал все закрытия и карты больше не мутирует
-	// (Release — после обработки, happens-before по атомику слотов).
-	waitFor(t, "слоты чурна освобождены", func() bool {
-		return h.connSrv.Stats().Conns == 0
-	})
+	waitFor(t, "чурн teardown разобран (слоты+зеркала шлюза)", quiesced)
+
 	// Путь 2: обрыв до обработки OnOpen — tombstone ставится и гасится
 	// поздним OnOpen (закрытие раньше открытия).
 	for i := 0; i < 8; i++ {
 		dialRaw(t, h.addr).conn.Close() // RST немедленно
 	}
-	waitFor(t, "слоты RST-чурна освобождены", func() bool {
-		return h.connSrv.Stats().Conns == 0
-	})
-	if len(g.conns) > 2 {
-		t.Errorf("записей коннектов %d — рост от чурна", len(g.conns))
-	}
-	if len(g.closedUnopened) > 0 || len(g.tornDown) > 0 {
-		t.Errorf("память интерливингов: closedUnopened=%d tornDown=%d",
-			len(g.closedUnopened), len(g.tornDown))
+	waitFor(t, "чурн RST погашен (слоты+зеркала шлюза)", quiesced)
+
+	st := g.Stats()
+	if st.Conns != 0 || st.Tombstones != 0 || st.TornDown != 0 {
+		t.Fatalf("память интерливингов после чурна: %+v", st)
 	}
 }
 

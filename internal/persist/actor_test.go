@@ -307,11 +307,14 @@ func TestActorConcurrentSenders(t *testing.T) {
 	}
 }
 
+// mustEncode вызывается в том числе из побочных горутин: FailNow там
+// некорректен — ошибка, не фаталь.
 func mustEncode(t *testing.T, r Request) []byte {
 	t.Helper()
 	buf, err := EncodeRequest(r)
 	if err != nil {
-		t.Fatalf("EncodeRequest() error = %v", err)
+		t.Errorf("EncodeRequest() error = %v", err)
+		return nil
 	}
 	return buf
 }
@@ -337,7 +340,7 @@ func TestActorTickFallback(t *testing.T) {
 	before := env.actor.Stats().Handled
 	for i := 0; i < 3; i++ {
 		env.doorbell <- struct{}{}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // пейсинг звонков, не синхронизация: cap-1 сериализует сам
 	}
 	if after := env.actor.Stats().Handled; after != before {
 		t.Errorf("пустые звонки обработали письма: %d → %d", before, after)
@@ -426,6 +429,8 @@ func TestActorPanicRecover(t *testing.T) {
 	env.actor.testPanicOp = OpCreateChar
 	env.send(Request{Op: OpCreateChar, Corr: 1, Account: "acc", Name: "Boom"})
 	env.waitPanics(t, 1)
+	// Негативное окно: «нет ответа» за 200мс — вспомогательный ассерт;
+	// основной оракул ветки — классовый дроп остатка ниже (FinalReliable).
 	select {
 	case rep := <-env.replyCh:
 		t.Fatalf("паникующее письмо получило ответ: %+v", rep)

@@ -356,18 +356,19 @@ func TestRegionHeartbeatFallbackWakes(t *testing.T) {
 	cfg.HeartbeatTicks = 2
 	_, r := newTestRegion(t, cfg)
 	r.Remove(spawnResident(t, r, 1)) // регион спит без жителей
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); r.metro.Run(ctx) }()
-	go func() { defer wg.Done(); r.Run(ctx) }()
+	// Имитация потерянного токена (окно F36): письмо+съедание ДО старта Run —
+	// регион гарантированно стартует без токена и обязан разбудиться фолбэком;
+	// после старта Run токен может законно уйти региону — default не ошибка.
 	r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindLinkDead})
-	// имитация потерянного токена: съесть, не дав Run
 	select {
 	case <-r.ctrl.Notify():
 	default:
 	}
+	var wg sync.WaitGroup
+	wg.Go(func() { r.metro.Run(ctx) })
+	wg.Go(func() { r.Run(ctx) })
 	deadline := time.After(2 * time.Second)
 	for r.Stats().DoneTick == 0 && r.ctrl.Depth() > 0 {
 		select {
@@ -478,13 +479,9 @@ func TestRegionFreezeOnLogWriteError(t *testing.T) {
 	if err := r.log.file.Close(); err != nil { // писатель сломан: следующий кадр за буфером даст ошибку записи
 		t.Fatalf("close: %v", err)
 	}
-	big := make([]transport.Envelope, 2048) // кадр заведомо больше bufio-буфера (4 КиБ)
-	for i := range big {
-		big[i] = transport.Envelope{FromID: 5, Kind: transport.KindAggro, Payload: make([]byte, 64)}
-	}
-	// шаг с большой волной контрольных (вне бюджета дрена): кадр больше
-	// bufio-буфера выталкивает запись в закрытый файл — ошибка записи
-	for range big {
+	// Шаг с волной контрольных (2048 > бюджета дрена): порция записей
+	// выталкивает хвост bufio-буфера в закрытый файл — ошибка записи.
+	for range 2048 {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
 	}
 	r.metro.tick.Add(1)

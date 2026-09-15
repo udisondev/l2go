@@ -169,9 +169,9 @@ func TestCloseAfterFlush(t *testing.T) {
 	}
 }
 
-// Паркинг: пустой Take спит до push (или close), не поллит.
+// Паркинг: пустой Take спит до push (или close), не поллит. Timing-зависим
+// (негативное окно 50мс) — без t.Parallel.
 func TestTakeParksUntilPush(t *testing.T) {
-	t.Parallel()
 	s, _ := NewStage(1 << 16)
 	defer s.Unregister(5)
 	c := s.Register(5, keyFixture)

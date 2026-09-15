@@ -61,7 +61,7 @@ func TestTapHalfClose(t *testing.T) {
 	}()
 
 	listen := freeAddr(t)
-	var journal bytes.Buffer
+	var journal countingWriter
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runDone := make(chan error, 1)
@@ -109,7 +109,7 @@ func TestTapHalfClose(t *testing.T) {
 	}
 
 	// журнал полон: data обеих ног + connClose
-	jr := newJournalReader(bytes.NewReader(journal.Bytes()))
+	jr := newJournalReader(bytes.NewReader(journal.bytes()))
 	var dataN, closeN int
 	for {
 		rec, err := jr.Next()
@@ -153,7 +153,7 @@ func TestTapShutdown(t *testing.T) {
 	}()
 
 	listen := freeAddr(t)
-	var journal bytes.Buffer
+	var journal countingWriter
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan error, 1)
 	go func() {
@@ -164,7 +164,12 @@ func TestTapShutdown(t *testing.T) {
 	if _, err := conn.Write(wireRecord([]byte("idle"))); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond) // data записана до отмены
+	// data обязан попасть в журнал ДО отмены целиком: ждём полную
+	// data-запись (парсинг среза), не сон и не первый байт.
+	deadline := time.Now().Add(2 * time.Second)
+	for !journalHasData(journal.bytes()) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	cancel()
 	select {
@@ -177,7 +182,7 @@ func TestTapShutdown(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	jr := newJournalReader(bytes.NewReader(journal.Bytes()))
+	jr := newJournalReader(bytes.NewReader(journal.bytes()))
 	sawClose := false
 	for {
 		rec, err := jr.Next()
@@ -199,12 +204,13 @@ func TestTapShutdown(t *testing.T) {
 // Недоступный upstream: соединение закрыто, connOpen+connClose в журнале.
 func TestTapEvilUpstream(t *testing.T) {
 	listen := freeAddr(t)
-	var journal bytes.Buffer
+	var journal countingWriter
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runDone := make(chan error, 1)
 	go func() {
-		runDone <- Run(ctx, Options{Maps: []Map{{Listen: listen, Upstream: "127.0.0.1:1"}}, Log: &journal})
+		upstream := deadAddr(t) // ephemeral-порт без слушателя
+		runDone <- Run(ctx, Options{Maps: []Map{{Listen: listen, Upstream: upstream}}, Log: &journal})
 	}()
 
 	conn := dialReady(t, listen)
@@ -221,7 +227,7 @@ func TestTapEvilUpstream(t *testing.T) {
 		t.Fatal("Run не завершился")
 	}
 
-	if err := Decode(bytes.NewReader(journal.Bytes()), DecodeOptions{}); err != nil {
+	if err := Decode(bytes.NewReader(journal.bytes()), DecodeOptions{}); err != nil {
 		t.Fatalf("Decode журнала злого upstream: %v", err)
 	}
 }
@@ -239,4 +245,17 @@ func dialReady(t *testing.T, addr string) net.Conn {
 	}
 	t.Fatalf("слушатель %s не готов за 5с", addr)
 	return nil
+}
+
+// deadAddr — гарантированно мёртвый upstream: ephemeral-порт, освобождённый
+// закрытием слушателя (фиксированный порт мог быть занят сервисом).
+func deadAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	return addr
 }

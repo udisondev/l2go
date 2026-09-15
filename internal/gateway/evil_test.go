@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/udisondev/l2go/internal/crypto"
-	"github.com/udisondev/l2go/internal/l2client"
 	"github.com/udisondev/l2go/internal/protocol"
 )
 
@@ -131,14 +130,14 @@ func TestEvilCharacterSelectSlot(t *testing.T) {
 // коалесцируемый MoveToLocation под лавиной сверх капа — последний
 // побеждает (замена старого, не дроп нового).
 func TestStationaryInboxPolicy(t *testing.T) {
-	h := newHarness(t, alwaysValid(), 2*time.Second, true)
-	g := h.gw
+	g := newTestGateway(t)
 	gc := &gconn{id: 1, phase: phWorld, entity: 7}
+	g.conns[1] = gc
 
 	move := make([]byte, protocol.MoveToLocationSize)
 	protocol.WriteMoveToLocation(move, 9, 9, 9, 0, 0, 0, 1)
 
-	for i := 0; i < h.gw.cfg.InboxCap+5; i++ {
+	for i := 0; i < g.cfg.InboxCap+5; i++ {
 		g.onStationaryFrame(gc, move)
 	}
 	if len(gc.inbox) != 1 {
@@ -150,7 +149,7 @@ func TestStationaryInboxPolicy(t *testing.T) {
 
 	other := make([]byte, protocol.ValidatePositionSize)
 	protocol.WriteValidatePosition(other, 1, 2, 3, 4, 0)
-	for i := 0; i < h.gw.cfg.InboxCap; i++ { // move занимает слот: 63 влезут
+	for i := 0; i < g.cfg.InboxCap; i++ { // move занимает слот: 63 влезут
 		g.onStationaryFrame(gc, other)
 	}
 	g.onStationaryFrame(gc, other) // кап: дроп нового некоалесцируемого
@@ -162,8 +161,8 @@ func TestStationaryInboxPolicy(t *testing.T) {
 	if st := g.Stats(); st.UnknownOp != 1 {
 		t.Errorf("UnknownOp = %d; want 1", st.UnknownOp)
 	}
-	if len(gc.inbox) != h.gw.cfg.InboxCap {
-		t.Errorf("inbox после мусорного опкода = %d; want неизменным (%d)", len(gc.inbox), h.gw.cfg.InboxCap)
+	if len(gc.inbox) != g.cfg.InboxCap {
+		t.Errorf("inbox после мусорного опкода = %d; want неизменным (%d)", len(gc.inbox), g.cfg.InboxCap)
 	}
 }
 
@@ -220,7 +219,6 @@ func TestEvilAuthLoginStorm(t *testing.T) {
 	if got := v.calls.Load(); got != 1 {
 		t.Errorf("ValidateSession вызовов %d; want 1 (шторм отсечён)", got)
 	}
-	_ = l2client.Options{}
 }
 
 // Ветки домена создания и удаления (канон-ответы, коннект жив):
