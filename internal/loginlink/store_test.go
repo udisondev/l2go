@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+// mustPut — Put фикстуры: отказ допустим только как провал теста.
+func mustPut(t *testing.T, s *Sessions, account string, loginOk1, loginOk2 int32) {
+	t.Helper()
+	if err := s.Put(account, loginOk1, loginOk2); err != nil {
+		t.Fatalf("Put(%q): %v", account, err)
+	}
+}
+
 func TestSessionsPutConsume(t *testing.T) {
 	t.Parallel()
 
@@ -30,7 +38,7 @@ func TestSessionsPutWithPlayKeys(t *testing.T) {
 	t.Parallel()
 
 	s := NewSessions(time.Minute)
-	s.Put("a", 1, 2)
+	mustPut(t, s, "a", 1, 2)
 	if !s.SetPlayKeys("a", 3, 4) {
 		t.Fatal("SetPlayKeys: want true")
 	}
@@ -66,7 +74,7 @@ func TestSessionsCheckLoginPair(t *testing.T) {
 	t.Parallel()
 
 	s := NewSessions(time.Minute)
-	s.Put("sergei", 1, 2)
+	mustPut(t, s, "sergei", 1, 2)
 	if !s.CheckLoginPair("sergei", 1, 2) {
 		t.Fatal("CheckLoginPair(верная пара): want true")
 	}
@@ -87,7 +95,7 @@ func TestSessionsTTL(t *testing.T) {
 	s := NewSessions(time.Minute)
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	s.Put("sergei", 1, 2)
+	mustPut(t, s, "sergei", 1, 2)
 	now = now.Add(2 * time.Minute) // просрочена
 	if s.CheckLoginPair("sergei", 1, 2) {
 		t.Fatal("просроченная сессия: want false")
@@ -118,7 +126,7 @@ func TestSessionsConsumeAtomic(t *testing.T) {
 	// Двое одновременно Consume одними ключами → ровно один ok (атомарность
 	// check-and-delete под одним локом).
 	s := NewSessions(time.Minute)
-	s.Put("sergei", 1, 2)
+	mustPut(t, s, "sergei", 1, 2)
 	s.SetPlayKeys("sergei", 3, 4)
 	var wins atomic.Int32
 	var wg sync.WaitGroup

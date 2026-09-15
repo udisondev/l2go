@@ -96,12 +96,11 @@ func (fr *fakeRegion) drain(autoBind bool) {
 				continue // тестовый фейк: свежий ящик всегда клеймится
 			}
 			if autoBind {
-				payload, _ := json.Marshal(connBindMsg{Conn: m.Conn, Entity: p.id})
 				fr.reg.Send(transport.Envelope{
 					To:      transport.Addr{Entity: env.FromID},
 					FromID:  fr.id,
 					Kind:    transport.KindConnBind,
-					Payload: payload,
+					Payload: mustJSON(connBindMsg{Conn: m.Conn, Entity: p.id}),
 				})
 				fr.binds.Add(1)
 			}
@@ -505,11 +504,17 @@ func TestGatewayPersistTimeout(t *testing.T) {
 	if _, err := gc.Auth(testEndpoint(), "tester"); err == nil {
 		t.Fatal("вход прошёл без ответа персиста")
 	}
-	if st := h.gw.Stats(); st.Bound != 0 {
-		t.Errorf("бинд при таймауте персиста: %+v", st)
-	}
+	// GSLoginFail уходит клиенту раньше разбинда (синхронизационного ребра
+	// нет) — нулевой Bound ждём, а не ассертим мгновенно.
+	waitFor(t, "бинд снят после таймаута персиста", func() bool {
+		h.tick()
+		return h.gw.Stats().Bound == 0
+	})
 	// Поздний ответ на мёртвое ожидание — dead-letter, кадра не рождает.
-	late, _ := persist.EncodeReply(persist.Reply{Op: persist.OpCharList, Corr: 999, OK: true})
+	late, err := persist.EncodeReply(persist.Reply{Op: persist.OpCharList, Corr: 999, OK: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.reg.Send(transport.Envelope{
 		To:      transport.Addr{Entity: h.gw.id},
 		FromID:  h.persist.ID(),
@@ -669,9 +674,11 @@ func TestCreateFailReasonMapping(t *testing.T) {
 		{"", protocol.CharCreateReasonCreationFailed},
 	}
 	for _, c := range cases {
-		if got := createFailReason(c.code, "текст"); got != c.want {
-			t.Errorf("createFailReason(%q) = %d; want %d", c.code, got, c.want)
-		}
+		t.Run(c.code, func(t *testing.T) {
+			if got := createFailReason(c.code, "текст"); got != c.want {
+				t.Errorf("createFailReason(%q) = %d; want %d", c.code, got, c.want)
+			}
+		})
 	}
 }
 

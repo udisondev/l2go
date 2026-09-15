@@ -37,6 +37,8 @@ var tCharInfo = CharInfoData{
 // (порт serverpackets/CharInfo.java @43ac8878: 12×D paperdoll с канонным
 // дублем RHAND, c6-блок 4H+D+12H+D+4H, дубль pvpFlag/karma и flyRun/Walk).
 func TestCharInfoRoundtrip(t *testing.T) {
+	t.Parallel()
+
 	if CharInfoSize(tCharInfo) != 323+LenS("Vasya")+LenS("") {
 		t.Errorf("CharInfoSize = %d; want %d", CharInfoSize(tCharInfo), 323+LenS("Vasya")+LenS(""))
 	}
@@ -75,6 +77,8 @@ func TestCharInfoRoundtrip(t *testing.T) {
 // CharInfo с непустым титулом: смещение хвоста сдвигается, разбор остаётся
 // корректным; нетерминированное имя — отказ.
 func TestCharInfoTitleAndEvil(t *testing.T) {
+	t.Parallel()
+
 	d := tCharInfo
 	d.Title = "Нубопроводчик"
 	dst := make([]byte, CharInfoSize(d))

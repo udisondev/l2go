@@ -139,6 +139,15 @@ func TestStressReaderMigrationActiveProducers(t *testing.T) {
 	if err := box.Claim(tok1); err != nil {
 		t.Fatal(err)
 	}
+	// Пред-ожидание: у отправителей конвейер дошёл до ящика до начала миграций —
+	// иначе 40 попыток могут выгореть на пустых пачках и migrations останется 0.
+	deadline := time.Now().Add(3 * time.Second)
+	for box.Depth() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("условие не наступило: box.Depth() > 0 (отправители не начали доставку)")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	migrations := 0
 	for range 40 {
 		batch := box.Extract(tok1)

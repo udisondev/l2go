@@ -139,6 +139,8 @@ func BenchmarkBuildReal(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		out := filepath.Join(dir, "b.l2a")
+		// remove-if-exists: на первой итерации файла нет — ENOENT игнорируется
+		// осознанно (ошибка удаления существующего всплывёт в Build ниже).
 		os.Remove(out)
 		if _, err := Build(out, st, rep, nil, nil); err != nil {
 			b.Fatalf("Build: %v", err)

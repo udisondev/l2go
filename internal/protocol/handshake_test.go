@@ -54,6 +54,8 @@ func handshakeFixtures(t *testing.T) map[string]fixture.Fixture {
 
 // Машинная связка меты фикстур с константами пакета.
 func TestHandshakeFixtureMeta(t *testing.T) {
+	t.Parallel()
+
 	want := []struct {
 		name string
 		dir  fixture.Direction
@@ -85,6 +87,8 @@ func TestHandshakeFixtureMeta(t *testing.T) {
 }
 
 func TestWriteHandshakePacketsGolden(t *testing.T) {
+	t.Parallel()
+
 	fixes := handshakeFixtures(t)
 	tests := []struct {
 		name  string
@@ -130,6 +134,8 @@ func TestWriteHandshakePacketsGolden(t *testing.T) {
 }
 
 func TestHandshakeViewsGolden(t *testing.T) {
+	t.Parallel()
+
 	fixes := handshakeFixtures(t)
 
 	t.Run("KEY_PACKET", func(t *testing.T) {
@@ -270,6 +276,8 @@ func must[T any](v T, ok bool) T {
 
 // Обрезанные входы и злые счётчики: детерминированный отказ, не паника.
 func TestHandshakeViewsTruncated(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		min  int
@@ -302,6 +310,8 @@ func TestHandshakeViewsTruncated(t *testing.T) {
 
 // Злые счётчики и строки без терминатора: навигация отдаёт ok=false, не паникуя.
 func TestHandshakeViewsEvil(t *testing.T) {
+	t.Parallel()
+
 	t.Run("CHAR_SELECT_INFO count=-1", func(t *testing.T) {
 		b := []byte{OpCharSelectInfo, 0xFF, 0xFF, 0xFF, 0xFF}
 		v, ok := NewCharSelectionInfoView(b)
@@ -352,6 +362,8 @@ func TestHandshakeViewsEvil(t *testing.T) {
 
 // Пачка злых входов: конструкторы и геттеры не паникуют.
 func TestHandshakeViewsNoPanic(t *testing.T) {
+	t.Parallel()
+
 	fixes := handshakeFixtures(t)
 	evils := [][]byte{
 		nil, {}, {0x00}, {OpKeyPacket}, pattern(4, 1), pattern(22, 2), pattern(23, 3),
@@ -415,6 +427,8 @@ func TestHandshakeWritersZeroAllocs(t *testing.T) {
 // Sizing-функции сходятся с результатом писателя на таблице входов
 // (строчные длины — за пределами фикс-вектора).
 func TestHandshakeSizingProperty(t *testing.T) {
+	t.Parallel()
+
 	accounts := []string{"", "a", "ТестЮзер", "🧙"}
 	for _, acc := range accounts {
 		want := AuthLoginSize(acc)
@@ -447,6 +461,8 @@ func TestHandshakeSizingProperty(t *testing.T) {
 // Грязный dst: нулевые блоки записи обязаны затираться (CharSelected — 30+12
 // нулей; CharSelectionInfo — 9 зарезервированных D).
 func TestHandshakeWritersDirtyDst(t *testing.T) {
+	t.Parallel()
+
 	chars := []CharSelectionEntry{tChar1, tChar2}
 	tests := []struct {
 		name  string
@@ -481,6 +497,8 @@ func TestHandshakeWritersDirtyDst(t *testing.T) {
 
 // Паник-контракты писателей хендшейка.
 func TestHandshakeWritersPanics(t *testing.T) {
+	t.Parallel()
+
 	dst := make([]byte, 1024)
 	tests := []struct {
 		name    string
@@ -515,6 +533,8 @@ func TestHandshakeWritersPanics(t *testing.T) {
 // Счётчик ограничивает навигацию Char: count=1 при двух записях в буфере не
 // отдаёт вторую запись (фантомные записи недоступны).
 func TestCharSelectionInfoViewCountLimiter(t *testing.T) {
+	t.Parallel()
+
 	full := wire(handshakeFixtures(t)["CHAR_SELECT_INFO"]) // count=2, обе записи валидны
 	short := append([]byte(nil), full...)
 	short[1] = 1 // младший байт счётчика D занижен (старшие уже нули)
@@ -535,6 +555,8 @@ func TestCharSelectionInfoViewCountLimiter(t *testing.T) {
 
 // Кап enchant 127 канона фальсифицируется: значение 200 пишется как 127.
 func TestCharSelectionEnchantCap(t *testing.T) {
+	t.Parallel()
+
 	c := tChar1
 	c.Enchant = 200
 	dst := make([]byte, CharSelectionInfoSize([]CharSelectionEntry{c}))

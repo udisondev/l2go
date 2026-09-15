@@ -41,6 +41,8 @@ var tUserInfo = UserInfoData{
 // дважды в обоих, c6-блок 14H+D+12H+D+4H, дубль pAtkSpd в боевом ряду,
 // дубль flyRun/Walk).
 func TestUserInfoRoundtrip(t *testing.T) {
+	t.Parallel()
+
 	if UserInfoSize(tUserInfo) != 544+LenS("Vasya")+LenS("") {
 		t.Errorf("UserInfoSize = %d; want %d", UserInfoSize(tUserInfo), 544+LenS("Vasya")+LenS(""))
 	}

@@ -16,8 +16,36 @@ func newTestLog(t *testing.T, payloads bool, maxFile int64) *PortionLog {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	t.Cleanup(func() { _ = l.Close() })
+	t.Cleanup(func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	return l
+}
+
+// Злые входы конструктора: пустой каталог, неположительный период и
+// отрицательный размер файла отклоняются валидацией.
+func TestPortionLogConfigValidation(t *testing.T) {
+	dir := t.TempDir()
+	bad := []struct {
+		name    string
+		dir     string
+		period  time.Duration
+		maxFile int64
+	}{
+		{name: "dir пустой", dir: "", period: time.Second, maxFile: 1 << 20},
+		{name: "period=0", dir: dir, period: 0, maxFile: 1 << 20},
+		{name: "period<0", dir: dir, period: -time.Second, maxFile: 1 << 20},
+		{name: "maxFileBytes<0", dir: dir, period: time.Second, maxFile: -1},
+	}
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := NewPortionLog(c.dir, 7, c.period, false, c.maxFile); err == nil {
+				t.Errorf("NewPortionLog(%q, %v, %d) прошёл валидацию; want ошибка", c.dir, c.period, c.maxFile)
+			}
+		})
+	}
 }
 
 func sampleStep(tick Tick, delta uint64) (steps []StepInput) {

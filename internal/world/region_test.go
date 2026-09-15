@@ -26,8 +26,47 @@ func newTestRegion(t *testing.T, cfg Config) (*Metronome, *Region) {
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
 	}
+	// Осознанный игнор ошибки: регион закрывает лог сам (Run на выходе), а
+	// тесты поломки писателя рвут файл мимо Close — результат повторного
+	// закрытия не диагностичен.
 	t.Cleanup(func() { _ = log.Close() })
 	return m, r
+}
+
+// Злые входы конструктора: nil-метроном и nil-реестр отклоняются guard'ом
+// до регистрации контрольного ящика.
+func TestRegionNilDepsRejected(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LogMaxFileBytes = 1 << 20
+	m, err := NewMetronome(cfg)
+	if err != nil {
+		t.Fatalf("NewMetronome: %v", err)
+	}
+	reg := transport.NewRegistry(0)
+	log, err := NewPortionLog(t.TempDir(), 1, m.period, cfg.LogPayloads, cfg.LogMaxFileBytes)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := log.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	cases := []struct {
+		name  string
+		metro *Metronome
+		reg   *transport.Registry
+	}{
+		{name: "nil-метроном", metro: nil, reg: reg},
+		{name: "nil-реестр", metro: m, reg: nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := NewRegion(c.metro, c.reg, 1, cfg, log); err == nil {
+				t.Errorf("NewRegion с %s прошёл; want ошибка валидации", c.name)
+			}
+		})
+	}
 }
 
 func spawnResident(t *testing.T, r *Region, hp int32) transport.EntityID {

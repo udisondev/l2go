@@ -10,6 +10,8 @@ import (
 // Писатель Attack: golden против внешней фикстуры (байты собраны из формата
 // Mobius Attack.java и вектора полей интерлюд-теста — не нашим писателем).
 func TestWriteAttackGolden(t *testing.T) {
+	t.Parallel()
+
 	fixtures, err := fixture.Load("attack")
 	if err != nil {
 		t.Fatalf("fixture.Load(attack): %v", err)

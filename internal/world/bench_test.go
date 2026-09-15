@@ -1,8 +1,10 @@
 package world
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
+	"sync"
 	"testing"
 
 	"github.com/udisondev/l2go/internal/transport"
@@ -80,6 +82,42 @@ func BenchmarkRegionTick(b *testing.B) {
 				})
 			}
 		}
+	}
+}
+
+// BenchmarkMetronomeTick — один тик диспетчера метронома: живой Run-цикл
+// (Hz высокий), 3 региона-пустышки в активном сете (не читают звонки —
+// каждый тик проходит ветку коалесинг-дропа) и подписчик; итерация = один
+// полученный звонок подписчика. Прямой вызов тела тика невозможен без
+// мастера (цикл встроен в Run), поэтому ns/op — верхняя оценка с пейсингом
+// тикера; оракул — аллокации: 0 на тик (сеты — atomic-снапшоты, эпизоды
+// вотчдога переживают тик, WaitGroup/каналы — вне b.Loop).
+func BenchmarkMetronomeTick(b *testing.B) {
+	cfg := DefaultConfig()
+	cfg.Hz = 10000
+	cfg.HeartbeatTicks = 2
+	cfg.WatchdogTicks = 1 << 30 // пустышки не тикают: алерты вотчдога не измеряем
+	m, err := NewMetronome(cfg)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for range 3 {
+		m.Activate(&Region{metro: m, ringCh: make(chan struct{}, 1), fbCh: make(chan struct{}, 1)})
+	}
+	ch, unsub := m.Subscribe()
+	ctx, cancel := context.WithCancel(b.Context())
+	defer cancel()
+	var wg sync.WaitGroup
+	wg.Go(func() { m.Run(ctx) })
+	defer func() {
+		cancel()
+		wg.Wait()
+		unsub()
+	}()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		<-ch
 	}
 }
 

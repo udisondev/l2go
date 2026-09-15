@@ -7,6 +7,8 @@ import (
 
 // Кадр провода: [uint16 LE длина всей записи][тело = длина−2].
 func TestNextFrame(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		in      []byte
@@ -49,6 +51,8 @@ func TestNextFrame(t *testing.T) {
 
 // Потребление склеенных кадров: последовательные вызовы разбирают поток.
 func TestNextFrameStream(t *testing.T) {
+	t.Parallel()
+
 	stream := []byte{0x03, 0x00, 0x0A, 0x02, 0x00, 0x04, 0x00, 0x0B, 0x0C}
 	want := [][]byte{{0x0A}, {}, {0x0B, 0x0C}}
 	for i, w := range want {

@@ -203,9 +203,7 @@ func TestStressHandoff(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for i := range pairs {
-		wg.Add(2)
-		go func(i int) { // производитель
-			defer wg.Done()
+		wg.Go(func() { // производитель
 			for cycle := range 500 {
 				b := p.Get(1 + (i*500+cycle)%3000)
 				for j := range b {
@@ -214,9 +212,8 @@ func TestStressHandoff(t *testing.T) {
 				chs[i] <- b // владение уходит потребителю
 			}
 			close(chs[i])
-		}(i)
-		go func(i int) { // потребитель
-			defer wg.Done()
+		})
+		wg.Go(func() { // потребитель
 			for b := range chs[i] {
 				for _, v := range b {
 					if v != byte(1+i%255) {
@@ -225,7 +222,7 @@ func TestStressHandoff(t *testing.T) {
 				}
 				p.Put(b)
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
 	// Покомпонентная сходимость: все размеры ≤ 3000 — бакетные, overflow нет.

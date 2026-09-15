@@ -9,6 +9,8 @@ import (
 )
 
 func TestLoadAttack(t *testing.T) {
+	t.Parallel()
+
 	fixtures, err := Load("attack")
 	if err != nil {
 		t.Fatalf("Load(attack): %v", err)
@@ -29,6 +31,8 @@ func TestLoadAttack(t *testing.T) {
 }
 
 func TestLoadErrors(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		setup func(t *testing.T) string // возвращает имя для Load
@@ -77,6 +81,8 @@ func TestLoadErrors(t *testing.T) {
 
 // Имя заперто в testdata: абсолютные пути и обход «..» — ошибка.
 func TestLoadRejectsEscape(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"../escape", "a/../../escape", "/etc/passwd"} {
 		if _, err := Load(name); err == nil {
 			t.Errorf("Load(%q): ошибки нет — побег за testdata", name)

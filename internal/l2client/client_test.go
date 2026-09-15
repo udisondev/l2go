@@ -118,7 +118,6 @@ func (sb *syncBuffer) String() string {
 	return sb.b.String()
 }
 
-// waitForLog ждёт появления подстроки в трафик-логе (кадры в полёте).
 // deadAddr — гарантированно мёртвый адрес: ephemeral-порт, освобождённый
 // закрытием слушателя (фиксированный порт мог быть занят сервисом).
 func deadAddr(t *testing.T) string {
@@ -132,6 +131,7 @@ func deadAddr(t *testing.T) string {
 	return addr
 }
 
+// waitForLog ждёт появления подстроки в трафик-логе (кадры в полёте).
 func waitForLog(t *testing.T, out *syncBuffer, sub string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

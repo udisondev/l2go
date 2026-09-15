@@ -35,6 +35,8 @@ var tNpcInfo = NpcInfoData{
 // AbstractNpcInfo$NpcInfo @43ac8878: displayId+1000000, канонные дубли
 // flyRun/Walk и collisionR/H, nameAbove=1).
 func TestNpcInfoRoundtrip(t *testing.T) {
+	t.Parallel()
+
 	if NpcInfoSize(tNpcInfo) != 180+LenS("Roien")+LenS("Guard") {
 		t.Errorf("NpcInfoSize = %d; want %d", NpcInfoSize(tNpcInfo), 180+LenS("Roien")+LenS("Guard"))
 	}

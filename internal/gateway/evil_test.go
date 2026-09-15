@@ -301,6 +301,14 @@ func TestEvilCreateDomainBranches(t *testing.T) {
 	enc(create)
 	expectFailReason(t, expect("create длинное имя", protocol.OpCharCreateFail), 0x03)
 
+	// Недопустимый символ → 0x04: алфавит проверяется раньше длины, поэтому
+	// «!» в имени даёт IncorrectName даже короче лимита.
+	bang := protocol.CharacterCreateData{Name: "Hero!", Race: 0, ClassID: 0}
+	create = make([]byte, protocol.CharacterCreateSize(bang))
+	protocol.WriteCharacterCreate(create, bang)
+	enc(create)
+	expectFailReason(t, expect("create недопустимый символ", protocol.OpCharCreateFail), 0x04)
+
 	// Чужая раса → CreationFailed (0x00).
 	elf := protocol.CharacterCreateData{Name: "Elfhero", Race: 2, ClassID: 1}
 	create = make([]byte, protocol.CharacterCreateSize(elf))

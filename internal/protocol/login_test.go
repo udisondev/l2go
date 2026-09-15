@@ -86,6 +86,8 @@ func checkGolden(t *testing.T, name string, dst []byte, n int, f fixture.Fixture
 
 // Машинная связка меты фикстур с константами пакета (wire-векторы).
 func TestLoginFixtureMeta(t *testing.T) {
+	t.Parallel()
+
 	want := []struct {
 		name string
 		dir  fixture.Direction
@@ -122,6 +124,8 @@ func TestLoginFixtureMeta(t *testing.T) {
 }
 
 func TestWriteLoginPacketsGolden(t *testing.T) {
+	t.Parallel()
+
 	fixes := loginFixtures(t)
 	tests := []struct {
 		name  string
@@ -180,6 +184,8 @@ func TestWriteLoginPacketsGolden(t *testing.T) {
 
 // Plain-блок REQUEST_AUTH_LOGIN пишется без опкода: сравнение — payload.
 func TestWriteRequestAuthLoginPlainGolden(t *testing.T) {
+	t.Parallel()
+
 	f := loginFixtures(t)["REQUEST_AUTH_LOGIN_PLAIN"]
 	dst := make([]byte, RequestAuthLoginPlainSize)
 	if err := WriteRequestAuthLoginPlain(dst, "testuser", "secret"); err != nil {
@@ -191,6 +197,8 @@ func TestWriteRequestAuthLoginPlainGolden(t *testing.T) {
 }
 
 func TestWriteRequestAuthLoginPlainErrors(t *testing.T) {
+	t.Parallel()
+
 	dst := make([]byte, RequestAuthLoginPlainSize)
 	tests := []struct {
 		name       string
@@ -217,6 +225,8 @@ func TestWriteRequestAuthLoginPlainErrors(t *testing.T) {
 }
 
 func TestLoginViewsGolden(t *testing.T) {
+	t.Parallel()
+
 	fixes := loginFixtures(t)
 
 	t.Run("INIT", func(t *testing.T) {
@@ -380,6 +390,8 @@ func TestLoginViewsGolden(t *testing.T) {
 
 // Обрезка ≤ U+0020 с двух концов — семантика Java String.trim() канона.
 func TestAuthLoginPlainViewTrim(t *testing.T) {
+	t.Parallel()
+
 	block := make([]byte, RequestAuthLoginPlainSize)
 	copy(block[0x5E:], "\tspace user \x00")
 	copy(block[0x6C:], " pass word\t")
@@ -397,6 +409,8 @@ func TestAuthLoginPlainViewTrim(t *testing.T) {
 
 // Представления не паникуют и детерминированно отказывают на усечении.
 func TestLoginViewsTruncated(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		min  int
@@ -435,6 +449,8 @@ func TestLoginViewsTruncated(t *testing.T) {
 
 // Зона 129–256: конструктор ok, валиден только RSABlock (короткий блоб).
 func TestRequestAuthLoginViewShortBlock(t *testing.T) {
+	t.Parallel()
+
 	b := make([]byte, 200)
 	b[0] = OpRequestAuthLogin
 	v, ok := NewRequestAuthLoginView(b)
@@ -448,6 +464,8 @@ func TestRequestAuthLoginViewShortBlock(t *testing.T) {
 
 // Пачка злых входов: конструкторы и геттеры не паникуют на недоверенных байтах.
 func TestLoginViewsNoPanic(t *testing.T) {
+	t.Parallel()
+
 	fixes := loginFixtures(t)
 	good := [][]byte{
 		wire(fixes["INIT"]),
@@ -514,6 +532,8 @@ func TestLoginWritersZeroAllocs(t *testing.T) {
 
 // Sizing-функция сходится с результатом писателя на таблице входов.
 func TestServerListSizeProperty(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		servers []ServerListEntry
@@ -558,6 +578,8 @@ func ExampleWriteInit() {
 // Грязный dst: зарезервированные поля обязаны затираться (байты 0xFF не
 // должны просачиваться в пакет — пул-буферы переиспользуются грязными).
 func TestLoginWritersDirtyDst(t *testing.T) {
+	t.Parallel()
+
 	type tc struct {
 		name  string
 		size  int
@@ -599,6 +621,8 @@ func TestLoginWritersDirtyDst(t *testing.T) {
 // Паник-контракты писателей: короткий dst и неверные длины аргументов-буферов
 // паникуют с диагностикой (класс F6/P1.2 — программный контракт вызывающего).
 func TestLoginWritersPanics(t *testing.T) {
+	t.Parallel()
+
 	dst := make([]byte, 256)
 	big := make([]byte, 16<<10)
 	tests := []struct {
@@ -639,6 +663,8 @@ func TestLoginWritersPanics(t *testing.T) {
 // Счётчик — ограничитель навигации, а не только буфер: заниженный счётчик
 // не отдаёт записи, целиком лежащие в буфере (обе секции).
 func TestServerListViewCountLimiter(t *testing.T) {
+	t.Parallel()
+
 	full := wire(loginFixtures(t)["SERVER_LIST"]) // count=2, обе записи валидны
 
 	sec1 := append([]byte(nil), full...)
@@ -671,6 +697,8 @@ func TestServerListViewCountLimiter(t *testing.T) {
 // Короткий dst — паник-контракт каждого писателя пакета (диагностика с
 // именем функции и размером).
 func TestWritersShortDst(t *testing.T) {
+	t.Parallel()
+
 	big := make([]byte, 16<<10)
 	chars := []CharSelectionEntry{tChar1, tChar2}
 	tests := []struct {

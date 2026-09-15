@@ -236,6 +236,30 @@ func TestHandshakeAbsoluteTimeout(t *testing.T) {
 	}
 }
 
+// Пресессионный молчун: после open и SetReadMode(presession) дедлайн —
+// IdleTimeout без перезавода; молчание рвёт коннект именно по таймауту.
+func TestPresessionIdleSilentBreak(t *testing.T) {
+	out := newFakeOutbounds()
+	addr, s := startServer(t, testConfig(), out)
+
+	conn := dial(t, addr)
+	ev := recvEvent(t, s.Events()) // открытие
+	ev.Done()
+	s.SetReadMode(ev.Conn, ModePresession)
+
+	// Тайминг-инвариант, не синхронизация: молчание (600мс) превышает
+	// IdleTimeout (250мс) с запасом на медленное железо и -race.
+	time.Sleep(600 * time.Millisecond)
+	ce := recvClose(t, s.Closes())
+	ce.Release()
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Error("молчаливый коннект жив после IdleTimeout")
+	}
+	if st := s.Stats(); st.ClosedTimeout != 1 {
+		t.Errorf("ClosedTimeout = %d; want 1 (разрыв именно по idle, не по рукопожатию)", st.ClosedTimeout)
+	}
+}
+
 func TestPresessionIdlePerFrame(t *testing.T) {
 	cfg := testConfig()
 	cfg.IdleTimeout = 200 * time.Millisecond

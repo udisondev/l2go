@@ -13,6 +13,8 @@ import (
 // --- Писатели: кодирование значений ---
 
 func TestWriteFixedPrimitives(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		size  int
@@ -37,6 +39,8 @@ func TestWriteFixedPrimitives(t *testing.T) {
 // --- Паника-контракт писателей: короткий dst — паника с диагностикой. ---
 
 func TestWritePanicsOnShortDst(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		write func()
@@ -70,6 +74,8 @@ func TestWritePanicsOnShortDst(t *testing.T) {
 // --- LenS ↔ WriteS: длина и запись одним расчётом, включая не-BMP. ---
 
 func TestLenSMatchesWriteS(t *testing.T) {
+	t.Parallel()
+
 	strs := []string{
 		"",
 		"a",
@@ -104,6 +110,8 @@ func TestWriteSZeroAllocs(t *testing.T) {
 // --- Раундтрипы фиксированных примитивов. ---
 
 func TestRoundtripFixed(t *testing.T) {
+	t.Parallel()
+
 	var buf [8]byte
 	dvals := []int32{0, 1, -1, math.MinInt32, math.MaxInt32, 123456}
 	for _, v := range dvals {
@@ -145,6 +153,8 @@ func TestRoundtripFixed(t *testing.T) {
 // --- Раундтрип строк: равенство — для валидного UTF-8 без U+0000. ---
 
 func TestRoundtripString(t *testing.T) {
+	t.Parallel()
+
 	strs := []string{
 		"",
 		"a",
@@ -171,6 +181,8 @@ func TestRoundtripString(t *testing.T) {
 
 // Канонизация: невалидные руны и непарные суррогаты → U+FFFD; NUL обрезает.
 func TestStringCanonicalization(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ in, want string }{
 		{"\xff", "�"},
 		{"a\xc0\xafb", "a��b"},
@@ -189,6 +201,8 @@ func TestStringCanonicalization(t *testing.T) {
 
 // WriteS побайтово эквивалентен utf16.Encode-порту интерлюда (оракул).
 func TestWriteSMatchesUTF16Encode(t *testing.T) {
+	t.Parallel()
+
 	strs := []string{"", "a", "Имя", "😀👍", "\xff\xed\xa0\x80", strings.Repeat("β", 50)}
 	for _, s := range strs {
 		units := utf16.Encode([]rune(s))
@@ -211,6 +225,8 @@ func TestWriteSMatchesUTF16Encode(t *testing.T) {
 // --- Злые входы читателей: ok=false, нулевые значения; форма без переполнения. ---
 
 func TestReadEvilOffsets(t *testing.T) {
+	t.Parallel()
+
 	src := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 	type probe struct {
 		name string
@@ -246,6 +262,8 @@ func TestReadEvilOffsets(t *testing.T) {
 }
 
 func TestReadSNoTerminator(t *testing.T) {
+	t.Parallel()
+
 	src := []byte{'a', 0, 'b', 0, 'c'} // терминатора нет: c — непарный хвост
 	s, n, ok := ReadS(src, 0)
 	if ok || s != "" || n != 0 {
@@ -262,6 +280,8 @@ func TestReadSNoTerminator(t *testing.T) {
 // Сырые непарные суррогаты в буфере декодируются в U+FFFD (ветвь utf16.Decode,
 // недостижимая через WriteS — Go-строка суррогатов не содержит).
 func TestReadSLoneSurrogates(t *testing.T) {
+	t.Parallel()
+
 	for _, u := range []uint16{0xD800, 0xDBFF, 0xDC00, 0xDFFF} {
 		src := []byte{'a', 0, byte(u), byte(u >> 8), 0, 0}
 		s, n, ok := ReadS(src, 0)
@@ -272,6 +292,8 @@ func TestReadSLoneSurrogates(t *testing.T) {
 }
 
 func TestReadSEvilOffsets(t *testing.T) {
+	t.Parallel()
+
 	src := []byte{'a', 0}
 	if _, _, ok := ReadS(src, -1); ok {
 		t.Error("ReadS off=-1: ok=true")

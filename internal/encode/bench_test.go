@@ -55,7 +55,8 @@ type benchError struct{}
 func (*benchError) Error() string { return "закрытие в бенче" }
 
 // Push→Take раунд с параллельными пушерами (контенция client.mu пушер↔Take —
-// база для второго пушера стационарных кадров).
+// база для второго пушера стационарных кадров). Спавн 4 горутин-пушеров на
+// итерацию — часть харнесса; абсолют читать как верхнюю оценку контенции.
 func BenchmarkPushTakeParallelCrypt(b *testing.B) {
 	s, err := NewStage(1 << 20)
 	if err != nil {
