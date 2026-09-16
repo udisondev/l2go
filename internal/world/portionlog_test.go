@@ -349,3 +349,71 @@ func TestPortionLogPlayerRoundtrip(t *testing.T) {
 		t.Fatalf("Player roundtrip: %+v", g.Rec)
 	}
 }
+
+// Advisory-вход несёт значение чтения (F1): позиция/эпоха/найденность едут
+// в лог — реплей D6 инъектирует значения, не адреса; Found=false пишется
+// нулями (детерминизм).
+func TestPortionLogAdvisoryValueRoundtrip(t *testing.T) {
+	l := newTestLog(t, false, 1<<20)
+	steps := []StepInput{{
+		Tick: 10, Delta: 1,
+		Advisory: []AdvisoryIn{
+			{Cell: 3, Entity: 77, X: -100, Y: 200, Z: -300, Epoch: 9, Found: true},
+			{Cell: 4, Entity: 78, Found: false}, // miss: значения нулевые
+		},
+	}}
+	for _, s := range steps {
+		if err := l.LogStep(s); err != nil {
+			t.Fatalf("LogStep: %v", err)
+		}
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, got, _, err := ReadPortionLogDir(l.dir, l.region)
+	if err != nil {
+		t.Fatalf("ReadPortionLogDir: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Advisory) != 2 {
+		t.Fatalf("шагов %d advisory %d; want 1/2", len(got), len(got[0].Advisory))
+	}
+	a := got[0].Advisory[0]
+	if a.Cell != 3 || a.Entity != 77 || a.X != -100 || a.Y != 200 || a.Z != -300 || a.Epoch != 9 || !a.Found {
+		t.Fatalf("hit-чтение: %+v", a)
+	}
+	m := got[0].Advisory[1]
+	if m.Cell != 4 || m.Entity != 78 || m.X != 0 || m.Y != 0 || m.Z != 0 || m.Epoch != 0 || m.Found {
+		t.Fatalf("miss-чтение не нулевое: %+v", m)
+	}
+}
+
+// Лог версии N−1 (без advisory-значений) отвергается явно — не тихий разбор
+// (P3.7-прецедент: смена формата без подъёма версии = молчаливый раскол
+// реплея).
+func TestPortionLogAdvisoryVersionBump(t *testing.T) {
+	l := newTestLog(t, false, 1<<20)
+	if err := l.LogStep(sampleStep(1, 1)[0]); err != nil {
+		t.Fatalf("LogStep: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	entries, err := filepath.Glob(filepath.Join(l.dir, "portion-*.log"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("glob лога: %v %v", entries, err)
+	}
+	raw, err := os.ReadFile(entries[0])
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if len(raw) < 8 {
+		t.Fatalf("короткий заголовок: %d байт", len(raw))
+	}
+	raw[7] = byte(portionVersion - 1) // портим версию в заголовке
+	if err := os.WriteFile(entries[0], raw, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, _, _, err := ReadPortionLogDir(l.dir, l.region); err == nil {
+		t.Fatal("лог старой версии прочитан молча; want явная ошибка")
+	}
+}
