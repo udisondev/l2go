@@ -8,6 +8,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -228,10 +230,14 @@ func enterWorld(t *testing.T, env *e2eEnv, user string) *session {
 	if err := lc.Login(user, "pass-"+user); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	if _, _, err := lc.ServerList(); err != nil {
+	servers, _, err := lc.ServerList()
+	if err != nil {
 		t.Fatalf("ServerList: %v", err)
 	}
-	ep, err := lc.SelectServer(1)
+	if len(servers) == 0 {
+		t.Fatal("ServerList пуст (GS не зарегистрирован)")
+	}
+	ep, err := lc.SelectServer(servers[0].ID)
 	if err != nil {
 		t.Fatalf("SelectServer: %v", err)
 	}
@@ -251,15 +257,13 @@ func enterWorld(t *testing.T, env *e2eEnv, user string) *session {
 		t.Fatalf("Auth: %v", err)
 	}
 	if len(chars) == 0 {
-		created, err := gc.CreateChar(protocol.CharacterCreateData{
+		if _, err := gc.CreateChar(protocol.CharacterCreateData{
 			Name: charName(user), Race: 0, Sex: 0, ClassID: 0,
 			Int: 11, Str: 40, Con: 43, Men: 25, Dex: 30, Wit: 11,
 			HairStyle: 0, HairColor: 0, Face: 0,
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatalf("CreateChar: %v", err)
 		}
-		chars = created
 	}
 	if err := gc.SelectChar(0); err != nil {
 		t.Fatalf("SelectChar: %v", err)
@@ -300,23 +304,67 @@ func charName(user string) string {
 	return name
 }
 
+// restartGS — рестарт контура GS на тех же каталогах (LS живёт).
+func (env *e2eEnv) restartGS(t *testing.T) {
+	t.Helper()
+	env.gs.shutdown()
+	srv, err := bootstrap(env.gs.cfg)
+	if err != nil {
+		t.Fatalf("рестарт bootstrap: %v", err)
+	}
+	env.gs = srv
+	env.gsAddr = srv.gameAddr()
+}
+
 // charFile — путь файла персонажей аккаунта GS.
 func (env *e2eEnv) charFile(user string) string {
 	return filepath.Join(env.persist, "chars", strings.ToLower(user)+".json")
 }
 
-// readChars — чтение файла персонажей (после атомарного rename).
+// readChars — чтение файла персонажей: конверт persist {schema,data,sha256},
+// data — список записей.
 func readChars(t *testing.T, path string) []map[string]any {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("чтение %s: %v", path, err)
 	}
+	var env struct {
+		Schema int             `json:"schema"`
+		Data   json.RawMessage `json:"data"`
+		SHA256 string          `json:"sha256"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("конверт %s: %v", path, err)
+	}
 	var recs []map[string]any
-	if err := json.Unmarshal(raw, &recs); err != nil {
-		t.Fatalf("json %s: %v", path, err)
+	if err := json.Unmarshal(env.Data, &recs); err != nil {
+		t.Fatalf("записи %s: %v", path, err)
 	}
 	return recs
+}
+
+// writeChars — запись файла персонажей тем же конвертом (правка позиции
+// между сессиями; чексумма пересчитывается).
+func writeChars(t *testing.T, path string, recs []map[string]any) {
+	t.Helper()
+	data, err := json.Marshal(recs)
+	if err != nil {
+		t.Fatalf("marshal записей: %v", err)
+	}
+	sum := sha256.Sum256(data)
+	env := struct {
+		Schema int             `json:"schema"`
+		Data   json.RawMessage `json:"data"`
+		SHA256 string          `json:"sha256"`
+	}{Schema: 1, Data: data, SHA256: hex.EncodeToString(sum[:])}
+	raw, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal конверта: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("запись %s: %v", path, err)
+	}
 }
 
 // Зона 1: слиток входа — 16 опкодов в канонном порядке, поля позиции/имени.
@@ -324,7 +372,7 @@ func TestE2EEnterSlivok(t *testing.T) {
 	env := startE2E(t, 50, 4)
 	s := enterWorld(t, env, "slivok")
 	line := waitForLine(t, s.out, "USER_INFO", 3*time.Second)
-	if !strings.Contains(line, "name="+charName("slivok")) {
+	if !strings.Contains(line, "name=\""+charName("slivok")+"\"") {
 		t.Errorf("UserInfo без имени: %s", line)
 	}
 	// Порядок слитка — по появлению USER_INFO за CharSelected.
@@ -344,18 +392,25 @@ func TestE2ELogoutRoundTripPosition(t *testing.T) {
 	if err := s.gc.Logout(); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
-	waitForLine(t, s.out, "LEAVE_WORLD", 3*time.Second)
+	waitForLeaveWorld(t, s, env)
 
-	// Путь сохранения: файл отражает сессию.
+	// Путь сохранения: файл отражает сессию. Персист пишет асинхронно —
+	// ждём свежего LastSeenUnix (F22: патч поверх невысохшего сохранения
+	// был бы перезаписан).
 	path := env.charFile("roundtrip")
-	recs := readChars(t, path)
+	start := time.Now().Unix()
+	recs := waitFreshChars(t, path, start)
 	if len(recs) != 1 {
 		t.Fatalf("персонажей в файле %d; want 1", len(recs))
 	}
 
 	// Путь восстановления: смещённая позиция в файле → в UserInfo перезахода.
+	// Персист-актор — единственный писатель и держит список в кеше (P3.3):
+	// правка файла видна новому процессу — перезаход идёт через рестарт
+	// контура GS (заодно проверяется рестарт-персистентность).
 	const wantX = -12345
 	patchCharX(t, path, wantX)
+	env.restartGS(t)
 	s2 := enterWorld(t, env, "roundtrip")
 	line := waitForLine(t, s2.out, "USER_INFO", 3*time.Second)
 	if !strings.Contains(line, fmt.Sprintf("x=%d", wantX)) {
@@ -363,17 +418,87 @@ func TestE2ELogoutRoundTripPosition(t *testing.T) {
 	}
 }
 
+// waitForLeaveWorld — ожидание LeaveWorld с диагностикой контура.
+func waitForLeaveWorld(t *testing.T, s *session, env *e2eEnv) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(s.out.String(), "LEAVE_WORLD") {
+			return
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("LeaveWorld не пришёл; gw=%+v region=%+v stage=%+v",
+		env.gs.gw.Stats(), env.gs.region.Stats(), env.gs.stage.Stats())
+}
+
+// waitFreshChars — поллинг файла персонажей до записи сессии (LastSeenUnix
+// моложе start; атомарный rename хранилища делает чтение целым).
+func waitFreshChars(t *testing.T, path string, start int64) []map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		recs := readChars(t, path)
+		if len(recs) > 0 {
+			if ls, ok := recs[0]["last_seen_unix"].(float64); ok && int64(ls) >= start {
+				return recs
+			}
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("сохранение сессии не появилось в %s за 3с", path)
+	return nil
+}
+
 // patchCharX — правка x-координаты первой записи файла персонажей.
 func patchCharX(t *testing.T, path string, x int) {
 	t.Helper()
 	recs := readChars(t, path)
 	recs[0]["x"] = x
-	raw, err := json.Marshal(recs)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	writeChars(t, path, recs)
+}
+
+// RequestRestart — отказ канона, коннект жив (затем Logout работает).
+func TestE2ERequestRestartKeepsConn(t *testing.T) {
+	env := startE2E(t, 50, 4)
+	s := enterWorld(t, env, "restart")
+	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+
+	if err := s.gc.RequestRestart(); err != nil {
+		t.Fatalf("RequestRestart: %v", err)
 	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatalf("запись %s: %v", path, err)
+	waitForLine(t, s.out, "RESTART_RESPONSE", 3*time.Second)
+	if err := s.gc.Logout(); err != nil {
+		t.Fatalf("Logout после рестарта: %v", err)
+	}
+	waitForLine(t, s.out, "LEAVE_WORLD", 3*time.Second)
+}
+
+// Кадр после деспавна — классовый дроп транспорта (агрегат deadBox), не паника.
+func TestE2EFrameAfterDespawnTransportCount(t *testing.T) {
+	env := startE2E(t, 50, 2)
+	s := enterWorld(t, env, "straggler")
+	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+
+	_, rel0 := env.gs.reg.DeadDrops()
+	// Обрыв без Logout: grace короткий (2 тика), после экспирации — залп
+	// кадров (клиент ещё шлёт) уходит в retired id.
+	if err := s.gc.Close(); err != nil {
+		t.Fatalf("закрытие сокета: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if env.gs.region.Stats().Residents == 0 {
+			break
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	if n := env.gs.region.Stats().Residents; n != 0 {
+		t.Fatalf("Residents = %d после grace; want 0", n)
+	}
+	_, rel1 := env.gs.reg.DeadDrops()
+	if rel1 == rel0 {
+		t.Log("reliable-дропов не прибавилось: страгглер не возник в этом прогоне")
 	}
 }
 
@@ -392,7 +517,7 @@ func TestE2ELinkDeadGraceAndReenter(t *testing.T) {
 	// Перезаход в grace-окне: ровно одна сущность аккаунта.
 	s2 := enterWorld(t, env, "grace")
 	line := waitForLine(t, s2.out, "USER_INFO", 3*time.Second)
-	if !strings.Contains(line, "name="+charName("grace")) {
+	if !strings.Contains(line, "name=\""+charName("grace")+"\"") {
 		t.Errorf("перезаход без слитка: %s", line)
 	}
 	waitForResidents(t, env.gs, 1)

@@ -4,7 +4,10 @@
 // (горутина региона, ящики, тик) появится вместе с реализацией мира.
 package world
 
-import "github.com/udisondev/l2go/internal/transport"
+import (
+	"github.com/udisondev/l2go/internal/persist"
+	"github.com/udisondev/l2go/internal/transport"
+)
 
 // RegionID идентифицирует регион грида; Tick — номер тика метронома
 // (dt = тики × период; настенные часы — только во входном шлюзе).
@@ -44,6 +47,17 @@ type TransferRecord struct {
 	Precondition []byte
 }
 
+// Player — состояние игрока на сущности (nil у не-игроков). Rec — запись
+// персиста (единственная точка правды о персонаже); ConnID — коннект шлюза;
+// PendingTeleport гасит скоростной бакет P3.9; EnterLeaving — «вошёл и
+// оборвался тем же шагом» (актор не шлёт слиток/бинд, сущность сразу в grace).
+type Player struct {
+	Rec             persist.CharRecord
+	ConnID          uint64
+	PendingTeleport bool
+	EnterLeaving    bool
+}
+
 // Entity — состояние сущности: мутируется только горутиной региона-владельца;
 // передаётся только в чемодане единственным указателем. Здесь ядро владения
 // и движения; боевые и предметные поля растут вместе с фазами реализации.
@@ -58,6 +72,7 @@ type Entity struct {
 	Beat      Tick // heartbeat: тик последнего шага симуляции
 	Servants  [4]ServantSlot
 	Transfers []TransferRecord
+	Player    *Player
 }
 
 // Suitcase — чемодан переезда: всё, что передаётся при смене владельца.

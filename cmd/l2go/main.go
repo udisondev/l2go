@@ -150,15 +150,15 @@ func bootstrap(cfg config) (*server, error) {
 		un1()
 		return nil, fmt.Errorf("l2go: лог порций: %w", err)
 	}
-	region, err := world.NewRegion(metro, reg, regionID, wcfg, plog)
-	if err != nil {
-		un1()
-		return nil, fmt.Errorf("l2go: регион: %w", err)
-	}
 	stage, err := encode.NewStage(stageByteCap)
 	if err != nil {
 		un1()
 		return nil, fmt.Errorf("l2go: стейдж: %w", err)
+	}
+	region, err := world.NewRegion(metro, reg, regionID, wcfg, plog, stage)
+	if err != nil {
+		un1()
+		return nil, fmt.Errorf("l2go: регион: %w", err)
 	}
 	connS, err := conn.New(conn.Config{
 		MaxConns:         cfg.MaxConns,
@@ -223,6 +223,23 @@ func bootstrap(cfg config) (*server, error) {
 		un1()
 		un2()
 		return nil, fmt.Errorf("l2go: шлюз: %w", err)
+	}
+
+	// Адресаты контрольных писем региона (шлюз/персист) и whitelist
+	// отправителей персиста — после создания шлюза (регион рождается раньше).
+	if err := region.Wire(gw.ID(), actor.ID()); err != nil {
+		_ = link.Close()
+		_ = ln.Close()
+		un1()
+		un2()
+		return nil, fmt.Errorf("l2go: Wire региона: %w", err)
+	}
+	if err := actor.AllowSender(gw.ID(), region.CtrlID()); err != nil {
+		_ = link.Close()
+		_ = ln.Close()
+		un1()
+		un2()
+		return nil, fmt.Errorf("l2go: whitelist персиста: %w", err)
 	}
 
 	s := &server{

@@ -25,9 +25,12 @@ func TestRegionStressSenders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log)
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
+	}
+	if err := r.Wire(901, 900); err != nil {
+		t.Fatalf("Wire: %v", err)
 	}
 	const population = 30
 	var ids []transport.EntityID

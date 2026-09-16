@@ -23,7 +23,7 @@ func newBenchRegion(b *testing.B, cfg Config, population int) *Region {
 	if err != nil {
 		b.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log)
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
 	if err != nil {
 		b.Fatalf("NewRegion: %v", err)
 	}
@@ -126,7 +126,7 @@ func ExampleFold() {
 	ents := []*Entity{{ID: 1, Owner: 1}}
 	rng := rand.New(rand.NewPCG(1, 100))
 	res := Fold(100, 2, rng, st, ents,
-		[]Portion{{Region: 1, Tick: 100, Envs: []transport.Envelope{{Kind: transport.KindXP}}}}, nil)
+		[]Portion{{Region: 1, Tick: 100, Envs: []transport.Envelope{{Kind: transport.KindXP}}}}, nil, testRules())
 	fmt.Println(len(res.Out), st.Steps, st.Letters, st.LastDelta, ents[0].Beat)
 	// Output: 0 1 1 2 100
 }
@@ -146,7 +146,7 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log)
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
 	}

@@ -38,7 +38,13 @@ type shard struct {
 	m  map[EntityID]*Mailbox
 }
 
-// NewRegistry создаёт реестр с капом FAF на ящик (<=0 — дефолт).
+// DeadDrops — агрегат финальных классовых дропов синглтона «мёртв» (посылки
+// в retired id): наблюдаемость страгглеров без per-entity атрибуции.
+func (r *Registry) DeadDrops() (faf, reliable int64) {
+	st := r.deadBox.Stats()
+	return st.FinalFireAndForget, st.FinalReliable
+}
+
 func NewRegistry(fafCap int) *Registry {
 	r := &Registry{fafCap: fafCap}
 	if fafCap <= 0 {

@@ -19,7 +19,7 @@ import (
 
 const (
 	portionMagic   = "PL32"
-	portionVersion = 1
+	portionVersion = 2 // v2: сущность несёт блок игрока (P3.7)
 	flagPayloads   = 1
 
 	recStep  = 1
@@ -535,6 +535,11 @@ func (c *parseCursor) byte() byte {
 	return b
 }
 
+func (c *parseCursor) str() string {
+	n := c.uvarint()
+	return string(c.bytes(int(n)))
+}
+
 func (c *parseCursor) bytes(n int) []byte {
 	if c.err != nil {
 		return nil
@@ -697,5 +702,38 @@ func parseEntity(c *parseCursor) (Entity, error) {
 			e.Transfers = append(e.Transfers, tr)
 		}
 	}
+	if c.byte() == 0 {
+		return e, c.err
+	}
+	e.Player, c.err = parsePlayer(c)
 	return e, c.err
+}
+
+// parsePlayer — зеркало appendPlayer.
+func parsePlayer(c *parseCursor) (*Player, error) {
+	p := &Player{}
+	r := &p.Rec
+	r.Account = c.str()
+	r.Name = c.str()
+	r.Slot = int(c.uvarint())
+	r.ClassID = int(c.uvarint())
+	r.Race = int(c.uvarint())
+	r.Sex = int(c.uvarint())
+	r.HairStyle = int(c.uvarint())
+	r.HairColor = int(c.uvarint())
+	r.Face = int(c.uvarint())
+	r.X = int(c.varint())
+	r.Y = int(c.varint())
+	r.Z = int(c.varint())
+	r.Heading = int(c.varint())
+	r.Level = int(c.uvarint())
+	r.Exp = c.varint()
+	r.HP = int(c.uvarint())
+	r.MP = int(c.uvarint())
+	r.CreatedUnix = c.varint()
+	r.LastSeenUnix = c.varint()
+	p.ConnID = c.uvarint()
+	p.PendingTeleport = c.byte() == 1
+	p.EnterLeaving = c.byte() == 1
+	return p, c.err
 }

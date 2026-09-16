@@ -379,6 +379,18 @@ func (gc *GameClient) Logout() error {
 	}
 }
 
+// RequestRestart — команда стационарной фазы: сервер фазы 3 отвечает отказом
+// канона (RestartResponse(false)+ActionFailed), коннект жив.
+func (gc *GameClient) RequestRestart() error {
+	wire := []byte{protocol.OpCRequestRestart}
+	select {
+	case gc.commands <- command{wire: wire, name: "REQUEST_RESTART"}:
+		return nil
+	case <-gc.done:
+		return ErrClosed
+	}
+}
+
 // readPump — горутина чтения: сырые кадры (NextFrame, собственный буфер на
 // кадр — владение уходит получателю), ошибки — в pumpErr, выход — закрытие
 // соединения или done.
@@ -448,6 +460,20 @@ func (gc *GameClient) handleFrame(f []byte) {
 		if v, ok := protocol.NewCharSelectedView(f); ok {
 			if _, ok2 := v.Name(); ok2 {
 				name, fields, typed = "CHAR_SELECTED", charSelectedFields(v), true
+			}
+		}
+	case protocol.OpUserInfo:
+		// UserInfo — сердце слитка входа: имя/позиция — e2e-ассерты (P3.7).
+		if v, ok := protocol.NewUserInfoView(f); ok {
+			nm, _ := v.Name()
+			name, typed = "USER_INFO", true
+			fields = []Field{
+				{K: "name", V: Quote(nm)},
+				{K: "objID", V: num32(v.ObjID())},
+				{K: "x", V: num32(v.X())},
+				{K: "y", V: num32(v.Y())},
+				{K: "z", V: num32(v.Z())},
+				{K: "level", V: num32(v.Level())},
 			}
 		}
 	}

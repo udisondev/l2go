@@ -22,9 +22,12 @@ func newTestRegion(t *testing.T, cfg Config) (*Metronome, *Region) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log)
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
+	}
+	if err := r.Wire(901, 900); err != nil {
+		t.Fatalf("Wire: %v", err)
 	}
 	// Осознанный игнор ошибки: регион закрывает лог сам (Run на выходе), а
 	// тесты поломки писателя рвут файл мимо Close — результат повторного
@@ -62,7 +65,7 @@ func TestRegionNilDepsRejected(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := NewRegion(c.metro, c.reg, 1, cfg, log); err == nil {
+			if _, err := NewRegion(c.metro, c.reg, 1, cfg, log, nullPusher{}); err == nil {
 				t.Errorf("NewRegion с %s прошёл; want ошибка валидации", c.name)
 			}
 		})
@@ -329,7 +332,7 @@ func TestRegionPopulationEffects(t *testing.T) {
 		Retires: []Retire{{ID: 999}},
 	}
 	r.metro.tick.Add(1)
-	births := r.applyEffects(res)
+	births := r.applyEffects(res, 1)
 	r.step()
 	if got := len(r.residents); got != 2 {
 		t.Fatalf("жителей %d; want 2", got)
@@ -345,7 +348,7 @@ func TestRegionPopulationEffects(t *testing.T) {
 	}
 	// retire живого
 	res2 := StepResult{Retires: []Retire{{ID: r.residents[0].ent.ID}}}
-	r.applyEffects(res2)
+	r.applyEffects(res2, 1)
 	if len(r.residents) != 1 {
 		t.Fatalf("retire не удалил жителя")
 	}
@@ -466,7 +469,7 @@ func TestRegionPopulationCompensatingStep(t *testing.T) {
 		Births:  []Birth{{Ent: Entity{Owner: 1, HP: 55}}},
 		Retires: []Retire{{ID: a}},
 	}
-	r.applyEffects(res)
+	r.applyEffects(res, 1)
 	r.metro.tick.Add(1)
 	r.step()
 	if len(r.ents) != 1 || r.ents[0].ID != r.residents[0].ent.ID {

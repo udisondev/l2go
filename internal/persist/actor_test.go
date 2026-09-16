@@ -1,6 +1,7 @@
 package persist
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -49,6 +50,11 @@ func newTestEnv(t *testing.T, cfg Config) *testEnv {
 	a, err := New(cfg, env.reg, env.doorbell)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
+	}
+	// отправитель теста — доверенный (whitelist); чужие ящики — в
+	// TestActorSaveCharFromIDWhitelist.
+	if err := a.AllowSender(env.senderID); err != nil {
+		t.Fatalf("AllowSender: %v", err)
 	}
 	env.actor = a
 	return env
@@ -145,10 +151,10 @@ func TestActorCreateListSnapshot(t *testing.T) {
 	}
 
 	rec.X += 500
-	snap := env.ask(Request{Op: OpSaveSnapshot, Corr: 3, Account: "player1",
-		Chars: []CharRecord{*rec}}, 5*time.Second)
+	snap := env.ask(Request{Op: OpSaveChar, Corr: 3, Account: "player1",
+		Char: *rec}, 5*time.Second)
 	if !snap.OK {
-		t.Fatalf("SaveSnapshot = %+v", snap)
+		t.Fatalf("SaveChar = %+v", snap)
 	}
 	list = env.ask(Request{Op: OpCharList, Corr: 4, Account: "player1"}, 5*time.Second)
 	if len(list.Chars) != 1 || list.Chars[0].X != HumanFighter.StartX+500 {
@@ -210,8 +216,8 @@ func TestActorEvilRequests(t *testing.T) {
 		{Op: OpCreateChar, Corr: 2, Account: "acc", Name: "../x"},
 		{Op: OpCreateChar, Corr: 3, Account: "acc", Name: "Ok", Sex: 9},
 		{Op: OpCreateChar, Corr: 4, Account: "acc", Name: "Ok", Face: 3},
-		{Op: OpSaveSnapshot, Corr: 5, Account: "acc",
-			Chars: []CharRecord{{Account: "acc", Name: "Ok", ClassID: 88, Level: 1, HP: 1, MP: 1}}},
+		{Op: OpSaveChar, Corr: 5, Account: "acc",
+			Char: CharRecord{Account: "acc", Name: "Ok", ClassID: 88, Level: 1, HP: 1, MP: 1}},
 		{Op: "unknown-op", Corr: 6, Account: "acc"},
 	}
 	for _, req := range evil {
@@ -231,22 +237,30 @@ func TestActorEvilRequests(t *testing.T) {
 
 func TestActorConcurrentSenders(t *testing.T) {
 	env := newTestEnv(t, Config{DrainTimeout: 5 * time.Second, PanicLimit: 3})
-	env.start()
-	defer env.stop()
 
 	const senders = 8
 	const createsPerSender = 7 // лимит канона: слоты 0–6
 	const perSender = 10       // 7 create + 3 charlist
+	boxes := make([]transport.Mailbox, senders)
+	ids := make([]transport.EntityID, senders)
+	for i := range boxes {
+		ids[i] = env.reg.Register(&boxes[i])
+		if err := boxes[i].Claim(uint64(ids[i])); err != nil {
+			t.Fatalf("Claim: %v", err)
+		}
+	}
+	if err := env.actor.AllowSender(ids...); err != nil {
+		t.Fatalf("AllowSender: %v", err)
+	}
+	env.start()
+	defer env.stop()
+
 	var wg sync.WaitGroup
 	for s := 0; s < senders; s++ {
 		wg.Go(func() {
-			var box transport.Mailbox
-			id := env.reg.Register(&box)
+			box := &boxes[s]
+			id := ids[s]
 			token := uint64(id)
-			if err := box.Claim(token); err != nil {
-				t.Errorf("Claim: %v", err)
-				return
-			}
 			account := "acc" + string(rune('A'+s))
 			next := func(n int) Request {
 				if n < createsPerSender {
@@ -356,8 +370,8 @@ func TestActorGracefulDrain(t *testing.T) {
 	// письма отправлены до отмены — надёжный класс обязан быть обработан
 	// финальным дренированием (T3), независимо от гонки уведомлений
 	for i := 0; i < 20; i++ {
-		env.send(Request{Op: OpSaveSnapshot, Corr: uint64(i), Account: "acc",
-			Chars: []CharRecord{mkChar("acc", "Vasya", 0)}})
+		env.send(Request{Op: OpSaveChar, Corr: uint64(i), Account: "acc",
+			Char: mkChar("acc", "Vasya", 0)})
 	}
 	env.cancel()
 	<-env.done
@@ -378,13 +392,13 @@ func TestActorDrainTimeoutDropsRemainder(t *testing.T) {
 	env.start()
 
 	// первое письмо застревает в записи; пока актор занят — ещё два в очереди
-	env.send(Request{Op: OpSaveSnapshot, Corr: 0, Account: "acc",
-		Chars: []CharRecord{mkChar("acc", "Vasya", 0)}})
+	env.send(Request{Op: OpSaveChar, Corr: 0, Account: "acc",
+		Char: mkChar("acc", "Vasya", 0)})
 	waitHandled(t, env.actor, 1)
-	env.send(Request{Op: OpSaveSnapshot, Corr: 1, Account: "acc",
-		Chars: []CharRecord{mkChar("acc", "Vasya", 0)}})
-	env.send(Request{Op: OpSaveSnapshot, Corr: 2, Account: "acc",
-		Chars: []CharRecord{mkChar("acc", "Vasya", 0)}})
+	env.send(Request{Op: OpSaveChar, Corr: 1, Account: "acc",
+		Char: mkChar("acc", "Vasya", 0)})
+	env.send(Request{Op: OpSaveChar, Corr: 2, Account: "acc",
+		Char: mkChar("acc", "Vasya", 0)})
 	env.cancel()
 	close(gate) // письмо 1 дописывается, выход по ctx дропает остаток
 
@@ -563,43 +577,185 @@ func TestActorDemultiplexFIFO(t *testing.T) {
 	}
 }
 
-// TestActorSnapshotGuards — слоты и пустой снимок: отправитель не доверяется.
-func TestActorSnapshotGuards(t *testing.T) {
+// TestActorSaveCharUpsertBySlot — upsert по слоту: записи чужих слотов
+// сохраняются, CreatedUnix наследуется, LastSeenUnix ставит актор.
+func TestActorSaveCharUpsertBySlot(t *testing.T) {
 	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
 	env.start()
 	defer env.stop()
 
+	for _, name := range []string{"Alpha", "Beta"} {
+		rep := env.ask(Request{Op: OpCreateChar, Corr: uint64(name[0]), Account: "acc", Name: name, Sex: 0}, 5*time.Second)
+		if !rep.OK {
+			t.Fatalf("создание %s: %+v", name, rep)
+		}
+	}
+	list := env.ask(Request{Op: OpCharList, Corr: 90, Account: "acc"}, 5*time.Second)
+	if len(list.Chars) != 2 {
+		t.Fatalf("персонажей %d; want 2", len(list.Chars))
+	}
+	created0 := list.Chars[0].CreatedUnix
+
+	online := list.Chars[0]
+	online.X = HumanFighter.StartX + 500
+	rep := env.ask(Request{Op: OpSaveChar, Corr: 91, Account: "acc", Char: online}, 5*time.Second)
+	if !rep.OK {
+		t.Fatalf("SaveChar = %+v", rep)
+	}
+	list = env.ask(Request{Op: OpCharList, Corr: 92, Account: "acc"}, 5*time.Second)
+	if len(list.Chars) != 2 {
+		t.Fatalf("upsert изменил количество персонажей: %d; want 2 (офлайн-сосед сохранён)", len(list.Chars))
+	}
+	for _, r := range list.Chars {
+		if r.Slot == online.Slot {
+			if r.X != online.X {
+				t.Errorf("слот %d: X=%d; want %d", r.Slot, r.X, online.X)
+			}
+			if r.CreatedUnix != created0 {
+				t.Errorf("CreatedUnix перезаписан: %d; want %d", r.CreatedUnix, created0)
+			}
+			if r.LastSeenUnix == 0 {
+				t.Error("LastSeenUnix не проставлен актором")
+			}
+		}
+	}
+}
+
+// TestActorSaveCharEvilInputs — злые входы upsert: ok=false, файл не тронут.
+func TestActorSaveCharEvilInputs(t *testing.T) {
+	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
+	env.start()
+	defer env.stop()
+
+	rep := env.ask(Request{Op: OpCreateChar, Corr: 1, Account: "acc", Name: "Vasya", Sex: 0}, 5*time.Second)
+	if !rep.OK {
+		t.Fatalf("создание: %+v", rep)
+	}
+	rep = env.ask(Request{Op: OpCreateChar, Corr: 2, Account: "acc", Name: "Beta", Sex: 0}, 5*time.Second)
+	if !rep.OK {
+		t.Fatalf("создание соседа: %+v", rep)
+	}
+	path := filepath.Join(env.dir, "chars", "acc.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("чтение файла: %v", err)
+	}
+
 	base := mkChar("acc", "Vasya", 0)
 	base.ClassID, base.Race, base.Level = 0, 0, 1
-	dupSlot := mkChar("acc", "Petya", 0)
-	dupSlot.ClassID, dupSlot.Level = 0, 1
-	rep := env.ask(Request{Op: OpSaveSnapshot, Corr: 1, Account: "acc",
-		Chars: []CharRecord{base, dupSlot}}, 5*time.Second)
-	if rep.OK {
-		t.Error("снимок с дубликатом слота принят")
+	evil := []Request{
+		// имя соседнего слота (Beta — слот 1) из слота 0
+		{Op: OpSaveChar, Corr: 10, Account: "acc", Char: charWithNameSlot(base, "Beta", 0)},
+		// имя, занятое другим аккаунтом
+		{Op: OpSaveChar, Corr: 11, Account: "acc2", Char: charWithNameSlot(base, "Vasya", 0)},
+		// слот вне домена
+		{Op: OpSaveChar, Corr: 12, Account: "acc", Char: charWithNameSlot(base, "Vasya", 9)},
+		// класс/раса вне шаблона фазы
+		{Op: OpSaveChar, Corr: 13, Account: "acc", Char: charWithClass(base, 88)},
+		// злой аккаунт
+		{Op: OpSaveChar, Corr: 14, Account: "../x", Char: base},
+		// мусорное имя
+		{Op: OpSaveChar, Corr: 15, Account: "acc", Char: charWithNameSlot(base, "../x", 0)},
 	}
-	var many []CharRecord
-	for i := 0; i <= 7; i++ {
-		r := mkChar("acc", string(rune('A'+i)), i)
-		r.ClassID, r.Level = 0, 1
-		many = append(many, r)
+	for _, req := range evil {
+		rep := env.ask(req, 5*time.Second)
+		if rep.OK {
+			t.Errorf("злой SaveChar %+v принят", req.Char.Name)
+		}
+		if rep.Corr != req.Corr {
+			t.Errorf("эхо corr = %d; want %d", rep.Corr, req.Corr)
+		}
 	}
-	rep = env.ask(Request{Op: OpSaveSnapshot, Corr: 2, Account: "acc", Chars: many}, 5*time.Second)
-	if rep.OK {
-		t.Error("снимок с 8 персонажами принят")
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("повторное чтение: %v", err)
 	}
-	// пустой снимок при непустом аккаунте — отказ
-	ok := env.ask(Request{Op: OpCreateChar, Corr: 3, Account: "acc2", Name: "Solo", Sex: 0}, 5*time.Second)
-	if !ok.OK {
-		t.Fatalf("создание = %+v", ok)
+	if !bytes.Equal(before, after) {
+		t.Error("файл персонажей изменён злым SaveChar")
 	}
-	rep = env.ask(Request{Op: OpSaveSnapshot, Corr: 4, Account: "acc2", Chars: nil}, 5*time.Second)
-	if rep.OK {
-		t.Error("пустой снимок при непустом аккаунте принят (стёр бы персонажей)")
+}
+
+func charWithNameSlot(base CharRecord, name string, slot int) CharRecord {
+	base.Name = name
+	base.Slot = slot
+	return base
+}
+
+func charWithClass(base CharRecord, classID int) CharRecord {
+	base.ClassID = classID
+	return base
+}
+
+// TestActorSaveCharFromIDWhitelist — отправитель вне whitelist обработан
+// молча (без ответа и записи).
+func TestActorSaveCharFromIDWhitelist(t *testing.T) {
+	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
+	env.start()
+	defer env.stop()
+
+	// чужой отправитель: отдельный ящик вне whitelist
+	var stranger transport.Mailbox
+	strangerID := env.reg.Register(&stranger)
+	if err := stranger.Claim(uint64(strangerID)); err != nil {
+		t.Fatalf("претензия чужого ящика: %v", err)
 	}
-	// при пустом аккаунте пустой снимок легитимен (нечего стирать)
-	rep = env.ask(Request{Op: OpSaveSnapshot, Corr: 5, Account: "acc3", Chars: nil}, 5*time.Second)
+	tok := uint64(strangerID)
+	_ = tok
+	payload, err := EncodeRequest(Request{Op: OpCharList, Corr: 7, Account: "acc"})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	env.reg.Send(transport.Envelope{
+		To: transport.Addr{Entity: env.actor.ID()}, FromID: strangerID,
+		Kind: transport.KindPersistRequest, Payload: payload,
+	})
+	waitHandled(t, env.actor, 1)
+	select {
+	case r := <-env.replyCh:
+		t.Fatalf("вне whitelist получен ответ %+v", r)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := os.Stat(filepath.Join(env.dir, "chars", "acc.json")); !os.IsNotExist(err) {
+		t.Error("файл создан письмом вне whitelist")
+	}
+
+	// доливка whitelist после старта Run запрещена
+	if err := env.actor.AllowSender(strangerID); err == nil {
+		t.Fatal("AllowSender после старта Run разрешён")
+	}
+}
+
+// TestActorRunRequiresWhitelist — Run с пустым whitelist не работает.
+func TestActorRunRequiresWhitelist(t *testing.T) {
+	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
+	env.start()
+	defer env.stop()
+	rep := env.ask(Request{Op: OpCharList, Corr: 1, Account: "acc"}, time.Second)
 	if !rep.OK {
-		t.Errorf("пустой снимок пустого аккаунта = %+v; want OK", rep)
+		t.Fatalf("легитимный отправитель отклонён: %+v", rep)
+	}
+}
+
+// TestActorSaveCharCorrEchoAndIdempotentRetry — Corr эхом; повтор upsert
+// того же снимка идемпотентен.
+func TestActorSaveCharCorrEchoAndIdempotentRetry(t *testing.T) {
+	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
+	env.start()
+	defer env.stop()
+
+	env.ask(Request{Op: OpCreateChar, Corr: 1, Account: "acc", Name: "Vasya", Sex: 0}, 5*time.Second)
+	base := mkChar("acc", "Vasya", 0)
+	base.ClassID, base.Race, base.Level = 0, 0, 1
+	rep := env.ask(Request{Op: OpSaveChar, Corr: 42, Account: "acc", Char: base}, 5*time.Second)
+	if rep.OK && rep.Corr != 42 {
+		t.Errorf("Corr = %d; want 42", rep.Corr)
+	}
+	again := env.ask(Request{Op: OpSaveChar, Corr: 43, Account: "acc", Char: base}, 5*time.Second)
+	if !again.OK {
+		t.Fatalf("повторный upsert = %+v", again)
+	}
+	list := env.ask(Request{Op: OpCharList, Corr: 44, Account: "acc"}, 5*time.Second)
+	if len(list.Chars) != 1 || list.Chars[0].X != base.X {
+		t.Errorf("после повторного upsert: %+v", list.Chars)
 	}
 }

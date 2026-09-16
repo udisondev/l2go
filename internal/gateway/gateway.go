@@ -193,6 +193,9 @@ func New(cfg Config, reg *transport.Registry, validator SessionValidator,
 // Done закрывается при выходе актора.
 func (g *Gateway) Done() <-chan struct{} { return g.done }
 
+// ID — адрес ящика шлюза (отправитель персист-запросов, получатель биндов).
+func (g *Gateway) ID() transport.EntityID { return g.id }
+
 // Stats — снимок метрик шлюза (карты читает только актор; счётчики жилых
 // коннектов/биндов и кадров по фазам — атомики, читаемые извне без гонки).
 type Stats struct {
@@ -340,7 +343,10 @@ func (g *Gateway) teardownMark(gc *gconn, notifyWorld, byClose bool) {
 		gc.pending.timer.Stop()
 		gc.pending = nil
 	}
-	if notifyWorld && gc.entity != 0 {
+	// По фазе, не по entity: смерть коннекта в RTT бинда (EnterWorld отправлен,
+	// бинд ещё не применён) тоже обязана дойти до региона — иначе сущность-
+	// сирота навсегда (P3.7-F7); регион резолвит коннект по своим картам.
+	if notifyWorld && gc.phase >= phWorld {
 		g.sendRegion(transport.KindLinkDead, connRefMsg{Conn: uint64(gc.id)})
 	}
 	if g.accounts[gc.account] == gc.id {

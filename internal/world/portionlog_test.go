@@ -80,7 +80,7 @@ func TestPortionLogRoundtrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
-		if hdr.Region != 7 || hdr.Version != 1 || hdr.Payloads != payloads || hdr.PeriodNS == 0 {
+		if hdr.Region != 7 || hdr.Version != portionVersion || hdr.Payloads != payloads || hdr.PeriodNS == 0 {
 			t.Fatalf("заголовок %+v", hdr)
 		}
 		if len(steps) != 1 || len(panics) != 1 {

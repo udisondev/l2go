@@ -189,6 +189,9 @@ func newHarness(t *testing.T, validator SessionValidator, persistTimeout time.Du
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := actor.AllowSender(gw.ID()); err != nil {
+		t.Fatal(err)
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -8,6 +8,9 @@ import (
 	"sort"
 	"sync/atomic"
 
+	"github.com/udisondev/l2go/internal/encode"
+	"github.com/udisondev/l2go/internal/persist"
+	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
@@ -48,12 +51,21 @@ type resident struct {
 // (single-writer). Шаг: drain → fold → эффекты населения → фаза B → publish →
 // ack; номер шага — Now() на старте (монотонен, регресса нет); dt — тиками
 // метронома, настенных часов в шаге нет (D1).
+// FramePusher — стейдж исходящих кадров клиента (реализация — encode.Stage,
+// удовлетворяет структурно; интерфейс у потребителя по codestyle §2).
+type FramePusher interface {
+	Push(id uint64, frame []byte, crypt bool)
+}
+
 type Region struct {
-	id    RegionID
-	cfg   Config
-	metro *Metronome
-	reg   *transport.Registry
-	log   *PortionLog
+	id      RegionID
+	cfg     Config
+	metro   *Metronome
+	reg     *transport.Registry
+	log     *PortionLog
+	pusher  FramePusher
+	rules   Rules
+	started atomic.Bool
 
 	ctrl      transport.Mailbox
 	ctrlID    transport.EntityID
@@ -86,6 +98,8 @@ type Region struct {
 	outbox       []transport.Envelope
 	backlogNoted bool
 
+	pendingPushes []FramePush // пуши шага (исполнение — фазой B раньше писем)
+
 	// Буферы дрена — поля региона, переиспользуются между шагами.
 	ctrlBatch []transport.Envelope
 	prioBuf   []transport.Envelope
@@ -109,21 +123,22 @@ type Region struct {
 // NewRegion создаёт регион: контрольный ящик регистрируется в реестре и
 // клеймится (токен = uint64(ctrlID), ID монотонные с 1). Регион рождается
 // спящим: первый шаг — delta=0.
-func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Config, log *PortionLog) (*Region, error) {
-	if metro == nil || reg == nil || log == nil {
-		return nil, fmt.Errorf("world: NewRegion(%d): метроном, реестр и лог порций обязательны", id)
+func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Config, log *PortionLog, pusher FramePusher) (*Region, error) {
+	if metro == nil || reg == nil || log == nil || pusher == nil {
+		return nil, fmt.Errorf("world: NewRegion(%d): метроном, реестр, лог и пушер кадров обязательны", id)
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("world: NewRegion(%d): %w", id, err)
 	}
 	r := &Region{
-		id:    id,
-		cfg:   cfg,
-		metro: metro,
-		reg:   reg,
-		log:   log,
-		state: &State{},
-		slept: true,
+		id:     id,
+		cfg:    cfg,
+		metro:  metro,
+		reg:    reg,
+		log:    log,
+		pusher: pusher,
+		state:  newState(),
+		slept:  true,
 	}
 	r.ringCh = make(chan struct{}, 1)
 	r.fbCh = make(chan struct{}, 1)
@@ -138,6 +153,22 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 
 // CtrlID — адрес контрольного ящика региона (получатели контрольных писем).
 func (r *Region) CtrlID() transport.EntityID { return r.ctrlID }
+
+// Wire — адресаты контрольных писем свёртки (шлюз, персист). Вызов обязателен
+// до старта Run: регион рождается раньше шлюза, адрес при New неизвестен.
+func (r *Region) Wire(gateway, pers transport.EntityID) error {
+	if r.started.Load() {
+		return fmt.Errorf("world: Wire после старта Run")
+	}
+	r.rules = Rules{
+		GraceTicks:     r.cfg.GraceTicks,
+		SaveRetryTicks: r.cfg.SaveRetryTicks,
+		Persist:        pers,
+		Gateway:        gateway,
+		From:           r.ctrlID,
+	}
+	return nil
+}
 
 // Stats — снимок метрик региона (атомики; состояние свёртки не входит — оно
 // принадлежит горутине региона, наружу — через Dump после остановки).
@@ -221,8 +252,14 @@ func (r *Region) Remove(id transport.EntityID) {
 // закрыто тик-звонком), замороженный не шагает. На выходе по ctx горутина
 // сама закрывает лог порций.
 func (r *Region) Run(ctx context.Context) {
+	r.started.Store(true)
+	if !r.rules.valid() {
+		slog.Error("world: регион без Wire — шаги не исполняются", "region", r.id)
+		return
+	}
 	defer r.shutdown()
 	defer r.closeLog()
+	defer r.finalSave()
 	for {
 		select {
 		case <-ctx.Done():
@@ -254,6 +291,78 @@ func (r *Region) shutdown() {
 		r.metro.Deactivate(r)
 	}
 	r.metro.unregister(r)
+}
+
+// finalSave — финальный сохранитель (T3, ADR-0003 §9): живым игрокам и
+// зависшим SaveQ — письма OpSaveChar; дорабатывает персист своим drain-ом,
+// ответы мёртвому региону безвредны. Исполняется в горутине региона
+// (single-writer) на выходе Run; порядок ключей — сортированный.
+func (r *Region) finalSave() {
+	if r.frozenFlag.Load() {
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error("world: паника финального сохранителя", "region", r.id, "panic", p)
+		}
+	}()
+	saved := 0
+	for _, res := range r.residents {
+		if res.ent.Player == nil {
+			continue
+		}
+		rec := res.ent.Player.Rec
+		rec.X, rec.Y, rec.Z = int(res.ent.Pos.X), int(res.ent.Pos.Y), int(res.ent.Pos.Z)
+		r.sendSave(rec, res.ent.ID)
+		saved++
+	}
+	for _, acc := range sortedSaveKeys(r.state) {
+		q := r.state.SaveQ[acc]
+		r.sendSave(q.Char, q.Entity)
+		saved++
+	}
+	if saved > 0 {
+		slog.Info("world: финальные сохранения отправлены", "region", r.id, "chars", saved)
+	}
+}
+
+// sendSave — письмо OpSaveChar от горутины региона (сохранитель).
+func (r *Region) sendSave(rec persist.CharRecord, corr transport.EntityID) {
+	body, err := persist.EncodeRequest(persist.Request{
+		Op: persist.OpSaveChar, Corr: uint64(corr), Account: rec.Account, Char: rec,
+	})
+	if err != nil {
+		slog.Error("world: кодирование финального OpSaveChar", "account", rec.Account, "err", err)
+		return
+	}
+	r.reg.Send(transport.Envelope{
+		To: transport.Addr{Entity: r.rules.Persist}, FromID: r.ctrlID,
+		Kind: transport.KindPersistRequest, Payload: body,
+	})
+}
+
+// userInfoOf — CharRecord → данные UserInfo (производные статы — плейсхолдеры
+// P3.5 до появления формул).
+func userInfoOf(p *Player) protocol.UserInfoData {
+	r := &p.Rec
+	return protocol.UserInfoData{
+		X: int32(r.X), Y: int32(r.Y), Z: int32(r.Z),
+		Name:      r.Name,
+		Race:      int32(r.Race),
+		Female:    r.Sex == 1,
+		BaseClass: int32(r.ClassID),
+		Level:     int32(r.Level),
+		Exp:       r.Exp,
+		Str:       int32(persist.HumanFighter.Str),
+		Dex:       int32(persist.HumanFighter.Dex),
+		Con:       int32(persist.HumanFighter.Con),
+		Int:       int32(persist.HumanFighter.Int),
+		Wit:       int32(persist.HumanFighter.Wit),
+		Men:       int32(persist.HumanFighter.Men),
+		MaxHp:     int32(r.HP), CurHp: int32(r.HP),
+		MaxMp: int32(r.MP), CurMp: int32(r.MP),
+		Sp: 0,
+	}
 }
 
 // closeLog — закрытие лога на выходе; recover со slog: паника Close не уронит
@@ -359,12 +468,13 @@ func (r *Region) step() {
 	r.curPhase = phaseFold
 	r.injectPanic(phaseFold)
 	rng := rand.New(rand.NewPCG(uint64(r.id), uint64(n)))
-	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf)
+	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf, r.rules)
+	r.pendingPushes = append(r.pendingPushes, res.Pushes...)
 	r.phFold.Add(1)
 
 	r.curPhase = phaseEffects
 	r.injectPanic(phaseEffects)
-	births := r.applyEffects(res)
+	births := r.applyEffects(res, n)
 	r.phEffects.Add(1)
 
 	r.curPhase = phaseLog
@@ -416,6 +526,7 @@ func (r *Region) injectPanic(phase byte) {
 // resetDrain — сброс буферов дрена на старте шага: паника фазы дрена не
 // дропает пачки прошлого успешного шага.
 func (r *Region) resetDrain() {
+	r.pendingPushes = r.pendingPushes[:0]
 	r.portions = r.portions[:0]
 	r.records = r.records[:0]
 	r.ctrlBatch = r.ctrlBatch[:0]
@@ -492,8 +603,11 @@ func (r *Region) entsProj() []*Entity {
 // applyEffects — применение эффектов населения после дрена (обход под
 // мутацией слайса исключён): рождения — Register + Claim + вставка
 // (присвоенные ID возвращаются для лога), удаления — Despawn → Retire →
-// освобождение записи.
-func (r *Region) applyEffects(res StepResult) []AppliedBirth {
+// освобождение записи. Рождение игрока: тени аккаунта/коннекта, бинд-письмо
+// шлюзу и слиток входа (композиция здесь — ObjectID требует присвоенный ID;
+// P3.6-F42: пушер стационарных кадров — регион). EnterLeaving — «вошёл и
+// оборвался»: без бинда и слитка, сразу в grace.
+func (r *Region) applyEffects(res StepResult, tick Tick) []AppliedBirth {
 	births := make([]AppliedBirth, 0, len(res.Births))
 	for _, b := range res.Births {
 		ent := b.Ent
@@ -504,6 +618,16 @@ func (r *Region) applyEffects(res StepResult) []AppliedBirth {
 		}
 		ent.ID = id
 		births = append(births, AppliedBirth{ID: id, Ent: &ent})
+		if ent.Player == nil {
+			continue
+		}
+		r.state.ResolveBirth(ent.Player.Rec.Account, ent.Player.ConnID, id)
+		if ent.Player.EnterLeaving {
+			addLeaving(r.state, leaveState{Entity: id, Deadline: tick + Tick(r.cfg.GraceTicks)})
+			continue
+		}
+		r.sendBind(ent.Player.ConnID, id)
+		r.composeSlivok(id, ent.Player, tick)
 	}
 	for _, rt := range res.Retires {
 		r.Remove(rt.ID)
@@ -511,9 +635,47 @@ func (r *Region) applyEffects(res StepResult) []AppliedBirth {
 	return births
 }
 
-// phaseB — capped-отправка исходящих: сначала backlog, затем свежие письма
-// шага (порядок отправителя); кап на шаг, излишек переносится.
+// sendBind — KindConnBind шлюзу (производитель — регион, P3.7-F1).
+func (r *Region) sendBind(conn uint64, id transport.EntityID) {
+	body, err := transport.EncodeLetter(transport.ConnBindMsg{Conn: conn, Entity: id})
+	if err != nil {
+		slog.Error("world: кодирование бинда", "err", err)
+		return
+	}
+	r.reg.Send(transport.Envelope{
+		To: transport.Addr{Entity: r.rules.Gateway}, FromID: r.ctrlID,
+		Kind: transport.KindConnBind, Payload: body,
+	})
+}
+
+// composeSlivok — слиток входа в пуши шага (кадры — encode-обёрткой;
+// gameTime — из тика метронома, IG-сутки 4 реальных часа).
+func (r *Region) composeSlivok(id transport.EntityID, p *Player, tick Tick) {
+	if r.pusher == nil {
+		return
+	}
+	hz := r.cfg.Hz
+	frames := encode.ComposeEnterWorld(encode.EnterWorldData{
+		Entity:          uint64(id),
+		User:            userInfoOf(p),
+		Heading:         int32(p.Rec.Heading),
+		GameTimeMinutes: encode.GameTimeMinutes(uint64(tick), hz),
+		IGDays:          protocol.IGDaysPerDay,
+	})
+	for _, f := range frames {
+		r.pendingPushes = append(r.pendingPushes, FramePush{Client: p.ConnID, Frame: f, Crypt: true})
+	}
+}
+
+// phaseB — capped-отправка исходящих. Пуши кадров — СТРОГО раньше писем
+// шага (happens-before «LeaveWorld в стейдж → ConnClose шлюзу»: close-after-
+// flush стейджа выдаёт кадр до разрыва). Письма: сначала backlog, затем
+// свежие (порядок отправителя); кап на шаг, излишек переносится.
 func (r *Region) phaseB() {
+	for _, p := range r.pendingPushes {
+		r.pusher.Push(p.Client, p.Frame, p.Crypt)
+	}
+	r.pendingPushes = r.pendingPushes[:0]
 	sent := 0
 	for sent < len(r.outbox) && sent < r.cfg.PhaseBCap {
 		r.reg.Send(r.outbox[sent])
@@ -538,10 +700,12 @@ func (r *Region) phaseB() {
 }
 
 // syncMembership — активность через общий механизм сета: активен, пока есть
-// жители; пустой — деактивация (сон: первый шаг после сна — delta=0).
-// Только горутина региона.
+// жители ИЛИ висят несохранённые персонажи (SaveQ: IO-ретраи живы, S6-мажор);
+// иначе последний logout усыплял бы регион с мёртвыми ретраями. Пустой и без
+// SaveQ — деактивация (сон: первый шаг после сна — delta=0). Только горутина
+// региона.
 func (r *Region) syncMembership() {
-	if len(r.residents) > 0 {
+	if len(r.residents) > 0 || len(r.state.SaveQ) > 0 {
 		if !r.activeFlag {
 			r.activeFlag = true
 			r.metro.Activate(r)

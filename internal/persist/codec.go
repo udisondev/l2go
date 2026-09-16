@@ -7,9 +7,11 @@ import (
 
 // Операции запросов персист-актора.
 const (
-	OpCharList     = "charlist"
-	OpCreateChar   = "create"
-	OpSaveSnapshot = "snapshot"
+	OpCharList   = "charlist"
+	OpCreateChar = "create"
+	// OpSaveChar — upsert персонажа по слоту: записи чужих слотов аккаунта
+	// сохраняются (отправитель знает только онлайн-персонажа; P3.7).
+	OpSaveChar = "savechar"
 )
 
 // Request — запрос персист-актору (payload KindPersistRequest). Corr —
@@ -17,15 +19,15 @@ const (
 // EntityID региона), возвращаемый эхом в ответе: демультиплексация ответов
 // при одном ящике отправителя.
 type Request struct {
-	Op        string       `json:"op"`
-	Corr      uint64       `json:"corr"`
-	Account   string       `json:"account"`
-	Name      string       `json:"name,omitempty"`
-	Sex       int          `json:"sex,omitempty"`
-	HairStyle int          `json:"hair_style,omitempty"`
-	HairColor int          `json:"hair_color,omitempty"`
-	Face      int          `json:"face,omitempty"`
-	Chars     []CharRecord `json:"chars,omitempty"`
+	Op        string     `json:"op"`
+	Corr      uint64     `json:"corr"`
+	Account   string     `json:"account"`
+	Name      string     `json:"name,omitempty"`
+	Sex       int        `json:"sex,omitempty"`
+	HairStyle int        `json:"hair_style,omitempty"`
+	HairColor int        `json:"hair_color,omitempty"`
+	Face      int        `json:"face,omitempty"`
+	Char      CharRecord `json:"char,omitempty"`
 }
 
 // Reply — ответ актора (payload KindPersistReply). Code — стабильный код

@@ -303,7 +303,7 @@ func (g *Gateway) onStationaryFrame(gc *gconn, frame []byte) {
 		}
 		g.appendInbox(gc, frame)
 	case protocol.OpCValidatePosition, protocol.OpCCannotMoveAnymore,
-		protocol.OpCSay2, protocol.OpLogout:
+		protocol.OpCSay2, protocol.OpLogout, protocol.OpCRequestRestart:
 		g.appendInbox(gc, frame)
 	default:
 		g.unknownOps.Add(1)

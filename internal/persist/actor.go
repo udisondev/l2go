@@ -23,12 +23,17 @@ type Config struct {
 	DrainTimeout time.Duration
 	// PanicLimit — серия паник обработки подряд до let-it-crash.
 	PanicLimit int
+	// Senders — whitelist FromID отправителей запросов (шлюз, регион).
+	// Доливается AllowSender до старта Run: актор рождается раньше шлюза и
+	// региона, их адреса при New неизвестны. Run с пустым списком запрещён.
+	Senders []transport.EntityID
 }
 
 func (c Config) validate() error {
 	if c.Dir == "" {
 		return fmt.Errorf("persist: каталог персиста пуст")
 	}
+
 	if c.DrainTimeout <= 0 {
 		return fmt.Errorf("persist: DrainTimeout <= 0")
 	}
@@ -57,6 +62,7 @@ type Actor struct {
 	replies   atomic.Uint64
 	writeErrs atomic.Uint64
 	panics    atomic.Uint64
+	started   atomic.Bool
 }
 
 // New валидирует конфиг, подготавливает корень персиста, открывает каталог
@@ -123,6 +129,11 @@ func (a *Actor) Stats() ActorStats {
 // DrainTimeout, остаток — классовый дроп с инцидент-алертом, затем Done.
 func (a *Actor) Run(ctx context.Context) {
 	defer close(a.done)
+	a.started.Store(true)
+	if len(a.cfg.Senders) == 0 {
+		slog.Error("persist: Run с пустым whitelist отправителей — актор не работает")
+		return
+	}
 	if err := a.box.Claim(a.token); err != nil {
 		// Свежий ящик: претензия не может быть занята; отказ — контрактная
 		// ошибка, актор не работает, процесс узнает по тишине ответов.
@@ -221,6 +232,10 @@ func (a *Actor) processLetter(env *transport.Envelope) (ok bool) {
 		slog.Error("persist: письмо чужого Kind отброшено", "from", env.FromID, "kind", env.Kind)
 		return true
 	}
+	if !a.senderAllowed(env.FromID) {
+		slog.Error("persist: отправитель вне whitelist отброшен", "from", env.FromID)
+		return true
+	}
 	req, err := DecodeRequest(env.Payload)
 	if err != nil {
 		// Синтаксический мусор: журнал, ответа нет (таймаут отправителя
@@ -247,6 +262,27 @@ func (a *Actor) processLetter(env *transport.Envelope) (ok bool) {
 	return true
 }
 
+// AllowSender дополняет whitelist отправителей; вызов после старта Run —
+// ошибка (список читает горутина актора). Wire-up зовёт после создания
+// шлюза и региона.
+func (a *Actor) AllowSender(ids ...transport.EntityID) error {
+	if a.started.Load() {
+		return fmt.Errorf("persist: AllowSender после старта Run")
+	}
+	a.cfg.Senders = append(a.cfg.Senders, ids...)
+	return nil
+}
+
+// senderAllowed — отправитель запроса в whitelist конфига.
+func (a *Actor) senderAllowed(from transport.EntityID) bool {
+	for _, id := range a.cfg.Senders {
+		if id == from {
+			return true
+		}
+	}
+	return false
+}
+
 // fail — конструктор отказа: эхо операции и корреляции, код + причина.
 func (r Request) fail(code string, err error) Reply {
 	return Reply{Op: r.Op, Corr: r.Corr, Code: code, Err: err.Error()}
@@ -265,8 +301,8 @@ func (a *Actor) handle(req Request) Reply {
 		return a.handleCharList(req)
 	case OpCreateChar:
 		return a.handleCreateChar(req)
-	case OpSaveSnapshot:
-		return a.handleSnapshot(req)
+	case OpSaveChar:
+		return a.handleSaveChar(req)
 	default:
 		return req.failMsg("", "неизвестная операция")
 	}
@@ -338,55 +374,44 @@ func (a *Actor) handleCreateChar(req Request) Reply {
 	return Reply{Op: req.Op, Corr: req.Corr, OK: true, Record: &rec}
 }
 
-func (a *Actor) handleSnapshot(req Request) Reply {
+func (a *Actor) handleSaveChar(req Request) Reply {
 	account, err := NormalizeLogin(req.Account)
 	if err != nil {
 		return req.fail(CodeLogin, err)
+	}
+	ch := req.Char
+	if err := validateCharRecord(ch); err != nil {
+		return req.fail(CodeNameInvalid, err)
 	}
 	old, err := a.chars.list(account)
 	if err != nil {
 		return req.fail(CodeIO, err)
 	}
-	// Пустой снимок при непустом аккаунте — подозрительный вход (стёр бы
-	// всех персонажей); легитимно пуст только уже пустой аккаунт.
-	if len(req.Chars) == 0 && len(old) > 0 {
-		return req.failMsg(CodeIO, "пустой снимок при непустом аккаунте")
-	}
-	created := make(map[string]int64, len(old))
-	for _, r := range old {
-		created[lowercaseASCII(r.Name)] = r.CreatedUnix
-	}
+	// upsert по слоту: заменяется запись слота, остальные (офлайн-персонажи
+	// аккаунта) сохраняются как есть; CreatedUnix наследуется от записи слота.
 	now := time.Now().Unix()
-	recs := make([]CharRecord, 0, len(req.Chars))
-	for _, r := range req.Chars {
-		r.Account = account
-		if err := validateCharRecord(r); err != nil {
-			return req.fail(CodeNameInvalid, err)
+	ch.Account = account
+	ch.LastSeenUnix = now
+	ch.CreatedUnix = now
+	recs := make([]CharRecord, 0, len(old)+1)
+	for _, r := range old {
+		if r.Slot == ch.Slot {
+			ch.CreatedUnix = r.CreatedUnix
+			continue
 		}
-		if c, ok := created[lowercaseASCII(r.Name)]; ok {
-			r.CreatedUnix = c
-		} else {
-			r.CreatedUnix = now
-		}
-		r.LastSeenUnix = now
 		recs = append(recs, r)
 	}
-	if len(recs) > maxSlot+1 {
-		return req.failMsg("", "лимит персонажей аккаунта")
-	}
-	// уникальность имён и слотов снимка внутри аккаунта, имена — против
-	// других аккаунтов (отправитель не доверяется)
-	slots := [maxSlot + 1]bool{}
-	for i, r := range recs {
+	recs = append(recs, ch)
+	// имена внутри аккаунта уникальны; новый взял имя соседнего слота — отказ
+	for i := 1; i < len(recs); i++ {
 		for j := 0; j < i; j++ {
-			if lowercaseASCII(recs[j].Name) == lowercaseASCII(r.Name) {
-				return req.failMsg("", "дубликат имени в снимке")
+			if lowercaseASCII(recs[j].Name) == lowercaseASCII(recs[i].Name) {
+				return req.failMsg("", "дубликат имени в аккаунте")
 			}
 		}
-		if slots[r.Slot] {
-			return req.failMsg("", "дубликат слота в снимке")
-		}
-		slots[r.Slot] = true
+	}
+	// имена — против других аккаунтов (отправитель не доверяется)
+	for _, r := range recs {
 		if owner, ok := a.chars.nameOwner(r.Name); ok && owner != account {
 			return req.failMsg("", "имя принадлежит другому аккаунту")
 		}

@@ -87,3 +87,31 @@ func ExampleRegistry() {
 	// Output:
 	// применено писем Kind true
 }
+
+// DeadDrops — дельта агрегата при посылках в retired id (метрика страгглеров
+// после деспавна, P3.7).
+func TestRegistryDeadBoxAggregatesDelta(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry(4)
+	var box Mailbox
+	id := r.Register(&box)
+	if err := box.Claim(uint64(id)); err != nil {
+		t.Fatal(err)
+	}
+	box.Despawn(uint64(id))
+	r.Retire(id)
+
+	faf0, _ := r.DeadDrops()
+	for range 3 {
+		r.Send(Envelope{To: Addr{Entity: id}, Kind: KindClientFrame, Payload: []byte{1}})
+	}
+	_, reliable1 := r.DeadDrops()
+	r.Send(Envelope{To: Addr{Entity: id}, Kind: KindAggro, Payload: []byte{1}})
+	faf1, reliable2 := r.DeadDrops()
+	if faf1-faf0 != 3 {
+		t.Errorf("FAF-дропы: %d → %d; want +3", faf0, faf1)
+	}
+	if reliable2-reliable1 != 1 {
+		t.Errorf("reliable-дропы: %d → %d; want +1", reliable1, reliable2)
+	}
+}

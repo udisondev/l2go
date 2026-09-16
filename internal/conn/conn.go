@@ -361,7 +361,14 @@ func (s *Server) readLoop(conn net.Conn, id ConnID, st *connState, key [8]byte) 
 	buf := make([]byte, 8192)
 	var pending []byte
 	first := true
-	_ = conn.SetReadDeadline(time.Now().Add(s.cfg.HandshakeTimeout))
+	// Начальный дедлайн — под dlMu и только в фазе хендшейка живого сервера:
+	// SetReadMode/Close могли уже перевести режим или остановить чтение —
+	// безусловное вооружение убивало стационарного молчуна и буксовало Close.
+	st.dlMu.Lock()
+	if ReadMode(st.mode.Load()) == ModeHandshake && !s.stopping.Load() {
+		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.HandshakeTimeout))
+	}
+	st.dlMu.Unlock()
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
@@ -392,13 +399,11 @@ func (s *Server) readLoop(conn net.Conn, id ConnID, st *connState, key [8]byte) 
 					return CloseOverflow // close-on-overflow своего под-лимита
 				}
 				pending = pending[len(frame)+2:]
+				st.dlMu.Lock()
 				if ReadMode(st.mode.Load()) == ModePresession && !s.stopping.Load() {
-					st.dlMu.Lock()
-					if ReadMode(st.mode.Load()) == ModePresession {
-						_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
-					}
-					st.dlMu.Unlock()
+					_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
 				}
+				st.dlMu.Unlock()
 			}
 			if len(pending) > s.cfg.FrameCap+2 {
 				slog.Warn("conn: хвост сверх капа — разрыв", "conn", id)
@@ -486,7 +491,12 @@ func (s *Server) Close() {
 		}
 		s.mu.Unlock()
 		for _, st := range states {
+			// Тычок в прошлое — под per-state dlMu: readLoop вооружает
+			// дедлайны тем же локом, без него поздний arm перезаписал бы
+			// past и wg.Wait буксовал до IdleTimeout.
+			st.dlMu.Lock()
 			_ = st.conn.SetDeadline(past)
+			st.dlMu.Unlock()
 		}
 		s.wg.Wait()
 	})
