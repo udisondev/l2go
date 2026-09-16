@@ -32,6 +32,9 @@ type ConnID uint64
 // флеша очереди).
 type Outbound interface {
 	Take(prev [][]byte) (next [][]byte, close bool)
+	// Recycle возвращает финальный батч write-горутины (выход writeLoop):
+	// замыкание владения буферами энкод-стадии. Однократность на вызывающем.
+	Recycle(prev [][]byte)
 }
 
 // Outbounds — фабрика исходящих очередей: регистрирует клиента с ключом
@@ -421,8 +424,11 @@ func (s *Server) readLoop(conn net.Conn, id ConnID, st *connState, key [8]byte) 
 
 // writeLoop — единственный писатель сокета: батчи шва Outbound одним write
 // на пробуждение со стадийным дедлайном; close — дописать и разорвать.
+// На любом выходе (close, ошибка записи, паника-раскрутка) финальный батч
+// возвращается Recycle — до Unregister обёртки (стек defer'ов).
 func (s *Server) writeLoop(conn net.Conn, out Outbound) {
 	var prev [][]byte
+	defer func() { out.Recycle(prev) }()
 	var batch []byte
 	for {
 		next, close := out.Take(prev)

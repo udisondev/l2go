@@ -116,3 +116,10 @@ func TestStageAllocBudgets(t *testing.T) {
 		t.Errorf("стационарный раунд Push→Take: %.0f аллокаций; want 0", allocs)
 	}
 }
+
+// Трим-чёрн (ревью P3.7b R8): стационарный след 70 × 256-бакет ≈ 17.9 КиБ
+// сверх бюджета 8 КиБ — каждая волна платит pool-раундтрип излишка
+// (38 слэбов). Честная цена осознанного трейда «память ↔ цикл».
+func BenchmarkPushTakeOverBudget(b *testing.B) {
+	benchRound(b, 254, 70, true)
+}

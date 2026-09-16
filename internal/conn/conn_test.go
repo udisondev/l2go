@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,10 +15,15 @@ import (
 
 // fakeOutbound — программируемый шов исходящего для тестов без encode.
 type fakeOutbound struct {
-	mu    sync.Mutex
-	queue [][]byte
-	close bool
-	wake  chan struct{}
+	mu      sync.Mutex
+	queue   [][]byte
+	close   bool
+	wake    chan struct{}
+	recycld atomic.Int64
+}
+
+func (f *fakeOutbound) Recycle(prev [][]byte) {
+	f.recycld.Add(int64(len(prev)))
 }
 
 func (f *fakeOutbound) push(b []byte) {
@@ -524,3 +530,57 @@ func TestConnCloseBeforeFirstFrameNoArm(t *testing.T) {
 	}
 	_ = c.Close()
 }
+
+// Шов Recycle (P3.7b): writeLoop возвращает финальный батч на обоих выходах
+// — close-выход и ошибка записи; порядок Recycle→Unregister гарантирован
+// стеком defer'ов. Фейк считает; реальный пул проверяется в encode.
+func TestWriteLoopRecyclesOnBothExits(t *testing.T) {
+	t.Parallel()
+	// close-выход: живой сервер + клиент до стационара, закрытие с флешом.
+	cfg := testConfig()
+	out := newFakeOutbounds()
+	addr, s := startServer(t, cfg, out)
+	c := dial(t, addr)
+	ev := recvEvent(t, s.Events())
+	s.SetReadMode(ev.Conn, ModeStationary)
+	fake := out.outs[ev.Conn]
+	fake.push([]byte{1, 0, 'x'})
+	s.CloseAfterFlush(ev.Conn)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && fake.recycld.Load() == 0 {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if n := fake.recycld.Load(); n == 0 {
+		t.Fatal("close-выход: Recycle не вернул финальный батч")
+	}
+	_ = c.Close()
+
+	// error-выход: writeLoop напрямую с падающим conn (внутренний доступ
+	// к непортированным частям — пакетный тест).
+	stub := &errConn{}
+	var o2 fakeOutbound
+	o2.wake = make(chan struct{}, 1)
+	o2.push([]byte{1, 0, 'x'})
+	done := make(chan struct{})
+	go func() { defer close(done); (&Server{}).writeLoop(stub, &o2) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("writeLoop не вышел на ошибке записи")
+	}
+	if n := o2.recycld.Load(); n == 0 {
+		t.Fatal("error-выход: Recycle не вернул финальный батч")
+	}
+}
+
+// errConn — net.Conn, чей Write всегда ошибочен.
+type errConn struct{}
+
+func (*errConn) Write([]byte) (int, error)        { return 0, os.ErrClosed }
+func (*errConn) Read([]byte) (int, error)         { return 0, os.ErrClosed }
+func (*errConn) Close() error                     { return nil }
+func (*errConn) SetDeadline(time.Time) error      { return nil }
+func (*errConn) SetReadDeadline(time.Time) error  { return nil }
+func (*errConn) SetWriteDeadline(time.Time) error { return nil }
+func (*errConn) LocalAddr() net.Addr              { return nil }
+func (*errConn) RemoteAddr() net.Addr             { return nil }

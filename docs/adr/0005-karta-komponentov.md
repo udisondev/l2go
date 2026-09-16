@@ -56,10 +56,10 @@ slog, простота, гайды стиля и производительно�
 | `internal/protocol/fixture` | — |
 | `internal/protocol` | protocol/fixture |
 | `internal/conn` | protocol, crypto |
-| `internal/gateway` | conn, protocol, transport, persist, encode; l2client, protocol/fixture, crypto (тесты интеграционного контура) |
+| `internal/gateway` | conn, protocol, transport, persist, encode, bufpool (транзитивно через encode); l2client, protocol/fixture, crypto (тесты интеграционного контура) |
 | `internal/replica` | transport |
 | `internal/encode` | protocol, crypto, pkg/bufpool |
-| `internal/world` | transport, replica, encode, protocol, crypto, data, geo, persist (protocol — данные мировых кадров для пушей и encode-обёртки; crypto транзитивно через encode; P3.7) |
+| `internal/world` | transport, replica, encode, protocol, crypto, bufpool (транзитивно через encode), data, geo, persist (protocol — данные мировых кадров для пушей и encode-обёртки; P3.7) |
 | `internal/party` | transport |
 | `internal/chat` | transport |
 | `internal/clan` | transport |
