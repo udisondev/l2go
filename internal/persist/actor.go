@@ -57,6 +57,7 @@ type Actor struct {
 
 	panicSeries int
 	testPanicOp string
+	now         func() time.Time // шов времени финального дрена; дефолт — time.Now
 
 	handled   atomic.Uint64
 	replies   atomic.Uint64
@@ -92,6 +93,7 @@ func New(cfg Config, reg *transport.Registry, doorbell <-chan struct{}) (*Actor,
 		doorbell: doorbell,
 		chars:    chars,
 		done:     make(chan struct{}),
+		now:      time.Now,
 	}
 	a.id = reg.Register(&a.box)
 	a.token = uint64(a.id)
@@ -176,13 +178,13 @@ func (a *Actor) drain() {
 // (T3); по исчерпании таймаута остаток классово дропается с алертом — без
 // «ещё одной пачки за счёт бюджета».
 func (a *Actor) shutdownDrain() {
-	deadline := time.Now().Add(a.cfg.DrainTimeout)
+	deadline := a.now().Add(a.cfg.DrainTimeout)
 	for {
 		a.batch = a.box.ExtractInto(a.token, a.batch)
 		if len(a.batch) == 0 {
 			return
 		}
-		if time.Now().After(deadline) {
+		if a.now().After(deadline) {
 			a.box.DropBatch(a.batch)
 			slog.Error("persist: таймаут финального дрена — остаток классово дропнут (инцидент)",
 				"letters", len(a.batch))

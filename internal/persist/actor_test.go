@@ -388,21 +388,35 @@ func TestActorGracefulDrain(t *testing.T) {
 }
 
 func TestActorDrainTimeoutDropsRemainder(t *testing.T) {
-	env := newTestEnv(t, Config{DrainTimeout: time.Nanosecond, PanicLimit: 3})
-	gate := make(chan struct{})
+	// Письмо 1 проходит запись по токену (канал cap-1); письмо 2 блокируется
+	// в записи пустым каналом — без свава шва из горутины теста (поллинг
+	// waitHandled не даёт happens-before на чтение поля актором). Письмо 3
+	// ставится в очередь, пока актор blocked в письме 2: финальный дрен
+	// берёт его второй пачкой, скриптованные часы (+100 мс при бюджете
+	// 20 мс) исчерпывают бюджет — остаток классово дропается.
+	env := newTestEnv(t, Config{DrainTimeout: 20 * time.Millisecond, PanicLimit: 3})
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{} // письмо 1 проходит, письмо 2 блокируется
 	env.actor.chars.testBlockWrite = gate
+	t0 := time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC)
+	nowCalls := 0
+	env.actor.now = func() time.Time {
+		v := []time.Time{t0, t0.Add(100 * time.Millisecond)}[min(nowCalls, 1)]
+		nowCalls++
+		return v
+	}
 	env.start()
 
-	// первое письмо застревает в записи; пока актор занят — ещё два в очереди
 	env.send(Request{Op: OpSaveChar, Corr: 0, Account: "acc",
 		Char: mkChar("acc", "Vasya", 0)})
 	waitHandled(t, env.actor, 1)
 	env.send(Request{Op: OpSaveChar, Corr: 1, Account: "acc",
 		Char: mkChar("acc", "Vasya", 0)})
+	waitHandled(t, env.actor, 2) // письмо 2 вошло в запись и blocked на gate
 	env.send(Request{Op: OpSaveChar, Corr: 2, Account: "acc",
 		Char: mkChar("acc", "Vasya", 0)})
 	env.cancel()
-	close(gate) // письмо 1 дописывается, выход по ctx дропает остаток
+	gate <- struct{}{} // письмо 2 дописывается; финальный дрен видит {3} за бюджетом
 
 	select {
 	case <-env.done:

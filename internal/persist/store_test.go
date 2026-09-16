@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -125,6 +126,11 @@ func TestStoreAtomicFail(t *testing.T) {
 }
 
 func TestStorePerms(t *testing.T) {
+	// Биты прав на Windows ненаблюдаемы (Stat всегда 0777/0666, chmod —
+	// только read-only атрибут); проверка — Linux/CI.
+	if runtime.GOOS == "windows" {
+		t.Skip("права 0700/0600 ненаблюдаемы на windows")
+	}
 	dir := t.TempDir()
 	s, err := openStore(filepath.Join(dir, "root", "chars"))
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -73,6 +74,11 @@ func TestWriteMaterial(t *testing.T) {
 	}
 	if err := WriteMaterial(dir, m); err == nil {
 		t.Fatal("повторная WriteMaterial: want отказ — файлы существуют")
+	}
+	// Биты прав на Windows ненаблюдаемы (Stat всегда 0777/0666, chmod —
+	// только read-only атрибут); проверка — Linux/CI.
+	if runtime.GOOS == "windows" {
+		return
 	}
 	dirInfo, err := os.Stat(dir)
 	if err != nil {

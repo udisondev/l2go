@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/udisondev/l2go/internal/persist"
+	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
@@ -551,5 +553,35 @@ func TestRegionPanicDropCoverDisjoint(t *testing.T) {
 	}
 	if got := r.state.KindCounts[transport.KindEnterWorld-1]; got != 0 {
 		t.Fatalf("письма паник-шага применены: %d; want 0", got)
+	}
+}
+
+// SaveQueue в Stats: логаут ставит сохранение в очередь, ok-ответ персиста
+// гасит — наблюдаемость несохранённых персонажей (IO-ретраи) без доступа к
+// состоянию свёртки; e2e ждёт нуля перед правкой файла между сессиями.
+func TestRegionStatsSaveQueue(t *testing.T) {
+	_, r := newTestRegion(t, DefaultConfig())
+	r.reg.Send(enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
+	r.step()
+	if got := r.Stats().SaveQueue; got != 0 {
+		t.Fatalf("SaveQueue после входа = %d; want 0", got)
+	}
+	id := r.residents[0].ent.ID
+	r.metro.tick.Add(1)
+	r.reg.Send(clientFrame(id, protocol.OpLogout))
+	r.step()
+	if got := r.Stats().SaveQueue; got != 1 {
+		t.Fatalf("SaveQueue после логаута = %d; want 1", got)
+	}
+	okReply, err := persist.EncodeReply(persist.Reply{Op: persist.OpSaveChar, Corr: uint64(id), OK: true})
+	if err != nil {
+		t.Fatalf("EncodeReply: %v", err)
+	}
+	r.metro.tick.Add(1)
+	r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 900,
+		Kind: transport.KindPersistReply, Payload: okReply})
+	r.step()
+	if got := r.Stats().SaveQueue; got != 0 {
+		t.Fatalf("SaveQueue после ok-ответа = %d; want 0", got)
 	}
 }

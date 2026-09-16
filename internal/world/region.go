@@ -80,6 +80,7 @@ type Region struct {
 	frozenFlag   atomic.Bool
 	resCount     atomic.Int64
 	backlogLen   atomic.Int64
+	saveQLen     atomic.Int64 // несохранённые персонажи (IO-ретраи): sync из шага региона
 	drainOverrun atomic.Int64 // кумулятивные письма сверх drainBudget (пачка неделима)
 
 	// Только горутина региона:
@@ -180,6 +181,7 @@ func (r *Region) Stats() RegionStats {
 		Frozen:       r.frozenFlag.Load(),
 		Residents:    int(r.resCount.Load()),
 		Backlog:      int(r.backlogLen.Load()),
+		SaveQueue:    int(r.saveQLen.Load()),
 		DrainOverrun: uint64(r.drainOverrun.Load()),
 		PhaseDrain:   r.phDrain.Load(),
 		PhaseFold:    r.phFold.Load(),
@@ -200,6 +202,7 @@ type RegionStats struct {
 	Residents    int
 	Backlog      int
 	DrainOverrun uint64 // кумулятивные письма сверх drainBudget (пачка неделима)
+	SaveQueue    int    // несохранённые персонажи: логаут/IO-ретраи ждут ответа персиста
 	PhaseDrain   uint64
 	PhaseFold    uint64
 	PhaseEffects uint64
@@ -475,6 +478,7 @@ func (r *Region) step() {
 	r.curPhase = phaseEffects
 	r.injectPanic(phaseEffects)
 	births := r.applyEffects(res, n)
+	r.saveQLen.Store(int64(len(r.state.SaveQ)))
 	r.phEffects.Add(1)
 
 	r.curPhase = phaseLog

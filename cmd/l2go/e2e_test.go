@@ -424,11 +424,14 @@ func TestE2ELogoutRoundTripPosition(t *testing.T) {
 	}
 
 	// Путь сохранения: файл отражает сессию. Персист пишет асинхронно —
-	// ждём свежего LastSeenUnix (F22: патч поверх невысохшего сохранения
-	// был бы перезаписан).
+	// ждём свежего LastSeenUnix и погашенной очереди сохранений (F22:
+	// патч поверх невысохшего сохранения был бы перезаписан; свежий
+	// LastSeen ещё не значит «ответ персиста применён» — ретрай/финальный
+	// сохранитель переписали бы файл своим снимком).
 	path := env.charFile("roundtrip")
 	start := time.Now().Unix()
 	recs := waitFreshChars(t, path, start)
+	waitForSaveQueue(t, env.gs, 0)
 	if len(recs) != 1 {
 		t.Fatalf("персонажей в файле %d; want 1", len(recs))
 	}
@@ -594,6 +597,20 @@ func TestE2ELinkDeadGraceAndReenter(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("персонажей после второй сессии: %d; want 1", len(recs))
 	}
+}
+
+// waitForSaveQueue — поллинг очереди несохранённых персонажей региона до
+// want (SaveQueue — атомик: ретраи/финальный сохранитель исключены).
+func waitForSaveQueue(t *testing.T, srv *server, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if srv.region.Stats().SaveQueue == want {
+			return
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("SaveQueue = %d; want %d", srv.region.Stats().SaveQueue, want)
 }
 
 // waitForResidents — поллинг населения региона до want (бюджет, без снов-
