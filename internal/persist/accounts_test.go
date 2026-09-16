@@ -1,6 +1,7 @@
 package persist
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -147,4 +148,86 @@ func mustOpenAccounts(t *testing.T, dir string, autoCreate bool) *Accounts {
 		t.Fatalf("OpenAccounts(%s): %v", dir, err)
 	}
 	return acc
+}
+
+// Двойной первый вход одного аккаунта (KDF вне лока, запись с двойной
+// проверкой): ровно одна запись; победитель — OK; проигравший — по своей
+// паре (OK при совпадении, BadPassword при иной); файлов ровно один.
+func TestAccountsParallelAutoCreateRace(t *testing.T) {
+	dir := t.TempDir()
+	acc, err := OpenAccounts(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const racers = 4
+	verdicts := make([]Verdict, racers)
+	var wg sync.WaitGroup
+	for i := range racers {
+		i := i
+		wg.Go(func() {
+			pass := "same-pass"
+			if i == racers-1 {
+				pass = "other-pass"
+			}
+			verdicts[i] = acc.Verify("racer", pass)
+		})
+	}
+	wg.Wait()
+	okN, badN := 0, 0
+	for _, v := range verdicts {
+		switch v {
+		case VerdictOK:
+			okN++
+		case VerdictBadPassword:
+			badN++
+		default:
+			t.Fatalf("вердикт гонщика: %v", v)
+		}
+	}
+	// Ровно один создатель; развязка зависит от того, чья пара победила:
+	// победила same-pass → ok=racers-1/bad=1; победила other-pass → 1/racers-1.
+	var winnerPass string
+	switch okN {
+	case racers - 1:
+		winnerPass = "same-pass"
+	case 1:
+		winnerPass = "other-pass"
+	default:
+		t.Fatalf("вердикты: ok=%d bad=%d; want 1 или %d создателей", okN, badN, racers-1)
+	}
+	// Аккаунт один; вердикты повторных входов соответствуют победившей паре.
+	loserPass := "other-pass"
+	if winnerPass == "other-pass" {
+		loserPass = "same-pass"
+	}
+	if v := acc.Verify("racer", winnerPass); v != VerdictOK {
+		t.Fatalf("повторный вход победившей парой: %v", v)
+	}
+	if v := acc.Verify("racer", loserPass); v != VerdictBadPassword {
+		t.Fatalf("проигравшая пара после гонки: %v", v)
+	}
+}
+
+// Параллельная проверка существующих аккаунтов не сериализуется локом
+// (KDF вне критсекции): смок под race-детектором; поведение — все OK.
+func TestAccountsParallelVerifySmoke(t *testing.T) {
+	acc, err := OpenAccounts(t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 8 {
+		if v := acc.Verify(fmt.Sprintf("user%02d", i), "pass"); v != VerdictOK {
+			t.Fatalf("создание user%02d: %v", i, v)
+		}
+	}
+	var wg sync.WaitGroup
+	for i := range 8 {
+		i := i
+		wg.Go(func() {
+			if v := acc.Verify(fmt.Sprintf("user%02d", i), "pass"); v != VerdictOK {
+				t.Errorf("user%02d: %v", i, v)
+			}
+		})
+	}
+	wg.Wait()
 }

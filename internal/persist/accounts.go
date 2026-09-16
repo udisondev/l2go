@@ -61,35 +61,76 @@ func OpenAccounts(root string, autoCreate bool) (*Accounts, error) {
 
 // Verify проверяет пароль аккаунта с различимым вердиктом. Несуществующий
 // логин в закрытом режиме прогоняет фиктивный вывод (выравнивание времени).
+// Вывод KDF (PBKDF2, сотни миллисекунд под детектором) исполняется ВНЕ
+// мьютекса: параллельные входы не сериализуются — под локом только чтение
+// кэша/запись (сужение F35, ускорено из фазы 4: сериализация пробивала
+// стадийные дедлайны логина под -race на слабом железе).
 func (a *Accounts) Verify(login, password string) Verdict {
 	normalized, err := NormalizeLogin(login)
 	if err != nil {
 		return VerdictNoAccount
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	rec, err := a.load(normalized)
+	autoCreate := a.autoCreate
+	a.mu.Unlock()
 	if err != nil {
 		// Битый файл аккаунта — инцидент в журнале, вход отклонён.
 		slog.Error("persist: аккаунт не прочитан", "login", normalized, "err", err)
 		return VerdictNoAccount
 	}
-	if rec == nil {
-		if !a.autoCreate {
-			burnDummy()
-			return VerdictNoAccount
+	if rec != nil {
+		if !verifyPassword(password, rec.Salt, rec.Hash) {
+			return VerdictBadPassword
 		}
-		if _, err := a.createLocked(normalized, password); err != nil {
+		if rec.Banned {
+			return VerdictBanned
+		}
+		return VerdictOK
+	}
+	if !autoCreate {
+		burnDummy()
+		return VerdictNoAccount
+	}
+	// Авто-создание: соль и ключ — вне лока; запись — с двойной проверкой
+	// (конкурент мог создать аккаунт за время вывода KDF — тогда сверяемся
+	// с его записью; иная пара паролей даёт BadPassword, как и при
+	// последовательных входах).
+	salt, err := newSalt()
+	if err != nil {
+		slog.Error("persist: авто-создание аккаунта не удалось",
+			"login", normalized, "err", err)
+		return VerdictNoAccount
+	}
+	hash, err := hashPassword(password, salt)
+	if err != nil {
+		slog.Error("persist: авто-создание аккаунта не удалось",
+			"login", normalized, "err", err)
+		return VerdictNoAccount
+	}
+	a.mu.Lock()
+	rec, err = a.load(normalized)
+	if err != nil {
+		a.mu.Unlock()
+		slog.Error("persist: аккаунт не прочитан", "login", normalized, "err", err)
+		return VerdictNoAccount
+	}
+	if rec == nil {
+		if _, err := a.createLocked(normalized, salt, hash); err != nil {
+			a.mu.Unlock()
 			slog.Error("persist: авто-создание аккаунта не удалось",
 				"login", normalized, "err", err)
 			return VerdictNoAccount
 		}
+		a.mu.Unlock()
 		return VerdictOK
 	}
-	if !verifyPassword(password, rec.Salt, rec.Hash) {
+	created := rec
+	a.mu.Unlock()
+	if !verifyPassword(password, created.Salt, created.Hash) {
 		return VerdictBadPassword
 	}
-	if rec.Banned {
+	if created.Banned {
 		return VerdictBanned
 	}
 	return VerdictOK
@@ -102,6 +143,14 @@ func (a *Accounts) Create(login, password string) error {
 	if err != nil {
 		return err
 	}
+	salt, err := newSalt()
+	if err != nil {
+		return err
+	}
+	hash, err := hashPassword(password, salt)
+	if err != nil {
+		return err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	rec, err := a.load(normalized)
@@ -111,7 +160,7 @@ func (a *Accounts) Create(login, password string) error {
 	if rec != nil {
 		return fmt.Errorf("persist: аккаунт %s существует", normalized)
 	}
-	_, err = a.createLocked(normalized, password)
+	_, err = a.createLocked(normalized, salt, hash)
 	return err
 }
 
@@ -132,15 +181,9 @@ func (a *Accounts) load(login string) (*AccountRecord, error) {
 }
 
 // createLocked создаёт и записывает новый аккаунт; вызывающий держит мьютекс.
-func (a *Accounts) createLocked(login, password string) (*AccountRecord, error) {
-	salt, err := newSalt()
-	if err != nil {
-		return nil, err
-	}
-	hash, err := hashPassword(password, salt)
-	if err != nil {
-		return nil, err
-	}
+// createLocked записывает новую запись с готовыми солью и ключом (вывод KDF
+// — вне локов вызывающего). Требует a.mu.
+func (a *Accounts) createLocked(login string, salt, hash []byte) (*AccountRecord, error) {
 	rec := &AccountRecord{
 		Login:       login,
 		Salt:        salt,
