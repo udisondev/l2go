@@ -104,6 +104,8 @@ func TestHumanFighterPin(t *testing.T) {
 		Str: 40, Dex: 30, Con: 43, Int: 21, Wit: 11, Men: 25,
 		BaseHP: 80, BaseMP: 30, BaseCP: 32,
 		WalkSpd: 80, RunSpd: 115,
+		BasePAtkSpd: 300, BaseMAtkSpd: 333, SwimSpd: 50,
+		CollisionR: 9, CollisionH: 23,
 		StartX: -71338, StartY: 258271, StartZ: -3104,
 	}
 	if tr != want {

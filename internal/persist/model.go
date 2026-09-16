@@ -87,7 +87,8 @@ func ValidateAppearance(sex, hairStyle, hairColor, face int) error {
 // Template — константы новичка Human Fighter.
 // Порт канона: L2J-Mobius CT0 Interlude,
 // dist/game/data/stats/players/templates/StartingClass/HumanFighter.xml
-// (первая точка создания, скорости, статы уровня 1).
+// (первая точка создания, скорости, статы уровня 1; attack speeds и
+// коллизии — CharInfo-потребитель фазы 3.8, тот же файл).
 type Template struct {
 	ClassID int
 	Race    int
@@ -102,9 +103,20 @@ type Template struct {
 	BaseCP  int
 	WalkSpd int
 	RunSpd  int
-	StartX  int
-	StartY  int
-	StartZ  int
+	// BasePAtkSpd/BaseMAtkSpd/SwimSpd — скорости кадра CharInfo/NpcInfo
+	// (basePAtkSpd=300, baseMAtkSpd=333, slowSwim/fastSwim=50 — файл
+	// шаблона).
+	BasePAtkSpd int
+	BaseMAtkSpd int
+	SwimSpd     int
+	// CollisionR/CollisionH — габариты male-модели (collisionMale 9/23;
+	// female 8/23.5 — с появлением выбора; мультипликаторы — плейсхолдеры
+	// до формул производных статов, фаза 4).
+	CollisionR float64
+	CollisionH float64
+	StartX     int
+	StartY     int
+	StartZ     int
 }
 
 // HumanFighter — единственный шаблон создания фазы 3.
@@ -122,9 +134,16 @@ var HumanFighter = Template{
 	BaseCP:  32,
 	WalkSpd: 80,
 	RunSpd:  115,
-	StartX:  -71338,
-	StartY:  258271,
-	StartZ:  -3104,
+
+	BasePAtkSpd: 300,
+	BaseMAtkSpd: 333,
+	SwimSpd:     50,
+	CollisionR:  9,
+	CollisionH:  23,
+
+	StartX: -71338,
+	StartY: 258271,
+	StartZ: -3104,
 }
 
 // AccountRecord — запись файла accounts/<login>.json.

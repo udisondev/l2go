@@ -116,16 +116,28 @@ func TestRegionDeltaFromTickCounter(t *testing.T) {
 func TestRegionPhaseCounters(t *testing.T) {
 	_, r := newTestRegion(t, DefaultConfig())
 	spawnResident(t, r, 100)
+	r.residents[0].ent.Player = &Player{ConnID: 7}
 	r.step()
 	st := r.Stats()
-	if st.PhaseDrain != 1 || st.PhaseFold != 1 || st.PhaseEffects != 1 || st.PhaseB != 1 || st.PhasePublish != 1 || st.PhaseAck != 1 {
+	if st.PhaseDrain != 1 || st.PhaseFold != 1 || st.PhaseEffects != 1 || st.PhaseJoin != 1 || st.PhaseB != 1 || st.PhasePublish != 1 || st.PhaseAck != 1 {
 		t.Fatalf("фазовые счётчики после шага: %+v", st)
 	}
 	if st.DoneTick != r.metro.Now() {
 		t.Fatalf("doneTick = %d; want %d", st.DoneTick, r.metro.Now())
 	}
-	if got := r.snapPtr.Load(); got == nil || got.tick != r.metro.Now() {
-		t.Fatalf("снапшот не несёт тик шага: %+v", got)
+	// Publish-шов репликации: блоб поколения 1 с живым жителем.
+	blob := r.snapPtr.Load()
+	if blob == nil || blob.Gen() != 1 {
+		t.Fatalf("опубликованный блоб: %+v", blob)
+	}
+	live := 0
+	for i := range blob.Len() {
+		if blob.IsMember(i) {
+			live++
+		}
+	}
+	if live != 1 {
+		t.Fatalf("житель не в блобе: live=%d", live)
 	}
 }
 

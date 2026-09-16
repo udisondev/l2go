@@ -19,7 +19,7 @@ import (
 
 const (
 	portionMagic   = "PL32"
-	portionVersion = 2 // v2: сущность несёт блок игрока (P3.7)
+	portionVersion = 3 // v3: advisory-вход несёт значение чтения (P3.8); v2 — блок игрока (P3.7)
 	flagPayloads   = 1
 
 	recStep  = 1
@@ -309,6 +309,15 @@ func (l *PortionLog) encodeStepInto(buf []byte, s StepInput) []byte {
 	for _, a := range s.Advisory {
 		buf = binary.AppendUvarint(buf, uint64(a.Cell))
 		buf = binary.AppendUvarint(buf, uint64(a.Entity))
+		buf = binary.AppendVarint(buf, int64(a.X))
+		buf = binary.AppendVarint(buf, int64(a.Y))
+		buf = binary.AppendVarint(buf, int64(a.Z))
+		buf = binary.AppendUvarint(buf, a.Epoch)
+		var f uint64
+		if a.Found {
+			f = 1
+		}
+		buf = binary.AppendUvarint(buf, f)
 	}
 	return buf
 }
@@ -637,10 +646,16 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 		na := int(nau)
 		st.Advisory = make([]AdvisoryIn, 0, na)
 		for range na {
-			st.Advisory = append(st.Advisory, AdvisoryIn{
+			a := AdvisoryIn{
 				Cell:   uint32(c.uvarint()),
 				Entity: transport.EntityID(c.uvarint()),
-			})
+			}
+			a.X = int32(c.varint())
+			a.Y = int32(c.varint())
+			a.Z = int32(c.varint())
+			a.Epoch = c.uvarint()
+			a.Found = c.uvarint() == 1
+			st.Advisory = append(st.Advisory, a)
 		}
 	}
 	return st, c.err

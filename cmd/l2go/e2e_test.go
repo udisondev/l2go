@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -328,7 +330,7 @@ func (env *e2eEnv) charFile(user string) string {
 // data — список записей.
 func readChars(t *testing.T, path string) []map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(path)
+	raw, err := readCharsRaw(path)
 	if err != nil {
 		t.Fatalf("чтение %s: %v", path, err)
 	}
@@ -759,4 +761,71 @@ func TestE2EGoroutineLeak(t *testing.T) {
 	}
 	t.Fatalf("горутины утекли: до=%d после≤%d, теперь=%d",
 		before, before+5, runtime.NumGoroutine())
+}
+
+// Зона P3.8: взаимная видимость — второй клиент видит первого (CharInfo),
+// первый — второго; логаут первого — DeleteObject у оставшегося (база КТ-4).
+func TestE2EMutualVisibilityTwoClients(t *testing.T) {
+	env := startE2E(t, 50, 4)
+	s1 := enterWorld(t, env, "visio1")
+	waitForLine(t, s1.out, "USER_INFO", 3*time.Second)
+	s2 := enterWorld(t, env, "visio2")
+	waitForLine(t, s2.out, "USER_INFO", 3*time.Second)
+
+	// Оба видят друг друга (входы на стартовой точке — дистанция 0).
+	l1 := waitForLine(t, s1.out, "CHAR_INFO", 3*time.Second)
+	if !charInfoHexHas(l1, charName("visio2")) {
+		t.Errorf("первый не видит второго: %s", l1)
+	}
+	l2 := waitForLine(t, s2.out, "CHAR_INFO", 3*time.Second)
+	if !charInfoHexHas(l2, charName("visio1")) {
+		t.Errorf("второй не видит первого: %s", l2)
+	}
+
+	// Логаут первого → DeleteObject у второго.
+	if err := s1.gc.Logout(); err != nil {
+		t.Fatalf("Logout первого: %v", err)
+	}
+	waitForLine(t, s1.out, "LEAVE_WORLD", 3*time.Second)
+	waitForLine(t, s2.out, "DELETE_OBJECT", 3*time.Second)
+
+	// Перезаход первого — набор видимости идентичен (ввод заново).
+	s1b := enterWorld(t, env, "visio1")
+	l1b := waitForLine(t, s1b.out, "CHAR_INFO", 3*time.Second)
+	if !charInfoHexHas(l1b, charName("visio2")) {
+		t.Errorf("перезаход не видит второго: %s", l1b)
+	}
+	l2b := waitForLine(t, s2.out, "CHAR_INFO", 3*time.Second)
+	if !charInfoHexHas(l2b, charName("visio1")) {
+		t.Errorf("оставшийся не видит перезаход: %s", l2b)
+	}
+}
+
+// charInfoHexHas — имя в UTF-16LE присутствует в hex-дампе кадра CharInfo
+// (трафик-лог печатает hex; имя — единственная строка в кадре).
+func charInfoHexHas(line, name string) bool {
+	var hexName []byte
+	for _, r := range name {
+		hexName = append(hexName, byte(r), byte(r>>8))
+	}
+	return strings.Contains(line, fmt.Sprintf("%x", hexName))
+}
+
+// readCharsRaw — чтение файла персонажей; на Windows мгновенный rename-обмен
+// назначением даёт читателю sharing-violation (errno 32) — поллинг-циклы
+// waitFreshChars переживают её повтором, не ошибкой (тайминг-инвариант
+// с бюджетом, не синхронизация).
+func readCharsRaw(path string) ([]byte, error) {
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			return raw, nil
+		}
+		if errors.Is(err, syscall.Errno(32)) && time.Now().Before(deadline) {
+			time.Sleep(3 * time.Millisecond)
+			continue
+		}
+		return nil, err
+	}
 }

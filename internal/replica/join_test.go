@@ -7,12 +7,6 @@ import (
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// enter/exit — числа канона (см. join.go); в тестах — те же константы.
-var (
-	enterSq = int64(DefaultEnterRadius) * int64(DefaultEnterRadius)
-	exitSq  = int64(DefaultExitRadius) * int64(DefaultExitRadius)
-)
-
 func TestJoinSetEqualityProperty(t *testing.T) {
 	t.Parallel()
 	rng := rand.New(rand.NewPCG(7, 11))
@@ -24,14 +18,14 @@ func TestJoinSetEqualityProperty(t *testing.T) {
 		}
 		model := map[transport.EntityID]bool{}
 		for id := transport.EntityID(2); id <= 30; id++ {
-			x := int32(rng.IntN(2*DefaultEnterRadius + 2)) - DefaultEnterRadius
-			y := int32(rng.IntN(2*DefaultEnterRadius + 2)) - DefaultEnterRadius
+			x := int32(rng.IntN(2*int(DefaultEnterRadius)+2) - int(DefaultEnterRadius))
+			y := int32(rng.IntN(2*int(DefaultEnterRadius)+2) - int(DefaultEnterRadius))
 			z := int32(rng.IntN(2001)) - 1000
 			if err := b.Update(rec(id, x, y, z)); err != nil {
 				t.Fatalf("Update: %v", err)
 			}
 			d := int64(x)*int64(x) + int64(y)*int64(y) + int64(z)*int64(z)
-			model[id] = d <= enterSq
+			model[id] = d <= int64(DefaultEnterRadius)*int64(DefaultEnterRadius)
 		}
 		blob, diff := b.Build(uint64(iter+1), nil)
 		v := NewView()
@@ -60,16 +54,15 @@ func TestJoinSetEqualityProperty(t *testing.T) {
 
 func TestJoinBoundaryRadius(t *testing.T) {
 	t.Parallel()
-	// Ровно на границе enter: d² == enter² → ввод (≤); enter²+1 → нет;
-	// в известности на exit²: остаётся; exit²+1 → удаление.
+	// Ровно на границе enter: d == enterRadius → ввод (≤); +1 → нет.
 	obs := rec(1, 0, 0, 0)
 	cases := []struct {
 		name   string
-		d      int64
+		x      int32
 		wantIn bool
 	}{
-		{"enter²", enterSq, true},
-		{"enter²+1", enterSq + 1, false},
+		{"enter", DefaultEnterRadius, true},
+		{"enter+1", DefaultEnterRadius + 1, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,7 +70,7 @@ func TestJoinBoundaryRadius(t *testing.T) {
 			if err := b.Update(obs); err != nil {
 				t.Fatalf("Update: %v", err)
 			}
-			if err := b.Update(rec(2, int32(tc.d), 0, 0)); err != nil {
+			if err := b.Update(rec(2, tc.x, 0, 0)); err != nil {
 				t.Fatalf("Update: %v", err)
 			}
 			blob, diff := b.Build(1, nil)
@@ -96,9 +89,10 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 	if err := b.Update(obs); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	// Житель на дуге между enter и exit: ходит по кругу радиуса (enter+exit)/2.
+	// Житель вводится внутри enter, затем ходит по дуге радиуса
+	// (enter+exit)/2 — зоне удержания гистерезиса.
 	arc := int32((DefaultEnterRadius + DefaultExitRadius) / 2)
-	if err := b.Update(rec(2, arc, 0, 0)); err != nil {
+	if err := b.Update(rec(2, 100, 0, 0)); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	blob, diff := b.Build(1, nil)
@@ -112,7 +106,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 	churn := 0
 	for step := 1; step <= 100; step++ {
 		angle := int32(step) // дуга по компонентам, |p| остаётся ~arc
-		x, y := arc*cos100(angle%100)/10000, arc*sin100(angle%100)/10000
+		x, y := int32(int64(arc)*cos100(angle%100)/10000), int32(int64(arc)*sin100(angle%100)/10000)
 		if err := b.Update(rec(2, x, y, 0)); err != nil {
 			t.Fatalf("Update: %v", err)
 		}
@@ -132,7 +126,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	nb, nd := b.Build(200, blob)
-	ev := Join(nb, nd, v, obs, false, false, &JoinStats{})
+	ev = Join(nb, nd, v, obs, false, false, &JoinStats{})
 	if len(ev.Exits) != 1 || len(ev.Enters) != 0 {
 		t.Fatalf("за exit: exits=%d enters=%d; want 1/0", len(ev.Exits), len(ev.Enters))
 	}
@@ -172,7 +166,7 @@ func TestJoinDistanceIncludesZAxis(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	// x чуть меньше enter: 3D внутри при z=0, но с z — за границей.
-	if err := b.Update(rec(3, DefaultEnterRadius-1, 0, 10)); err != nil {
+	if err := b.Update(rec(3, DefaultEnterRadius-5, 0, 135)); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	// Полностью внутри с ненулевым Z.
@@ -403,7 +397,7 @@ func TestJoinFlagsChangeReevaluatesAllPairs(t *testing.T) {
 func TestJoinDistanceSquaresInt64(t *testing.T) {
 	t.Parallel()
 	const maxI32 = int64(2147483647)
-	obs := rec(1, -maxI32/2, 0, 0)
+	obs := rec(1, int32(-maxI32/2), 0, 0)
 	b := NewBuilder()
 	if err := b.Update(obs); err != nil {
 		t.Fatalf("Update: %v", err)

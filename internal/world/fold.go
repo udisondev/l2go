@@ -44,11 +44,17 @@ type StepResult struct {
 	Retires []Retire
 }
 
-// AdvisoryIn — залогированный advisory-вход шага (шов replica; сводится с
-// модулем репликации в фазе 3.8).
+// AdvisoryIn — залогированный advisory-вход шага: адрес чтения и его
+// значение (позиция/эпоха/найденность) — реплей инъектирует значения, не
+// адреса; Found=false пишется нулевыми значениями (детерминизм записи).
 type AdvisoryIn struct {
 	Cell   uint32
 	Entity transport.EntityID
+	X      int32
+	Y      int32
+	Z      int32
+	Epoch  uint64
+	Found  bool
 }
 
 // Rules — параметры поведения свёртки: тиковые окна и адресаты контрольных

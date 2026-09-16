@@ -63,7 +63,7 @@ func TestBlobBuildCopiesNoAliasing(t *testing.T) {
 }
 
 func TestBlobArenaAllocBudget(t *testing.T) {
-	t.Parallel()
+	// Без t.Parallel: AllocsPerRun требует последовательный тест.
 	b := NewBuilder()
 	for id := transport.EntityID(1); id <= 100; id++ {
 		if err := b.Update(rec(id, 1, 2, 3)); err != nil {
@@ -75,7 +75,7 @@ func TestBlobArenaAllocBudget(t *testing.T) {
 		_, _ = b.Build(2, blob)
 	})
 	if n > blobAllocBudget {
-		t.Fatalf("аллокаций на поколение = %d; want ≤ %d", n, blobAllocBudget)
+		t.Fatalf("аллокаций на поколение = %v; want ≤ %d", n, blobAllocBudget)
 	}
 }
 
@@ -92,17 +92,19 @@ func TestBlobDiffAgainstPublishedBasis(t *testing.T) {
 		t.Fatal("холодная сборка: дифф обязан быть непуст")
 	}
 
-	// 3 записи изменены, 1 удалена, 1 добавлена.
+	// 3 записи изменены, 1 добавлена (новый слот), 1 удалена; добавление —
+	// ДО удаления, чтобы новая запись не реюзнула слот удаляемой (реюз
+	// слота — dirty-swap, не Spawned; абсолютный детект swap — в Join).
 	for id := transport.EntityID(2); id <= 4; id++ {
 		if err := b.Update(rec(id, 1000, 0, 0)); err != nil {
 			t.Fatalf("Update: %v", err)
 		}
 	}
-	if err := b.Remove(9); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
 	if err := b.Update(rec(42, 5, 5, 5)); err != nil {
 		t.Fatalf("Update: %v", err)
+	}
+	if err := b.Remove(9); err != nil {
+		t.Fatalf("Remove: %v", err)
 	}
 	_, d2 := b.Build(2, vs)
 	if got := d2.SpawnedCount(); got != 1 {
@@ -111,18 +113,16 @@ func TestBlobDiffAgainstPublishedBasis(t *testing.T) {
 	if got := d2.RemovedCount(); got != 1 {
 		t.Fatalf("удалённых слотов = %d; want 1", got)
 	}
-	if got := d2.DirtyCount(); got != 3 {
-		t.Fatalf("dirty-слотов = %d; want 3 (поз. 2,3,4)", got)
+	if got := d2.DirtyCount(); got != 4 {
+		t.Fatalf("dirty-слотов = %d; want 4 (поз. 2,3,4 + ввод 42)", got)
 	}
 
-	// Повторная сборка против той же публикации — пустой дифф, повторно
-	// против новой — тоже (изменений нет).
-	fresh, d3 := b.Build(3, vs)
-	if d3.Any() {
-		t.Fatal("дифф против той же публикации не пуст")
-	}
+	// Сборка того же состояния в новой генерации и дифф против неё — пуст:
+	// против старой публикации накопленный дифф законно непуст (до
+	// публикации он и должен оставаться видимым).
+	fresh, _ := b.Build(3, vs)
 	if _, d4 := b.Build(4, fresh); d4.Any() {
-		t.Fatal("дифф против актуальной публикации не пуст")
+		t.Fatal("дифф против актуального состояния не пуст")
 	}
 }
 
@@ -161,16 +161,25 @@ func TestBuilderSlotReuseAndDensity(t *testing.T) {
 		t.Fatalf("плотность: live=%d len=%d; want 5/5 (слот реюзнут, дыр нет)", live, blob2.Len())
 	}
 	// Цикл чурна не растит слоты.
-	for round := 0; round < 100; round++ {
-		if err := b.Remove(50); err != nil {
+	cur := transport.EntityID(50)
+	for range 100 {
+		if err := b.Remove(cur); err != nil {
 			t.Fatalf("Remove: %v", err)
 		}
-		if err := b.Update(rec(51, 0, 0, 0)); err != nil {
+		cur++
+		if err := b.Update(rec(cur, 0, 0, 0)); err != nil {
 			t.Fatalf("Update: %v", err)
 		}
 	}
-	if _, d := b.Build(3, blob2); d.SpawnedCount() != 1 || d.RemovedCount() != 1 {
-		t.Fatal("чурн: спавн+деспавн не сошлись в один слот")
+	final, d := b.Build(3, blob2)
+	if final.Len() != blob2.Len() {
+		t.Fatalf("чурн вырос слоты: %d → %d", blob2.Len(), final.Len())
+	}
+	if d.SpawnedCount() != 0 || d.RemovedCount() != 0 || d.DirtyCount() != 1 {
+		// Свап в одном слоте невидим членству (present→present) — только
+		// dirty; абсолютный детект реюза — обязанность Join (F19).
+		t.Fatalf("чурн в одном слоте: spawned=%d removed=%d dirty=%d; want 0/0/1",
+			d.SpawnedCount(), d.RemovedCount(), d.DirtyCount())
 	}
 }
 
@@ -181,7 +190,80 @@ func TestBlobEmptyGenGrows(t *testing.T) {
 	if g0.Len() != 0 || d0.Any() {
 		t.Fatal("пустой Builder: блоб пуст, дифф пуст")
 	}
-	if g0.Gen != 1 {
-		t.Fatalf("Gen = %d; want 1", g0.Gen)
+	if g0.Gen() != 1 {
+		t.Fatalf("Gen = %d; want 1", g0.Gen())
 	}
+}
+
+// Advisory: Lookup по живому id — значение; miss и зарезервированный id=0 —
+// ok=false (нулевой id — не «нулевая запись»).
+func TestAdvisoryLookupValueAndMiss(t *testing.T) {
+	t.Parallel()
+	b := NewBuilder()
+	if err := b.Update(rec(5, -100, 200, -300)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	blob, _ := b.Build(1, nil)
+
+	snap, ok := Lookup(blob, 5)
+	if !ok || snap.Entity() != 5 {
+		t.Fatalf("живая запись: ok=%v id=%d", ok, snap.Entity())
+	}
+	if x, y, z := snap.Pos(); x != -100 || y != 200 || z != -300 {
+		t.Fatalf("позиция: (%d,%d,%d)", x, y, z)
+	}
+	if _, ok := Lookup(blob, 404); ok {
+		t.Fatal("несуществующий id найден")
+	}
+	if _, ok := Lookup(blob, 0); ok {
+		t.Fatal("id=0 (зарезервирован) найден")
+	}
+	if _, ok := Lookup(nil, 5); ok {
+		t.Fatal("nil-блоб вернул запись")
+	}
+}
+
+// Иммутабельность через полное следующее поколение: читатель держит блоб N
+// и читает его поля, пока Builder мутируется и строит N+1 (окно Build, не
+// Store — опасен алиасинг, не свап). Под -race детектор ловит алиасинг;
+// без -race оракул — стабильность значений читателя.
+func TestBlobReaderDuringNextBuild(t *testing.T) {
+	b := NewBuilder()
+	for id := transport.EntityID(1); id <= 64; id++ {
+		if err := b.Update(rec(id, int32(id), int32(id*2), int32(id*3))); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	}
+	blob, _ := b.Build(1, nil)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 1000 {
+			for i := range blob.Len() {
+				if blob.IsMember(i) {
+					if blob.X(i) != int32(blob.ID(i)) || blob.Y(i) != int32(blob.ID(i))*2 {
+						panic("читатель видит мусор: алиасинг поколений")
+					}
+				}
+			}
+		}
+	}()
+	for round := uint64(2); round <= 50; round++ {
+		for id := transport.EntityID(1); id <= 64; id++ {
+			if err := b.Update(rec(id, int32(id)+int32(round), int32(id*2), int32(id*3))); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+		}
+		if err := b.Remove(3); err != nil {
+			t.Fatalf("Remove: %v", err)
+		}
+		if _, d := b.Build(round, blob); d == nil {
+			t.Fatal("nil дифф")
+		}
+		if err := b.Update(rec(3, 1, 6, 9)); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	}
+	<-done
 }

@@ -167,10 +167,13 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 		r.step()
 	})
 	t.Logf("Idle-шаг: %.0f аллокаций", allocs)
-	// точная раскладка: rand.New(PCG) = 1, публикация снапшота = 1; всё прочее
-	// (дрен, лог-кадр) — 0 по построению; изменение числа — regress или
-	// осознанная правка бюджета
-	if allocs != 2 {
-		t.Fatalf("аллокаций на Idle-шаг = %.0f; want 2 (rand.New + снапшот)", allocs)
+	// Точная раскладка: rand.New(PCG) = 1; блоб публикации = 4 (числовой
+	// бэкинг, строковый, структура Blob, структура Diff — арена ADR-0004
+	// ось 3, бюджет той же константой держит TestBlobArenaAllocBudget
+	// реплики); снапшот-заготовка P3.2 удалена (шов занял блоб). Изменение
+	// числа — regress или осознанная правка бюджета с записью.
+	const wantIdleAllocs = 5
+	if allocs != wantIdleAllocs {
+		t.Fatalf("аллокаций на Idle-шаг = %.0f; want %d (rand.New + блоб ×4)", allocs, wantIdleAllocs)
 	}
 }
