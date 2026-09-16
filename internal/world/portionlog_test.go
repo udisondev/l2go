@@ -409,7 +409,7 @@ func TestPortionLogAdvisoryVersionBump(t *testing.T) {
 	if len(raw) < 8 {
 		t.Fatalf("короткий заголовок: %d байт", len(raw))
 	}
-	raw[7] = byte(portionVersion - 1) // портим версию в заголовке
+	raw[len(portionMagic)] = byte(portionVersion - 1) // портим версию в заголовке (офсет 4)
 	if err := os.WriteFile(entries[0], raw, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}

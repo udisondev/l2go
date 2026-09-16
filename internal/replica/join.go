@@ -5,7 +5,11 @@
 
 package replica
 
-import "github.com/udisondev/l2go/internal/transport"
+import (
+	"math/bits"
+
+	"github.com/udisondev/l2go/internal/transport"
+)
 
 // Радиусы гистерезиса членства (OQ-3). Порт aCis (GPLv3, mirror
 // sonizs123/Acis), PcKnownList.getDistanceToWatchObject /
@@ -16,6 +20,12 @@ import "github.com/udisondev/l2go/internal/transport"
 const (
 	DefaultEnterRadius int32 = 1800
 	DefaultExitRadius  int32 = 2700
+)
+
+// enterSq/exitSq — квадраты радиусов (int64, без переполнения: радиус мала).
+var (
+	enterSq = int64(DefaultEnterRadius) * int64(DefaultEnterRadius)
+	exitSq  = int64(DefaultExitRadius) * int64(DefaultExitRadius)
 )
 
 // Visible — предикат пары (наблюдатель, цель): одна функция для репликации
@@ -48,17 +58,6 @@ func (v *View) Known(slot int, id transport.EntityID) bool {
 		slot < len(v.knownIDs) && v.knownIDs[slot] == id
 }
 
-// KnowsID — id известен наблюдателю (линейный по известным слотам; для
-// тестов и метрик, не для тикового пути).
-func (v *View) KnowsID(id transport.EntityID) bool {
-	for _, k := range v.knownIDs {
-		if k == id {
-			return true
-		}
-	}
-	return false
-}
-
 // ExitEvent — удаление из известности: вечный id (записи уже может не быть
 // в блобе — swap/деспавн) и слот, который он занимал в view.
 type ExitEvent struct {
@@ -86,15 +85,19 @@ func (e JoinEvents) Apply(v *View, b *Blob) {
 }
 
 func (v *View) enter(slot int, id transport.EntityID) {
+	// Рост ёмкостей удвоением: холодный ввод толпы не копирует слайс на
+	// каждый слот (квадратичный мусор — датчик GC outbound-пути).
 	if slot >= len(v.knownIDs) {
-		grown := make([]transport.EntityID, slot+1)
+		n := max(slot+1, 2*len(v.knownIDs), 8)
+		grown := make([]transport.EntityID, n)
 		copy(grown, v.knownIDs)
 		v.knownIDs = grown
 	}
 	v.knownIDs[slot] = id
 	w := slot >> 6
 	if w >= len(v.knownSlots) {
-		grown := make([]uint64, w+1)
+		n := max(w+1, 2*len(v.knownSlots), 1)
+		grown := make([]uint64, n)
 		copy(grown, v.knownSlots)
 		v.knownSlots = grown
 	}
@@ -119,27 +122,47 @@ type JoinStats struct {
 	PayloadReads int
 }
 
+// JoinMode — режим вызова Join (именованный, не позиционные bool: swap
+// компилируется молча).
+type JoinMode uint8
+
+const (
+	// ModeDiff — событийный режим: только Spawned/Dirty слоты (стационарный
+	// путь; вызов обязан быть обусловлен непустым диффом — F5).
+	ModeDiff JoinMode = iota
+	// ModeObsDirty — собственное движение/флаги наблюдателя: полный проход
+	// по Members от новой позиции.
+	ModeObsDirty
+	// ModeReconcile — доигрывание паник-шага: абсолютная свёртка, раньше и
+	// вне условия диффа (F19).
+	ModeReconcile
+)
+
 // Join — события известности наблюдателя obs за поколение b с диффом d.
-// Режимы: полный проход — при пустом view (рождение), obsDirty (собственное
-// движение/флаги наблюдателя) или reconcile (доигрывание паник-шага;
-// раньше и вне условия диффа); иначе — только Spawned/Dirty слоты.
 // Удаления абсолютны по вечному id (F19): известный слот, не являющийся
 // живой записью с тем же id (исчез или занят другой записью — swap),
 // удаляется немедленно, без маркера и hold-last.
 // Self-пара исключается (наблюдатель не вводится сам себе).
-func Join(b *Blob, d *Diff, v *View, obs Record, obsDirty, reconcile bool, st *JoinStats) JoinEvents {
+func Join(b *Blob, d *Diff, v *View, obs Record, mode JoinMode, st *JoinStats) JoinEvents {
 	var ev JoinEvents
-	full := v.Empty() || obsDirty || reconcile
+	full := v.Empty() || mode != ModeDiff
+	if full {
+		v.ensure(b.Len())
+	}
 
 	// Абсолютная сверка известных слотов: O(|known|), дёшево всегда.
 	for w, word := range v.knownSlots {
 		for ; word != 0; word &= word - 1 {
-			slot := w<<6 + bitsTrailing(word)
+			slot := w<<6 + bits.TrailingZeros64(word)
 			if slot >= b.Len() || !b.IsMember(slot) || b.ID(slot) != v.knownIDs[slot] {
 				ev.Exits = append(ev.Exits, ExitEvent{Slot: slot, ID: v.knownIDs[slot]})
 			}
 		}
 	}
+
+	// far — точно за радиусом без возведения в квадрат (|d| по одной оси
+	// уже превышает радиус: корень суммы не может стать меньше).
+	far := func(dxyz int64, r int64) bool { return dxyz > r || dxyz < -r }
 
 	enter := func(slot int) {
 		id := b.ID(slot)
@@ -151,7 +174,10 @@ func Join(b *Blob, d *Diff, v *View, obs Record, obsDirty, reconcile bool, st *J
 		dx := int64(b.X(slot)) - int64(obs.X)
 		dy := int64(b.Y(slot)) - int64(obs.Y)
 		dz := int64(b.Z(slot)) - int64(obs.Z)
-		if dx*dx+dy*dy+dz*dz > int64(DefaultEnterRadius)*int64(DefaultEnterRadius) {
+		if far(dx, int64(DefaultEnterRadius)) || far(dy, int64(DefaultEnterRadius)) || far(dz, int64(DefaultEnterRadius)) {
+			return
+		}
+		if dx*dx+dy*dy+dz*dz > enterSq {
 			return
 		}
 		if !Visible(obs.Flags, b.Flags(slot)) {
@@ -171,7 +197,8 @@ func Join(b *Blob, d *Diff, v *View, obs Record, obsDirty, reconcile bool, st *J
 		dx := int64(b.X(slot)) - int64(obs.X)
 		dy := int64(b.Y(slot)) - int64(obs.Y)
 		dz := int64(b.Z(slot)) - int64(obs.Z)
-		if dx*dx+dy*dy+dz*dz > int64(DefaultExitRadius)*int64(DefaultExitRadius) {
+		if far(dx, int64(DefaultExitRadius)) || far(dy, int64(DefaultExitRadius)) || far(dz, int64(DefaultExitRadius)) ||
+			dx*dx+dy*dy+dz*dz > exitSq {
 			ev.Exits = append(ev.Exits, ExitEvent{Slot: slot, ID: id})
 			return
 		}
@@ -193,12 +220,12 @@ func Join(b *Blob, d *Diff, v *View, obs Record, obsDirty, reconcile bool, st *J
 
 	for w, word := range d.spawned {
 		for ; word != 0; word &= word - 1 {
-			enter(w<<6 + bitsTrailing(word))
+			enter(w<<6 + bits.TrailingZeros64(word))
 		}
 	}
 	for w, word := range d.dirty {
 		for ; word != 0; word &= word - 1 {
-			slot := w<<6 + bitsTrailing(word)
+			slot := w<<6 + bits.TrailingZeros64(word)
 			if !b.IsMember(slot) || bitGet(d.spawned, slot) {
 				continue
 			}
@@ -209,31 +236,20 @@ func Join(b *Blob, d *Diff, v *View, obs Record, obsDirty, reconcile bool, st *J
 	return ev
 }
 
-// bitsTrailing — номер младшего единичного бита (бит установлен).
-func bitsTrailing(v uint64) int {
-	n := 0
-	if v&(1<<32-1) == 0 {
-		n += 32
-		v >>= 32
+// ensure — предварительное расширение view под n слотов (полный проход
+// аллоцирует ёмкость один раз, не по вводу).
+func (v *View) ensure(n int) {
+	if n <= len(v.knownIDs) && (n+63)/64 <= len(v.knownSlots) {
+		return
 	}
-	if v&(1<<16-1) == 0 {
-		n += 16
-		v >>= 16
+	if n > len(v.knownIDs) {
+		grown := make([]transport.EntityID, n)
+		copy(grown, v.knownIDs)
+		v.knownIDs = grown
 	}
-	if v&(1<<8-1) == 0 {
-		n += 8
-		v >>= 8
+	if w := (n + 63) / 64; w > len(v.knownSlots) {
+		grown := make([]uint64, w)
+		copy(grown, v.knownSlots)
+		v.knownSlots = grown
 	}
-	if v&(1<<4-1) == 0 {
-		n += 4
-		v >>= 4
-	}
-	if v&(1<<2-1) == 0 {
-		n += 2
-		v >>= 2
-	}
-	if v&1 == 0 {
-		n++
-	}
-	return n
 }

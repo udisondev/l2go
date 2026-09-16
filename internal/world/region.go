@@ -80,20 +80,21 @@ type Region struct {
 	drainOverrun atomic.Int64 // кумулятивные письма сверх drainBudget (пачка неделима)
 
 	// Только горутина региона:
-	residents    []*resident // сортированный по ent.ID слайс (обход — D3)
-	ents         []*Entity   // кэш проекции для fold
-	popVersion   uint64      // поколение населения: инкремент на Spawn/Remove
-	entsVer      uint64      // поколение, на котором построен кэш
-	stepTick     Tick        // номер текущего шага (для маркера паники)
-	state        *State
-	lastStep     Tick
-	slept        bool // регион деактивирован: первый шаг после сна — delta=0
-	activeFlag   bool
-	panicStreak  int
-	curPhase     byte
-	forcePanic   byte // инъекция сбоя для тестов recover-политики; 0 — выключена
-	outbox       []transport.Envelope
-	backlogNoted bool
+	residents           []*resident // сортированный по ent.ID слайс (обход — D3)
+	ents                []*Entity   // кэш проекции для fold
+	popVersion          uint64      // поколение населения: инкремент на Spawn/Remove
+	entsVer             uint64      // поколение, на котором построен кэш
+	stepTick            Tick        // номер текущего шага (для маркера паники)
+	state               *State
+	lastStep            Tick
+	slept               bool // регион деактивирован: первый шаг после сна — delta=0
+	activeFlag          bool
+	panicStreak         int
+	curPhase            byte
+	forcePanic          byte // инъекция сбоя для тестов recover-политики; 0 — выключена
+	forcePanicJoinApply bool // инъекция сбоя между кадром и apply view (Ост-4)
+	outbox              []transport.Envelope
+	backlogNoted        bool
 
 	pendingPushes []FramePush // пуши шага (исполнение — фазой B раньше писем)
 
@@ -124,9 +125,10 @@ type Region struct {
 	blobGen     uint64
 	joinPending bool          // «join был, публикации не было» — reconcile-флаг (F19)
 	joinBlob    *replica.Blob // поколение, ожидающее публикации
-	joinStats   replica.JoinStats
 
-	joinPairs atomic.Int64 // машинный датчик событийности (F5)
+	joinPairs    atomic.Int64 // машинный датчик событийности: дистанционные пары (F5)
+	joinCalls    atomic.Int64 // вызовы Join (idle — не растёт: гард F5 на акторе)
+	payloadReads atomic.Int64 // чтения пейлоадных колонок join-стадии (шов 1)
 }
 
 // NewRegion создаёт регион: контрольный ящик регистрируется в реестре и
@@ -200,6 +202,8 @@ func (r *Region) Stats() RegionStats {
 		PhasePublish: r.phPublish.Load(),
 		PhaseAck:     r.phAck.Load(),
 		JoinPairs:    uint64(r.joinPairs.Load()),
+		JoinCalls:    uint64(r.joinCalls.Load()),
+		PayloadReads: uint64(r.payloadReads.Load()),
 	}
 }
 
@@ -222,6 +226,8 @@ type RegionStats struct {
 	PhasePublish uint64
 	PhaseAck     uint64
 	JoinPairs    uint64 // дистанционные проверки join-стадии (датчик событийности)
+	JoinCalls    uint64 // фактические вызовы Join (idle не растёт — гард F5)
+	PayloadReads uint64 // чтения пейлоадных колонок join-стадии (шов 1)
 }
 
 // Spawn рождает жителя: аллокация ящика (Register + Claim, токен = ID),
@@ -729,10 +735,16 @@ func (r *Region) joinStage() {
 		if res.view == nil {
 			res.view = replica.NewView()
 		}
-		ev := replica.Join(blob, diff, res.view, recordOf(res.ent), false, reconcile, &r.joinStats)
-		r.joinPairs.Add(int64(r.joinStats.Pairs))
-		r.joinStats = replica.JoinStats{}
-		// Кадры — раньше apply view (Ост-4): паника между ними доигрывается.
+		mode := replica.ModeDiff
+		if reconcile {
+			mode = replica.ModeReconcile
+		}
+		r.joinCalls.Add(1)
+		var st replica.JoinStats
+		ev := replica.Join(blob, diff, res.view, recordOf(res.ent), mode, &st)
+		r.joinPairs.Add(int64(st.Pairs))
+		r.payloadReads.Add(int64(st.PayloadReads))
+		// Кадры — раньше apply view (Ост-4): паника в окне доигрывается.
 		for _, slot := range ev.Enters {
 			r.pushJoinFrame(res.ent.Player.ConnID, blob, slot)
 		}
@@ -741,7 +753,18 @@ func (r *Region) joinStage() {
 			protocol.WriteDeleteObject(frame, int32(encode.ObjectIDBase+ex.ID))
 			r.pendingPushes = append(r.pendingPushes, FramePush{Client: res.ent.Player.ConnID, Frame: frame, Crypt: true})
 		}
+		r.injectPanicJoinApply()
 		ev.Apply(res.view, blob)
+	}
+}
+
+// injectPanicJoinApply — тестовый шов инъекции сбоя между кадрами и apply
+// view (Ост-4): в поставке выключен; паника в окне доигрывается
+// идемпотентно (кадр уже в pendingPushes, view не применён — reconcile-шаг
+// повторит ввод, дубль кадра — обновление по OQ-5).
+func (r *Region) injectPanicJoinApply() {
+	if r.forcePanicJoinApply {
+		panic("world: инъекция сбоя между кадром и apply view")
 	}
 }
 

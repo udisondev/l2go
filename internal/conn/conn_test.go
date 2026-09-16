@@ -14,15 +14,20 @@ import (
 )
 
 // fakeOutbound — программируемый шов исходящего для тестов без encode.
+// Контракт стейджа: слэбы prev возвращаются владельцу к следующему Take,
+// Recycle замыкает только последний батч writeLoop — фейк считает оба пути.
 type fakeOutbound struct {
-	mu      sync.Mutex
-	queue   [][]byte
-	close   bool
-	wake    chan struct{}
-	recycld atomic.Int64
+	mu        sync.Mutex
+	queue     [][]byte
+	close     bool
+	wake      chan struct{}
+	recycld   atomic.Int64
+	reclaimed atomic.Int64
+	recycled  atomic.Bool
 }
 
 func (f *fakeOutbound) Recycle(prev [][]byte) {
+	f.recycled.Store(true)
 	f.recycld.Add(int64(len(prev)))
 }
 
@@ -47,6 +52,7 @@ func (f *fakeOutbound) markClose() {
 }
 
 func (f *fakeOutbound) Take(prev [][]byte) ([][]byte, bool) {
+	f.reclaimed.Add(int64(len(prev))) // контракт: prev возвращён владельцу
 	for {
 		f.mu.Lock()
 		if len(f.queue) > 0 || f.close {
@@ -547,11 +553,16 @@ func TestWriteLoopRecyclesOnBothExits(t *testing.T) {
 	fake.push([]byte{1, 0, 'x'})
 	s.CloseAfterFlush(ev.Conn)
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) && fake.recycld.Load() == 0 {
+	for time.Now().Before(deadline) && !fake.recycled.Load() {
 		time.Sleep(2 * time.Millisecond)
 	}
-	if n := fake.recycld.Load(); n == 0 {
-		t.Fatal("close-выход: Recycle не вернул финальный батч")
+	if !fake.recycled.Load() {
+		t.Fatal("close-выход: Recycle не вызван")
+	}
+	// Слэб вернулся одним из путей контракта: финальным Recycle или
+	// возвратом prev к следующему Take (батч дописан до close-флага).
+	if n := fake.recycld.Load() + fake.reclaimed.Load(); n == 0 {
+		t.Fatal("close-выход: пуш-нутый слэб не вернулся ни Recycle, ни Take")
 	}
 	_ = c.Close()
 

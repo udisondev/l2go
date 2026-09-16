@@ -110,19 +110,6 @@ func (h *enterHarness) regionDone() bool {
 	}
 }
 
-// waitForResidents — поллинг населения региона до want (бюджет).
-func waitForResidents(t *testing.T, r *Region, want int) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if r.Stats().Residents == want {
-			return
-		}
-		time.Sleep(3 * time.Millisecond)
-	}
-	t.Fatalf("Residents = %d; want %d", r.Stats().Residents, want)
-}
-
 func waitTick(t *testing.T, r *Region) {
 	t.Helper()
 	target := r.Stats().DoneTick + 1
@@ -326,47 +313,62 @@ func TestRegionShutdownSavesAndDrains(t *testing.T) {
 
 // M1-свидетель (S8-контроль): пачка [Enter,LinkDead,Enter] в один ctrl-дрен —
 // Residents==1 (призрак не рождается), один бинд, финальное сохранение одно.
+// Ручные шаги (не живой Run): пачка гарантированно одним дреном — гонка
+// «пробуждение между Send'ами» исключена конструктивно.
 func TestRegionSameStepDisplacementNoGhost(t *testing.T) {
-	h := newEnterHarness(t, Config{Hz: 100, GraceTicks: 3, SaveRetryTicks: 2})
+	h := newJoinHarness(t)
+	var gwBox, pBox transport.Mailbox
+	gwID := h.reg.Register(&gwBox)
+	pID := h.reg.Register(&pBox)
+	if err := gwBox.Claim(uint64(gwID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := pBox.Claim(uint64(pID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.r.Wire(gwID, pID); err != nil {
+		t.Fatal(err)
+	}
 	mkEnter := func(conn uint64) transport.Envelope {
 		body, err := transport.EncodeLetter(transport.EnterWorldMsg{
 			Conn: conn, Account: "acc", Char: mustJSONChar(mkRec("acc", "Vasya", 0))})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return h.ctrlLetter(transport.KindEnterWorld, body)
+		return transport.Envelope{To: transport.Addr{Entity: h.r.CtrlID()},
+			FromID: gwID, Kind: transport.KindEnterWorld, Payload: body}
 	}
-	ld, _ := transport.EncodeLetter(transport.ConnRefMsg{Conn: 1})
+	ldBody, _ := transport.EncodeLetter(transport.ConnRefMsg{Conn: 1})
 	h.reg.Send(mkEnter(1))
-	h.reg.Send(h.ctrlLetter(transport.KindLinkDead, ld))
+	h.reg.Send(transport.Envelope{To: transport.Addr{Entity: h.r.CtrlID()},
+		FromID: gwID, Kind: transport.KindLinkDead, Payload: ldBody})
 	h.reg.Send(mkEnter(2))
-	waitTick(t, h.r)
-	waitForResidents(t, h.r, 1)
+	h.step(t)
+	if n := h.r.Stats().Residents; n != 1 {
+		t.Fatalf("Residents = %d; want 1 (призрак не рождается)", n)
+	}
 
 	binds := 0
-	for _, env := range h.gwBox.ExtractInto(h.gwToken, nil) {
+	for _, env := range gwBox.ExtractInto(uint64(gwID), nil) {
 		if env.Kind == transport.KindConnBind {
 			binds++
 		}
 	}
-	h.gwBox.AckNotify()
+	gwBox.AckNotify()
 	if binds != 1 {
 		t.Fatalf("биндов шлюзу %d; want 1 (только живой вход)", binds)
 	}
 
 	// Финальный сохранитель: ровно одно сохранение живой сущности (призрак
 	// не рождён — финально сохранить нечего).
-	h.rCancel()
-	for !h.regionDone() {
-		time.Sleep(2 * time.Millisecond)
-	}
+	h.r.finalSave()
 	saves := 0
-	for _, env := range h.pBox.ExtractInto(h.pToken, nil) {
+	for _, env := range pBox.ExtractInto(uint64(pID), nil) {
 		if env.Kind == transport.KindPersistRequest {
 			saves++
 		}
 	}
-	h.pBox.AckNotify()
+	pBox.AckNotify()
 	if saves != 1 {
 		t.Fatalf("финальных сохранений %d; want 1 (призрак не сохраняется)", saves)
 	}

@@ -30,7 +30,7 @@ func TestJoinSetEqualityProperty(t *testing.T) {
 		blob, diff := b.Build(uint64(iter+1), nil)
 		v := NewView()
 		st := &JoinStats{}
-		ev := Join(blob, diff, v, obs, false, false, st)
+		ev := Join(blob, diff, v, obs, ModeDiff, st)
 		got := map[transport.EntityID]bool{}
 		for _, slot := range ev.Enters {
 			got[blob.ID(slot)] = true
@@ -74,7 +74,7 @@ func TestJoinBoundaryRadius(t *testing.T) {
 				t.Fatalf("Update: %v", err)
 			}
 			blob, diff := b.Build(1, nil)
-			ev := Join(blob, diff, NewView(), obs, false, false, &JoinStats{})
+			ev := Join(blob, diff, NewView(), obs, ModeDiff, &JoinStats{})
 			if in := len(ev.Enters) == 1; in != tc.wantIn {
 				t.Fatalf("%s: ввод=%v; want %v", tc.name, in, tc.wantIn)
 			}
@@ -97,7 +97,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 	}
 	blob, diff := b.Build(1, nil)
 	v := NewView()
-	ev := Join(blob, diff, v, obs, false, false, &JoinStats{})
+	ev := Join(blob, diff, v, obs, ModeDiff, &JoinStats{})
 	ev.Apply(v, blob)
 	if len(ev.Enters) != 1 || len(ev.Exits) != 0 {
 		t.Fatalf("ввод дуги: enters=%d exits=%d; want 1/0", len(ev.Enters), len(ev.Exits))
@@ -111,7 +111,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 			t.Fatalf("Update: %v", err)
 		}
 		nb, nd := b.Build(uint64(step+1), blob)
-		ev := Join(nb, nd, v, obs, false, false, &JoinStats{}) // цель dirty → её пары
+		ev := Join(nb, nd, v, obs, ModeDiff, &JoinStats{}) // цель dirty → её пары
 		churn += len(ev.Enters) + len(ev.Exits)
 		ev.Apply(v, nb)
 		blob = nb
@@ -126,7 +126,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	nb, nd := b.Build(200, blob)
-	ev = Join(nb, nd, v, obs, false, false, &JoinStats{})
+	ev = Join(nb, nd, v, obs, ModeDiff, &JoinStats{})
 	if len(ev.Exits) != 1 || len(ev.Enters) != 0 {
 		t.Fatalf("за exit: exits=%d enters=%d; want 1/0", len(ev.Exits), len(ev.Enters))
 	}
@@ -137,7 +137,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	nb, nd = b.Build(201, blob)
-	ev = Join(nb, nd, v, obs, false, false, &JoinStats{})
+	ev = Join(nb, nd, v, obs, ModeDiff, &JoinStats{})
 	if len(ev.Exits) != 0 || len(ev.Enters) != 0 {
 		t.Fatal("зона удержания: события обязаны отсутствовать")
 	}
@@ -148,7 +148,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	nb, nd = b.Build(202, blob)
-	ev = Join(nb, nd, v, obs, false, false, &JoinStats{})
+	ev = Join(nb, nd, v, obs, ModeDiff, &JoinStats{})
 	if len(ev.Enters) != 1 || len(ev.Exits) != 0 {
 		t.Fatalf("повторный вход: enters=%d; want 1", len(ev.Enters))
 	}
@@ -174,7 +174,7 @@ func TestJoinDistanceIncludesZAxis(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	blob, diff := b.Build(1, nil)
-	ev := Join(blob, diff, NewView(), obs, false, false, &JoinStats{})
+	ev := Join(blob, diff, NewView(), obs, ModeDiff, &JoinStats{})
 	got := map[transport.EntityID]bool{}
 	for _, s := range ev.Enters {
 		got[blob.ID(s)] = true
@@ -199,13 +199,13 @@ func TestJoinIdempotentSameView(t *testing.T) {
 	}
 	blob, diff := b.Build(1, nil)
 	v := NewView()
-	ev1 := Join(blob, diff, v, obs, false, false, &JoinStats{})
+	ev1 := Join(blob, diff, v, obs, ModeDiff, &JoinStats{})
 	if len(ev1.Enters) != 1 {
 		t.Fatal("первый вызов обязан ввести")
 	}
 	ev1.Apply(v, blob)
 	// Повторный вызов с тем же view — даже с тем же непустым диффом.
-	ev2 := Join(blob, diff, v, obs, false, false, &JoinStats{})
+	ev2 := Join(blob, diff, v, obs, ModeDiff, &JoinStats{})
 	if len(ev2.Enters)+len(ev2.Exits) != 0 {
 		t.Fatalf("идемпотентность: enters=%d exits=%d; want 0/0", len(ev2.Enters), len(ev2.Exits))
 	}
@@ -225,12 +225,12 @@ func TestJoinEmptyDiffNoPairsNoPayloadReads(t *testing.T) {
 	}
 	blob, diff := b.Build(1, nil)
 	v := NewView()
-	Join(blob, diff, v, obs, false, false, &JoinStats{}).Apply(v, blob)
+	Join(blob, diff, v, obs, ModeDiff, &JoinStats{}).Apply(v, blob)
 
 	// idle: тот же блоб (новая публикация без изменений), дифф пуст.
 	_, empty := b.Build(2, blob)
 	st := &JoinStats{}
-	ev := Join(blob, empty, v, obs, false, false, st)
+	ev := Join(blob, empty, v, obs, ModeDiff, st)
 	if len(ev.Enters)+len(ev.Exits) != 0 {
 		t.Fatal("idle: события порождены")
 	}
@@ -257,13 +257,13 @@ func TestJoinObserverDirtyRecomputesPairs(t *testing.T) {
 	}
 	blob, diff := b.Build(1, nil)
 	v := NewView()
-	ev := Join(blob, diff, v, obs, false, false, &JoinStats{})
+	ev := Join(blob, diff, v, obs, ModeDiff, &JoinStats{})
 	ev.Apply(v, blob)
 
 	// Наблюдатель сместился к цели 2 — дифф пуст, но obsDirty.
 	moved := rec(1, DefaultEnterRadius-100, 0, 0)
 	st := &JoinStats{}
-	ev2 := Join(blob, diff, v, moved, true, false, st)
+	ev2 := Join(blob, diff, v, moved, ModeObsDirty, st)
 	if st.Pairs == 0 {
 		t.Fatal("obsDirty: пары не пересчитаны (счётчик write-only?)")
 	}
@@ -288,7 +288,7 @@ func TestJoinSlotSwapAbsoluteRemoval(t *testing.T) {
 	}
 	blob, diff := b.Build(1, nil)
 	v := NewView()
-	Join(blob, diff, v, obs, false, false, &JoinStats{}).Apply(v, blob)
+	Join(blob, diff, v, obs, ModeDiff, &JoinStats{}).Apply(v, blob)
 
 	// Swap: тот же слот занят другой записью (present→present).
 	if err := b.Remove(2); err != nil {
@@ -298,7 +298,7 @@ func TestJoinSlotSwapAbsoluteRemoval(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	nb, nd := b.Build(2, blob)
-	ev := Join(nb, nd, v, obs, false, false, &JoinStats{})
+	ev := Join(nb, nd, v, obs, ModeDiff, &JoinStats{})
 	var sawOld, sawNew bool
 	for _, ex := range ev.Exits {
 		if ex.ID == 2 {
@@ -327,13 +327,13 @@ func TestJoinRemovalWithoutMarkerImmediateDelete(t *testing.T) {
 	}
 	blob, diff := b.Build(1, nil)
 	v := NewView()
-	Join(blob, diff, v, obs, false, false, &JoinStats{}).Apply(v, blob)
+	Join(blob, diff, v, obs, ModeDiff, &JoinStats{}).Apply(v, blob)
 
 	if err := b.Remove(2); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	nb, nd := b.Build(2, blob)
-	ev := Join(nb, nd, v, obs, false, false, &JoinStats{})
+	ev := Join(nb, nd, v, obs, ModeDiff, &JoinStats{})
 	if len(ev.Exits) != 1 {
 		t.Fatalf("уход без маркера: exits=%d; want ровно 1 (немедленно)", len(ev.Exits))
 	}
@@ -344,14 +344,22 @@ func TestJoinRemovalWithoutMarkerImmediateDelete(t *testing.T) {
 
 func TestVisiblePredicateFlagsTable(t *testing.T) {
 	t.Parallel()
-	if !Visible(0, 0) {
-		t.Fatal("фаза 3: чистые флаги обязаны быть видимы")
+	cases := []struct {
+		name     string
+		obs, tgt uint32
+		want     bool
+	}{
+		{"чистые", 0, 0, true},
+		{"флаг наблюдателя", 1, 0, true},
+		{"флаг цели скрывает", 0, 1, false},
+		{"оба", 1, 1, false},
 	}
-	if !Visible(1, 0) {
-		t.Fatal("флаги наблюдателя не скрывают цель в фазе 3")
-	}
-	if Visible(0, 1) {
-		t.Fatal("синтетический флаг цели обязан скрывать")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Visible(tc.obs, tc.tgt); got != tc.want {
+				t.Fatalf("Visible(%d, %d) = %v; want %v", tc.obs, tc.tgt, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -368,7 +376,7 @@ func TestJoinFlagsChangeReevaluatesAllPairs(t *testing.T) {
 	}
 	blob, diff := b.Build(1, nil)
 	v := NewView()
-	Join(blob, diff, v, obs, false, false, &JoinStats{}).Apply(v, blob)
+	Join(blob, diff, v, obs, ModeDiff, &JoinStats{}).Apply(v, blob)
 
 	// Флаг цели изменился (dirty), дистанция та же — удаление.
 	hidden := known
@@ -377,7 +385,7 @@ func TestJoinFlagsChangeReevaluatesAllPairs(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	nb, nd := b.Build(2, blob)
-	ev := Join(nb, nd, v, obs, false, false, &JoinStats{})
+	ev := Join(nb, nd, v, obs, ModeDiff, &JoinStats{})
 	if len(ev.Exits) != 1 || len(ev.Enters) != 0 {
 		t.Fatalf("переоценка: exits=%d enters=%d; want 1/0", len(ev.Exits), len(ev.Enters))
 	}
@@ -388,7 +396,7 @@ func TestJoinFlagsChangeReevaluatesAllPairs(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 	nb2, nd2 := b.Build(3, nb)
-	ev2 := Join(nb2, nd2, v, obs, false, false, &JoinStats{})
+	ev2 := Join(nb2, nd2, v, obs, ModeDiff, &JoinStats{})
 	if len(ev2.Enters) != 1 || len(ev2.Exits) != 0 {
 		t.Fatalf("снятие флага: enters=%d; want 1", len(ev2.Enters))
 	}
@@ -408,36 +416,9 @@ func TestJoinDistanceSquaresInt64(t *testing.T) {
 	blob, diff := b.Build(1, nil)
 	v := NewView()
 	st := &JoinStats{}
-	ev := Join(blob, diff, v, obs, false, false, st) // не паникует
+	ev := Join(blob, diff, v, obs, ModeDiff, st) // не паникует
 	if len(ev.Enters) != 0 {
 		t.Fatal("переполнение дало ложный ввод")
-	}
-}
-
-func TestJoinEventsOnlyTwoKinds(t *testing.T) {
-	t.Parallel()
-	// Маркеры переезда фазой 3 не порождаются: типы событий — только
-	// ввод/удаление (компилируемая полнота; hold-last — фаза 4).
-	var _ int
-	obs := rec(1, 0, 0, 0)
-	b := NewBuilder()
-	if err := b.Update(obs); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-	if err := b.Update(rec(2, 10, 0, 0)); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-	blob, diff := b.Build(1, nil)
-	v := NewView()
-	ev := Join(blob, diff, v, obs, false, false, &JoinStats{})
-	ev.Apply(v, blob)
-	if err := b.Remove(2); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
-	nb, nd := b.Build(2, blob)
-	ev2 := Join(nb, nd, v, obs, false, false, &JoinStats{})
-	if len(ev2.Exits) != 1 || len(ev2.Enters) != 0 {
-		t.Fatalf("события: %+v", ev2)
 	}
 }
 
@@ -449,4 +430,38 @@ func cos100(a int32) int64 {
 func sin100(a int32) int64 {
 	table := [10]int64{0, 627, 1253, 1873, 2486, 3090, 3681, 4257, 4817, 5358}
 	return table[a%10]
+}
+
+func TestJoinBoundaryExitStays(t *testing.T) {
+	t.Parallel()
+	// Ровно на exit — остаётся известным (удаление строго за границей).
+	obs := rec(1, 0, 0, 0)
+	b := NewBuilder()
+	if err := b.Update(obs); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if err := b.Update(rec(2, DefaultEnterRadius-10, 0, 0)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	blob, diff := b.Build(1, nil)
+	v := NewView()
+	Join(blob, diff, v, obs, ModeDiff, &JoinStats{}).Apply(v, blob)
+
+	if err := b.Update(rec(2, DefaultExitRadius, 0, 0)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	nb, nd := b.Build(2, blob)
+	ev := Join(nb, nd, v, obs, ModeDiff, &JoinStats{})
+	if len(ev.Exits) != 0 {
+		t.Fatalf("d == exit: удалений %d; want 0 (граница удерживает)", len(ev.Exits))
+	}
+	ev.Apply(v, nb)
+	if err := b.Update(rec(2, DefaultExitRadius+1, 0, 0)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	nb2, nd2 := b.Build(3, nb)
+	ev2 := Join(nb2, nd2, v, obs, ModeDiff, &JoinStats{})
+	if len(ev2.Exits) != 1 {
+		t.Fatalf("d == exit+1: удалений %d; want 1", len(ev2.Exits))
+	}
 }

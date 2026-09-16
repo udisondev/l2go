@@ -20,7 +20,7 @@ func BenchmarkReplicaColdJoin(b *testing.B) {
 				b.Fatal(err)
 			}
 			for id := 2; id <= n; id++ {
-				if err := bl.Update(rec(transport.EntityID(id), int32(id%1600), int32(id%900), 0)); err != nil {
+				if err := bl.Update(rec(transport.EntityID(id), int32(id%1500), int32(id%800), 0)); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -32,7 +32,7 @@ func BenchmarkReplicaColdJoin(b *testing.B) {
 			for b.Loop() {
 				v := NewView()
 				st := &JoinStats{}
-				ev := Join(blob, diff, v, obs, false, false, st)
+				ev := Join(blob, diff, v, obs, ModeDiff, st)
 				pairs += len(ev.Enters)
 				ev.Apply(v, blob)
 			}
@@ -55,14 +55,14 @@ func BenchmarkReplicaSteadyDirty(b *testing.B) {
 				b.Fatal(err)
 			}
 			for id := 2; id <= n; id++ {
-				if err := bl.Update(rec(transport.EntityID(id), int32(id%1600), int32(id%900), 0)); err != nil {
+				if err := bl.Update(rec(transport.EntityID(id), int32(id%1500), int32(id%800), 0)); err != nil {
 					b.Fatal(err)
 				}
 			}
 			blob, diff := bl.Build(1, nil)
 			obs := rec(1, 0, 0, 0)
 			v := NewView()
-			Join(blob, diff, v, obs, false, false, &JoinStats{}).Apply(v, blob)
+			Join(blob, diff, v, obs, ModeDiff, &JoinStats{}).Apply(v, blob)
 			// Все слоты dirty: сдвиг каждой записи на 1 по X.
 			for id := 2; id <= n; id++ {
 				if err := bl.Update(rec(transport.EntityID(id), int32(id%1600)+1, int32(id%900), 0)); err != nil {
@@ -75,7 +75,7 @@ func BenchmarkReplicaSteadyDirty(b *testing.B) {
 			var pairs int
 			for b.Loop() {
 				st := &JoinStats{}
-				ev := Join(dirtyBlob, dirtyDiff, v, obs, false, false, st)
+				ev := Join(dirtyBlob, dirtyDiff, v, obs, ModeDiff, st)
 				pairs += st.Pairs
 				ev.Apply(v, dirtyBlob)
 			}

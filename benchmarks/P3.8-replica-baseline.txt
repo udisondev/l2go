@@ -1,73 +1,73 @@
-# P3.8 replica baseline (join/publish) — 2026-09-16
+# P3.8 replica baseline (join/publish) — 2026-09-16 — рев. 2 после S8-дофикса (амортизация view, math/bits)
 # Go go1.27.0 windows/amd64; машина разработчика (не CI)
-# Методология: b.Loop, -count=10; якорь join-константы ~7–11 нс/пара (ADR-0004) — стационарный путь в якоре, холодный несёт аллокации роста view
-BenchmarkReplicaColdJoin/100-16   	  107888	     11833 ns/op	       119.5 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	   85162	     14043 ns/op	       141.8 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	   84721	     13813 ns/op	       139.5 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	   97426	     13620 ns/op	       137.6 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	  101019	     12233 ns/op	       123.6 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	   93105	     15036 ns/op	       151.9 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	   84589	     13590 ns/op	       137.3 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	  105505	     14183 ns/op	       143.3 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	  100519	     14235 ns/op	       143.8 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/100-16   	   69666	     14814 ns/op	       149.6 ns/pair	   44280 B/op	     109 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	     992	   1111233 ns/op	      1112 ns/pair	 4300252 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	    1213	   1171575 ns/op	      1173 ns/pair	 4300253 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	    1314	   1071656 ns/op	      1073 ns/pair	 4300253 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	    1243	   1046862 ns/op	      1048 ns/pair	 4300260 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	     966	   1048192 ns/op	      1049 ns/pair	 4300255 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	    1076	   1106560 ns/op	      1108 ns/pair	 4300254 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	    1314	   1186330 ns/op	      1188 ns/pair	 4300252 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	    1202	   1165577 ns/op	      1167 ns/pair	 4300254 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	     972	   1385388 ns/op	      1387 ns/pair	 4300257 B/op	    1027 allocs/op
-BenchmarkReplicaColdJoin/1k-16    	    1140	   1140718 ns/op	      1142 ns/pair	 4300257 B/op	    1027 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1070 ns/op	        10.81 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1078 ns/op	        10.89 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1067 ns/op	        10.78 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1065 ns/op	        10.75 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1061 ns/op	        10.72 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1074 ns/op	        10.85 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1058 ns/op	        10.69 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1063 ns/op	        10.74 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1070 ns/op	        10.81 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1079 ns/op	        10.90 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  111214	     10881 ns/op	        10.89 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  112982	     10679 ns/op	        10.69 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  111396	     10709 ns/op	        10.72 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  110761	     10655 ns/op	        10.67 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  110938	     10646 ns/op	        10.66 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  113054	     10738 ns/op	        10.75 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  112032	     10729 ns/op	        10.74 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  112084	     10655 ns/op	        10.67 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  111512	     10727 ns/op	        10.74 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaSteadyDirty/1k-16          	  110858	     10757 ns/op	        10.77 ns/pair	       0 B/op	       0 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  139328	      8907 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  182016	      7766 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  249501	      8809 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  176809	      8627 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  126230	      8621 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  126729	      9262 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  128877	      8845 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  178357	      8177 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  152744	      8632 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/100-16         	  128356	      8932 ns/op	   15552 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   18703	     72348 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   19098	     69121 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   20142	     58117 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   16424	     71628 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   14794	     76650 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   17184	     73564 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   18806	     62629 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   14089	     80127 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   18626	     65567 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/1k-16          	   19008	     65951 ns/op	  147648 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    1731	    663618 ns/op	 1450179 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    1639	    690023 ns/op	 1450178 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    2061	    608927 ns/op	 1450178 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    2455	    709338 ns/op	 1450178 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    2025	    686844 ns/op	 1450178 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    2080	    750977 ns/op	 1450178 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    2293	    765703 ns/op	 1450178 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    1929	    699339 ns/op	 1450177 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    2562	    730387 ns/op	 1450178 B/op	       4 allocs/op
-BenchmarkReplicaPublishBlob/10k-16         	    1650	    728735 ns/op	 1450177 B/op	       4 allocs/op
+# Методология: b.Loop, -count=10; якорь join-константы ~7–11 нс/пара (ADR-0004) — стационарный путь в якоре
+BenchmarkReplicaColdJoin/100-16   	  653206	      1897 ns/op	        19.17 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  723553	      1872 ns/op	        18.91 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  741069	      1878 ns/op	        18.97 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  666122	      1882 ns/op	        19.01 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  666532	      1851 ns/op	        18.70 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  712000	      1841 ns/op	        18.59 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  702991	      1836 ns/op	        18.55 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  628867	      1842 ns/op	        18.61 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  565594	      1895 ns/op	        19.14 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/100-16   	  607941	      1852 ns/op	        18.71 ns/pair	    2952 B/op	      10 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   70194	     17391 ns/op	        17.41 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   66912	     17582 ns/op	        17.60 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   69802	     18392 ns/op	        18.41 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   53731	     19349 ns/op	        19.37 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   64814	     18345 ns/op	        18.36 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   69502	     18621 ns/op	        18.64 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   61490	     18300 ns/op	        18.32 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   62635	     18858 ns/op	        18.88 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   71727	     18723 ns/op	        18.74 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaColdJoin/1k-16    	   61651	     18802 ns/op	        18.82 ns/pair	   33528 B/op	      14 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1225845	       981.4 ns/op	         9.913 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1222626	       983.6 ns/op	         9.935 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1015 ns/op	        10.25 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1007 ns/op	        10.17 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1000000	      1012 ns/op	        10.22 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1204802	       993.5 ns/op	        10.03 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1218804	       983.8 ns/op	         9.937 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1216099	       986.2 ns/op	         9.962 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1219082	       983.3 ns/op	         9.932 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/100-16         	 1237160	       973.1 ns/op	         9.829 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  121970	      9862 ns/op	         9.872 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  118519	      9945 ns/op	         9.955 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  121628	      9947 ns/op	         9.956 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  122691	      9799 ns/op	         9.808 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  121111	      9798 ns/op	         9.808 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  120500	      9804 ns/op	         9.814 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  121304	      9853 ns/op	         9.863 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  123843	     10098 ns/op	        10.11 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  112773	     10038 ns/op	        10.05 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaSteadyDirty/1k-16          	  119215	     10011 ns/op	        10.02 ns/pair	       0 B/op	       0 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  229848	      5352 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  271386	      5237 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  253880	      5509 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  200452	      5406 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  201934	      5901 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  251268	      4945 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  267802	      5396 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  258638	      5442 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  256243	      5649 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/100-16         	  272463	      5414 ns/op	   15552 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   27146	     45879 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   25540	     46843 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   27531	     43691 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   28576	     43674 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   29371	     42852 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   28809	     41820 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   27060	     44888 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   26858	     43959 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   28590	     42719 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/1k-16          	   26304	     44811 ns/op	  147648 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2164	    562517 ns/op	 1450176 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2520	    560799 ns/op	 1450176 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2594	    539100 ns/op	 1450177 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2078	    591973 ns/op	 1450178 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2536	    561860 ns/op	 1450178 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2444	    581980 ns/op	 1450178 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2101	    657217 ns/op	 1450176 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2000	    595638 ns/op	 1450177 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2503	    650299 ns/op	 1450177 B/op	       4 allocs/op
+BenchmarkReplicaPublishBlob/10k-16         	    2007	    620077 ns/op	 1450177 B/op	       4 allocs/op

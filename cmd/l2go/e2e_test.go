@@ -790,14 +790,25 @@ func TestE2EMutualVisibilityTwoClients(t *testing.T) {
 	waitForLine(t, s2.out, "DELETE_OBJECT", 3*time.Second)
 
 	// Перезаход первого — набор видимости идентичен (ввод заново).
+	// Счётчик вхождений ДО/ПОСЛЕ: waitForLine сканирует буфер с начала и
+	// вернул бы кадр первого входа — хвост обязан быть новым вхождением.
+	before2 := strings.Count(s2.out.String(), "CHAR_INFO")
 	s1b := enterWorld(t, env, "visio1")
 	l1b := waitForLine(t, s1b.out, "CHAR_INFO", 3*time.Second)
 	if !charInfoHexHas(l1b, charName("visio2")) {
 		t.Errorf("перезаход не видит второго: %s", l1b)
 	}
-	l2b := waitForLine(t, s2.out, "CHAR_INFO", 3*time.Second)
-	if !charInfoHexHas(l2b, charName("visio1")) {
-		t.Errorf("оставшийся не видит перезаход: %s", l2b)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) &&
+		strings.Count(s2.out.String(), "CHAR_INFO") <= before2 {
+		time.Sleep(3 * time.Millisecond) // тайминг-инвариант доставки, не синхронизация
+	}
+	after2 := strings.Count(s2.out.String(), "CHAR_INFO")
+	if after2 != before2+1 {
+		t.Fatalf("оставшийся не получил новый CharInfo перезахода: %d → %d; want +1", before2, after2)
+	}
+	if !charInfoHexHas(s2.out.String(), charName("visio1")) {
+		t.Errorf("буфер второго не содержит имени перезахода")
 	}
 }
 

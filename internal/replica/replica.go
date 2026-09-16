@@ -29,13 +29,6 @@ func (s Snapshot) Pos() (x, y, z int32) { return s.x, s.y, s.z }
 // Epoch возвращает метку персиста/маркера записи.
 func (s Snapshot) Epoch() uint64 { return s.epoch }
 
-// AdvisoryInput — залогированное advisory-чтение: реплей-харнесс инъектирует
-// эти значения как входы свёртки.
-type AdvisoryInput struct {
-	Cell   CellID
-	Entity transport.EntityID
-}
-
 // Advisory — advisory-API чтения снапшотов соседей для игровой логики:
 // реализация обязана логировать каждое чтение в порцию.
 type Advisory interface {
@@ -75,20 +68,6 @@ func Lookup(b *Blob, id transport.EntityID) (Snapshot, bool) {
 		}, true
 	}
 	return Snapshot{}, false
-}
-
-// Published — advisory-API над последней публикацией: обёртка региона
-// (владелец Load-указателя) реализует интерфейс вызовом Lookup.
-type Published struct {
-	load func() *Blob
-}
-
-// NewPublished — advisory над источником публикаций (атомарный Load).
-func NewPublished(load func() *Blob) *Published { return &Published{load: load} }
-
-// Snapshot implements Advisory.
-func (p *Published) Snapshot(cell CellID, id transport.EntityID) (Snapshot, bool) {
-	return Lookup(p.load(), id)
 }
 
 // GroundItem — AoI-запись лёгкого класса: предмет на земле не является

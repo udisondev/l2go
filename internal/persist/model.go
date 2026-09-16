@@ -104,8 +104,8 @@ type Template struct {
 	WalkSpd int
 	RunSpd  int
 	// BasePAtkSpd/BaseMAtkSpd/SwimSpd — скорости кадра CharInfo/NpcInfo
-	// (basePAtkSpd=300, baseMAtkSpd=333, slowSwim/fastSwim=50 — файл
-	// шаблона).
+	// (basePAtkSpd=300, slowSwim/fastSwim=50 — файл шаблона; baseMAtkSpd=333
+	// — дефолт CreatureTemplate.java кода Mobius, в XML узла нет).
 	BasePAtkSpd int
 	BaseMAtkSpd int
 	SwimSpd     int

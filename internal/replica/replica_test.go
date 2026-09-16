@@ -47,6 +47,7 @@ func ExampleGroundItem() {
 // доступ только поведенческими методами; игровая логика (вне пакета) не
 // может ни прочитать, ни подменить известность (ось 1 ADR-0004).
 func TestViewAndBlobExposeNoFields(t *testing.T) {
+	t.Parallel()
 	for _, tp := range []any{*NewView(), Blob{}, Diff{}} {
 		rt := reflect.TypeOf(tp)
 		for i := range rt.NumField() {

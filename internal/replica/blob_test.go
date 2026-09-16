@@ -1,6 +1,7 @@
 package replica
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/udisondev/l2go/internal/transport"
@@ -236,6 +237,9 @@ func TestBlobReaderDuringNextBuild(t *testing.T) {
 	}
 	blob, _ := b.Build(1, nil)
 
+	// Горутина-читатель шлёт первую расходимость каналом (фаталить из
+	// горутины нельзя); основная фейлит с полным сообщением.
+	bad := make(chan int, 1)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -243,7 +247,11 @@ func TestBlobReaderDuringNextBuild(t *testing.T) {
 			for i := range blob.Len() {
 				if blob.IsMember(i) {
 					if blob.X(i) != int32(blob.ID(i)) || blob.Y(i) != int32(blob.ID(i))*2 {
-						panic("читатель видит мусор: алиасинг поколений")
+						select {
+						case bad <- i:
+						default:
+						}
+						return
 					}
 				}
 			}
@@ -266,4 +274,35 @@ func TestBlobReaderDuringNextBuild(t *testing.T) {
 		}
 	}
 	<-done
+	select {
+	case i := <-bad:
+		t.Fatalf("читатель видит мусор в слоте %d: алиасинг поколений", i)
+	default:
+	}
+}
+
+// Базис диффа — последняя публикация: неопубликованные изменения не
+// потребляются Build'ом — повторная сборка против той же публикации даёт
+// поэлементно тот же дифф (до публикации дифф жив).
+func TestBlobDiffNotConsumedByBuild(t *testing.T) {
+	t.Parallel()
+	b := NewBuilder()
+	for id := transport.EntityID(1); id <= 10; id++ {
+		if err := b.Update(rec(id, int32(id), 0, 0)); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	}
+	vs, _ := b.Build(1, nil)
+	if err := b.Update(rec(3, 999, 0, 0)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	_, d1 := b.Build(2, vs)
+	_, d2 := b.Build(3, vs)
+	if !slices.Equal(d1.spawned, d2.spawned) || !slices.Equal(d1.removed, d2.removed) ||
+		!slices.Equal(d1.dirty, d2.dirty) {
+		t.Fatal("повторная сборка против той же публикации дала другой дифф (изменения потреблены)")
+	}
+	if d1.DirtyCount() == 0 {
+		t.Fatal("изменение не отмечено dirty")
+	}
 }

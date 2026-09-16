@@ -6,6 +6,7 @@ package world
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/udisondev/l2go/internal/encode"
@@ -21,6 +22,7 @@ type joinHarness struct {
 	metro  *Metronome
 	pushes *pushCollector
 	dir    string
+	reg    *transport.Registry
 }
 
 func newJoinHarness(t *testing.T) *joinHarness {
@@ -45,7 +47,7 @@ func newJoinHarness(t *testing.T) *joinHarness {
 		t.Fatalf("Wire: %v", err)
 	}
 	t.Cleanup(func() { _ = log.Close() })
-	return &joinHarness{r: r, metro: m, pushes: pc, dir: log.dir, log: log}
+	return &joinHarness{r: r, metro: m, pushes: pc, dir: log.dir, log: log, reg: reg}
 }
 
 // enter — вход игрока (контрольное письмо) + шаг; возвращает сущность.
@@ -117,7 +119,7 @@ func TestRegionMutualCharInfoSameStep(t *testing.T) {
 // исчезновение без маркера — немедленно).
 func TestRegionLogoutDeleteObjectToObserver(t *testing.T) {
 	h := newJoinHarness(t)
-	a := h.enter(t, 7, "aaa")
+	h.enter(t, 7, "aaa")
 	b := h.enter(t, 8, "bbb")
 	h.pushes.pushes = nil
 
@@ -131,7 +133,7 @@ func TestRegionLogoutDeleteObjectToObserver(t *testing.T) {
 	if ids := charInfoObjIDs(h.pushes.pushes, 7); len(ids) != 0 {
 		t.Fatalf("клиенту 7 лишние CharInfo: %v", ids)
 	}
-	_ = a
+
 }
 
 // Паника поздней фазы (phaseLog) после join: кадры в pendingPushes переживают
@@ -149,7 +151,7 @@ func TestRegionJoinFramesSurviveLatePhasePanic(t *testing.T) {
 
 	got := charInfoObjIDs(h.pushes.pushes, 7)
 	if len(got) != 1 {
-		t.Fatalf("CharInfo клиенту 7 после паники: %v; want ровно один", got)
+		t.Fatalf("CharInfo клиенту 7 после паники: %v; want ровно один (objID=%d)", got, objID(h.r.residents[1].ent.ID))
 	}
 }
 
@@ -206,12 +208,13 @@ func TestRegionSameStepSlotSwapPair(t *testing.T) {
 		t.Fatalf("swap: DeleteObject %v; want [%d]", gotD, objID(x))
 	}
 	if len(gotC) != 1 {
-		t.Fatalf("swap: CharInfo %v; want один (новый житель)", gotC)
+		t.Fatalf("swap: CharInfo %v; want один (objID нового=%d)", gotC, objID(h.r.residents[len(h.r.residents)-1].ent.ID))
 	}
 }
 
-// Событийность (F5): idle-тик — ноль join-пар; вход — пары растут
-// (счётчик не write-only, P3.1-F49).
+// Событийность (F5): idle-тик — ноль join-пар и ноль вызовов Join (гард
+// актора), пейлоады не читаются; вход — пары растут (счётчик не write-only,
+// P3.1-F49).
 func TestRegionIdleStepZeroJoinPairs(t *testing.T) {
 	h := newJoinHarness(t)
 	h.enter(t, 7, "aaa")
@@ -220,9 +223,17 @@ func TestRegionIdleStepZeroJoinPairs(t *testing.T) {
 	if before == 0 {
 		t.Fatal("после входов JoinPairs = 0: счётчик не считается")
 	}
+	calls, reads := h.r.Stats().JoinCalls, h.r.Stats().PayloadReads
 	h.step(t)
-	if got := h.r.Stats().JoinPairs; got != before {
-		t.Fatalf("idle-тик: JoinPairs %d → %d; want без изменений", before, got)
+	st := h.r.Stats()
+	if st.JoinPairs != before {
+		t.Fatalf("idle-тик: JoinPairs %d → %d; want без изменений", before, st.JoinPairs)
+	}
+	if st.JoinCalls != calls {
+		t.Fatalf("idle-тик: JoinCalls %d → %d; want без изменений (гард F5 не пускает Join)", calls, st.JoinCalls)
+	}
+	if st.PayloadReads != reads {
+		t.Fatalf("idle-тик: PayloadReads %d → %d; want без изменений", reads, st.PayloadReads)
 	}
 }
 
@@ -251,7 +262,8 @@ func TestRegionPhaseJoinPanicMarker(t *testing.T) {
 func TestRegionNpcInfoSyntheticRecord(t *testing.T) {
 	h := newJoinHarness(t)
 	npc := Entity{Owner: 1, HP: 50, Pos: Position{X: -71338, Y: 258271, Z: -3104}}
-	if _, err := h.r.Spawn(npc); err != nil {
+	npcID, err := h.r.Spawn(npc)
+	if err != nil {
 		t.Fatalf("Spawn NPC: %v", err)
 	}
 	h.enter(t, 7, "aaa")
@@ -259,7 +271,7 @@ func TestRegionNpcInfoSyntheticRecord(t *testing.T) {
 	sawNpc := false
 	for _, p := range h.pushes.pushes {
 		if p.Client == 7 && len(p.Frame) > 0 && p.Frame[0] == 0x16 {
-			sawNpc = true
+			sawNpc = objIDOfFrame(p.Frame) == objID(npcID)
 		}
 	}
 	if !sawNpc {
@@ -269,23 +281,36 @@ func TestRegionNpcInfoSyntheticRecord(t *testing.T) {
 
 // Порядок нескольких вводов — по слотам блоба, стабилен между прогонами.
 func TestRegionJoinOrderDeterministicBySlot(t *testing.T) {
-	run := func() (seq []int32) {
+	run := func() (seq []int32, ids []transport.EntityID) {
 		h := newJoinHarness(t)
 		h.enter(t, 7, "aaa")
 		h.pushes.pushes = nil
 		// Три входа одной пачкой.
-		h.r.reg.Send(enterMsg(8, "bbb", mkRec("bbb", "Botb", 0)))
-		h.r.reg.Send(enterMsg(9, "ccc", mkRec("ccc", "Botc", 0)))
-		h.r.reg.Send(enterMsg(10, "ddd", mkRec("ddd", "Botd", 0)))
+		h.reg.Send(enterMsg(8, "bbb", mkRec("bbb", "Botb", 0)))
+		h.reg.Send(enterMsg(9, "ccc", mkRec("ccc", "Botc", 0)))
+		h.reg.Send(enterMsg(10, "ddd", mkRec("ddd", "Botd", 0)))
 		h.step(t)
-		return charInfoObjIDs(h.pushes.pushes, 7)
+		for _, res := range h.r.residents {
+			if res.ent.Player != nil && res.ent.Player.ConnID != 7 {
+				ids = append(ids, res.ent.ID)
+			}
+		}
+		return charInfoObjIDs(h.pushes.pushes, 7), ids
 	}
-	first := run()
+	first, ids := run()
 	if len(first) != 3 {
 		t.Fatalf("вводов %d; want 3", len(first))
 	}
+	// Порядок = порядок слотов блоба = порядок рождения (ID монотонны).
+	sorted := slices.Clone(ids)
+	slices.Sort(sorted)
+	for i, id := range sorted {
+		if first[i] != objID(id) {
+			t.Fatalf("порядок вводов не по слотам: %v; want по id %v", first, sorted)
+		}
+	}
 	for range 5 {
-		again := run()
+		again, _ := run()
 		for i := range first {
 			if first[i] != again[i] {
 				t.Fatalf("порядок вводов нестабилен: %v vs %v", first, again)
@@ -342,8 +367,8 @@ func TestRegionAdvisoryReadLoggedWithValues(t *testing.T) {
 func TestRegionPublishBlobGenInPublishPhase(t *testing.T) {
 	h := newJoinHarness(t)
 	h.enter(t, 7, "aaa")
-	if g := h.r.snapPtr.Load().Gen(); g != 1 { // вход — один шаг, публикация — генерация 1
-		t.Logf("Gen после входа = %d", g)
+	if g := h.r.snapPtr.Load().Gen(); g != 1 {
+		t.Fatalf("Gen после входа = %d; want 1 (вход — один шаг)", g)
 	}
 	gen := h.r.snapPtr.Load().Gen()
 	h.r.forcePanic = phasePublish
@@ -371,4 +396,47 @@ func TestRegionSelfGetsUserInfoNotCharInfo(t *testing.T) {
 			t.Fatal("собственный CharInfo доставлен")
 		}
 	}
+}
+
+// B5 (Ост-4): паника в окне «кадр → apply» — кадры уже в pendingPushes,
+// view не применён; следующий шаг доигрывает без потерь, view согласован;
+// дубль кадра допустим (повторный ввод = обновление, OQ-5: идемпотентность
+// — уровня view, не кадров). Шов — forcePanicJoinApply.
+func TestRegionJoinPanicBeforeApplyIdempotentReplay(t *testing.T) {
+	h := newJoinHarness(t)
+	h.enter(t, 7, "aaa")
+	h.r.forcePanicJoinApply = true
+	h.r.reg.Send(enterMsg(8, "bbb", mkRec("bbb", "Botb", 0)))
+	h.step(t) // паника между кадрами и apply первого наблюдателя
+	h.r.forcePanicJoinApply = false
+	if h.r.Stats().Failed != 1 {
+		t.Fatalf("failed = %d; want 1", h.r.Stats().Failed)
+	}
+	h.step(t) // доигрывание: хвост + reconcile-повтор ввода
+
+	got := charInfoObjIDs(h.pushes.pushes, 7)
+	if len(got) == 0 {
+		t.Fatal("ввод потерян: CharInfo не доставлен ни разу")
+	}
+	if len(got) > 2 {
+		t.Fatalf("ввод размножен: %d CharInfo; want ≤ 2 (хвост + идемпотентный повтор)", len(got))
+	}
+	// View согласован: повторный шаг — пустые события.
+	before := len(h.pushes.pushes)
+	h.step(t)
+	if n := len(h.pushes.pushes) - before; n != 0 {
+		t.Fatalf("после доигрывания события не пусты: +%d кадров", n)
+	}
+}
+
+// objIDOfFrame — objID из кадра по опкоду (NpcInfo/DeleteObject — офсет 1,
+// CharInfo — 17; лэйауты писателей protocol).
+func objIDOfFrame(frame []byte) int32 {
+	off := 1
+	switch frame[0] {
+
+	case 0x03:
+		off = 17
+	}
+	return int32(uint32(frame[off]) | uint32(frame[off+1])<<8 | uint32(frame[off+2])<<16 | uint32(frame[off+3])<<24)
 }

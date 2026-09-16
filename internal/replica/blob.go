@@ -7,6 +7,7 @@ package replica
 
 import (
 	"fmt"
+	"math/bits"
 	"sort"
 
 	"github.com/udisondev/l2go/internal/transport"
@@ -79,7 +80,8 @@ type Blob struct {
 	strs    []string
 }
 
-// Gen возвращает поколение публикации (+1 на каждую).
+// Gen — поколение сборки (инкремент join-стадии, публикация может лечь
+// позже: пропуски после паник-шагов безвредны — метрика пейсинга, ось 3).
 func (b *Blob) Gen() uint64 { return b.gen }
 
 // Len — число слотов поколения (включая мёртвые; живые — битмапом Members).
@@ -89,9 +91,6 @@ func bitGet(w []uint64, i int) bool { return w[i>>6]&(1<<(uint(i)&63)) != 0 }
 
 // IsMember — живость слота (битмап).
 func (b *Blob) IsMember(i int) bool { return bitGet(b.members, i) }
-
-// IsDirty — запись изменилась против поколения, из которого собран дифф.
-func (b *Blob) IsDirty(i int) bool { return bitGet(b.dirty, i) }
 
 // cols — база числовых колонок в бэкинге.
 func (b *Blob) cols() int { return 4 * ((b.n + 63) / 64) }
@@ -115,8 +114,8 @@ func (b *Blob) Flags(i int) uint32          { return uint32(b.nums[b.cols()+colF
 func (b *Blob) Epoch(i int) uint64          { return uint64(b.nums[b.cols()+colEpoch*b.n+i]) }
 func (b *Blob) Name(i int) string           { return b.strs[i] }
 
-// Diff — дифф поколения против последней публикации: Spawned.removed —
-// членство, Dirty — изменившиеся живые записи (ввод — всегда dirty).
+// Diff — дифф поколения против последней публикации: spawned/removed —
+// членство, dirty — изменившиеся живые записи (ввод — всегда dirty).
 type Diff struct {
 	spawned []uint64
 	removed []uint64
@@ -126,13 +125,10 @@ type Diff struct {
 func bitsCount(w []uint64) int {
 	n := 0
 	for _, v := range w {
-		for ; v != 0; v &= v - 1 {
-			n++
-		}
+		n += bits.OnesCount64(v)
 	}
 	return n
 }
-
 func bitsAny(w []uint64) bool {
 	for _, v := range w {
 		if v != 0 {
@@ -217,18 +213,23 @@ func (b *Builder) Remove(id transport.EntityID) error {
 
 // Build — собирает иммутабельное поколение (всегда копирует) и дифф против
 // vs (nil — холодный старт: всё введено и dirty). Один числовой бэкинг
-// несёт битмапы Members/Dirty/Spawned.removed и колонки; строки — второй:
-// блоб+дифф ≈ 4 аллокации на поколение.
+// несёт битмапы Members/Dirty/Spawned/Removed и колонки; строки — второй:
+// блоб+дифф ≈ 4 аллокации на поколение. Дифф-битмапы размечены по максимуму
+// слотов поколений: усадка (n < vs.n) флагует хвост vs в removed.
 func (b *Builder) Build(gen uint64, vs *Blob) (*Blob, *Diff) {
 	n := len(b.recs)
 	words := (n + 63) / 64
-	total := 4*words + numCols*n
+	dw := words
+	if vs != nil {
+		dw = max(dw, (vs.n+63)/64)
+	}
+	total := words + 3*dw + numCols*n
 	nums := make([]uint64, total)
 	members := nums[:words]
-	dirty := nums[words : 2*words]
-	spawned := nums[2*words : 3*words]
-	removed := nums[3*words : 4*words]
-	cols := nums[4*words:]
+	dirty := nums[words : words+dw]
+	spawned := nums[words+dw : words+2*dw]
+	removed := nums[words+2*dw : words+3*dw]
+	cols := nums[words+3*dw:]
 	strs := make([]string, n)
 
 	blob := &Blob{gen: gen, n: n, members: members, dirty: dirty, nums: nums, strs: strs}
@@ -264,7 +265,9 @@ func (b *Builder) Build(gen uint64, vs *Blob) (*Blob, *Diff) {
 		return blob, d
 	}
 	vWords := (vs.n + 63) / 64
-	for w := range spawned {
+	// Дифф-слова — по максимуму поколений: усадка слотов нового блоба
+	// (n < vs.n) обязана флаговаться в removed (слоты хвоста vs исчезли).
+	for w := range dw {
 		var cur, old uint64
 		if w < words {
 			cur = members[w]
