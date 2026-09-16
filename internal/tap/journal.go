@@ -23,7 +23,7 @@ const journalMagic = "L2TAP\x01"
 // Типы записей журнала.
 const (
 	recConnOpen  byte = 1
-	recData      byte = 2 // байты, фактически отправленные в ногу
+	recData      byte = 2 // байты, принятые из ноги (запись — до пересылки; причинный порядок наблюдения)
 	recOriginal  byte = 3 // кадр до перезаписи rewrite-веткой
 	recConnClose byte = 4
 	recDirCtoS   byte = 1

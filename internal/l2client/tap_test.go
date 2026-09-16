@@ -1,8 +1,9 @@
 package l2client
 
 // Интеграция тапа: полный флоу клиента через прокси-тап (login+game ноги),
-// декодированный лог побайтово равен логу прямой сессии; фикстуры выгружаются,
-// AuthLogin обеих ног исключён; перезапись ServerList оставляет original.
+// декодированный лог равен логу прямой сессии по потокам направлений; фикстуры
+// выгружаются, AuthLogin обеих ног исключён; перезапись ServerList оставляет
+// original.
 
 import (
 	"bytes"
@@ -12,6 +13,7 @@ import (
 	"encoding/json"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,7 +121,33 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-// Полный флоу через тап: лог декодера побайтово равен логу прямой сессии.
+// splitDirections раскладывает трафик-лог на потоки направлений. Порядок
+// внутри направления детерминирован — порядок TCP наблюдается одним и тем же
+// у клиента и тапа; чередование встречных направлений в журнале тапа — момент
+// наблюдения прокси и недетерминировано. Строку без маркера направления
+// добавляем в оба потока: расхождение проявится в сравнении.
+func splitDirections(log string) (recv, send string) {
+	var r, s strings.Builder
+	for _, line := range strings.Split(strings.TrimSuffix(log, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "←"):
+			r.WriteString(line)
+			r.WriteByte('\n')
+		case strings.HasPrefix(line, "→"):
+			s.WriteString(line)
+			s.WriteByte('\n')
+		default:
+			r.WriteString(line)
+			r.WriteByte('\n')
+			s.WriteString(line)
+			s.WriteByte('\n')
+		}
+	}
+	return r.String(), s.String()
+}
+
+// Полный флоу через тап: лог декодера равен логу прямой сессии по потокам
+// направлений.
 func TestTapFullFlowLogParity(t *testing.T) {
 	ctx := t.Context()
 
@@ -152,6 +180,8 @@ func TestTapFullFlowLogParity(t *testing.T) {
 	}()
 	select {
 	case <-ready:
+	case err := <-tapDone:
+		t.Fatalf("tap.Run завершился до готовности слушателей: %v", err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("тап не поднял слушатели за 5с")
 	}
@@ -175,8 +205,12 @@ func TestTapFullFlowLogParity(t *testing.T) {
 	if err := tap.Decode(bytes.NewReader(journal.Bytes()), tap.DecodeOptions{Log: &decoded, Fixtures: &fixts}); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if decoded.String() != outDirect.String() {
-		t.Fatalf("лог декодера расходится с прямой сессией:\ngot:\n%s\nwant:\n%s", decoded.String(), outDirect.String())
+	gotRecv, gotSend := splitDirections(decoded.String())
+	wantRecv, wantSend := splitDirections(outDirect.String())
+	if gotRecv != wantRecv || gotSend != wantSend {
+		t.Fatalf("лог декодера расходится с прямой сессией (по направлениям):\n"+
+			"recv got:\n%s\nrecv want:\n%s\nsend got:\n%s\nsend want:\n%s",
+			gotRecv, wantRecv, gotSend, wantSend)
 	}
 	if outTap.String() != outDirect.String() {
 		t.Fatalf("лог клиента через тап расходится с прямой сессией")

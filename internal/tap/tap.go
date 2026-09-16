@@ -253,11 +253,14 @@ func gameEndpoint(opts Options) (ip [4]byte, port int32, ok bool) {
 }
 
 // pump — одна нога: читает данные, пишет в журнал и противоположную ногу.
-// framed=true: кадровый цикл по [u16 длина][тело] (L2-протокол); framed=false:
-// прозрачная труба — байты пересылаются немедленно (login-нога с не-L2
-// прологом: античиты с сырыми рукопожатиями вида "READY\n" несовместимы с
-// ожиданием полного кадра). EOF — полузакрытие (CloseWrite противоположной
-// ноги), ошибка — разрыв соединения вызывающим (после завершения обеих ног).
+// Запись журнала — до пересылки: причинный порядок наблюдения (ответ в журнале
+// никогда не предшествует породившему его запросу — иначе декодер увидел бы
+// зашифрованный кадр до создания движка). framed=true: кадровый цикл по
+// [u16 длина][тело] (L2-протокол); framed=false: прозрачная труба — байты
+// пересылаются немедленно (login-нога с не-L2 прологом: античиты с сырыми
+// рукопожатиями вида "READY\n" несовместимы с ожиданием полного кадра).
+// EOF — полузакрытие (CloseWrite противоположной ноги), ошибка — разрыв
+// соединения вызывающим (после завершения обеих ног).
 func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewriter, framed bool) error {
 	if !framed {
 		return pumpRaw(rd, wr, dir, id, jw)
@@ -295,24 +298,25 @@ func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewr
 					out = rewritten
 				}
 			}
-			if _, werr := wr.Write(out); werr != nil {
-				return fmt.Errorf("запись в ногу: %w", werr)
-			}
 			if jerr := jw.data(recData, id, dir, time.Now().UnixNano(), out); jerr != nil {
 				return jerr
+			}
+			if _, werr := wr.Write(out); werr != nil {
+				return fmt.Errorf("запись в ногу: %w", werr)
 			}
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				// хвост без полного кадра — пройти насквозь и журналировать
-				// (data = фактически отправленные байты, включая бескарровый хвост)
+				// хвост без полного кадра — журналируется и проходит насквозь
+				// (кадр, чья пересылка не удалась, остаётся в журнале —
+				// соединение закрывается с ошибкой)
 				if len(buf) > 0 {
 					slog.Warn("tap: хвост потока без полного кадра", "bytes", len(buf))
-					if _, werr := wr.Write(buf); werr != nil {
-						return fmt.Errorf("запись хвоста: %w", werr)
-					}
 					if jerr := jw.data(recData, id, dir, time.Now().UnixNano(), buf); jerr != nil {
 						return jerr
+					}
+					if _, werr := wr.Write(buf); werr != nil {
+						return fmt.Errorf("запись хвоста: %w", werr)
 					}
 					buf = nil
 				}
@@ -331,9 +335,10 @@ func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewr
 	}
 }
 
-// pumpRaw — прозрачная труба: каждый прочитанный чанк пересылается сразу и
-// журналируется записью data (без нарезки на кадры; крипто-состояние ноги
-// не отслеживается — разбор делает декодер по журналу).
+// pumpRaw — прозрачная труба: каждый прочитанный чанк журналируется и
+// пересылается (без нарезки на кадры; крипто-состояние ноги не отслеживается —
+// разбор делает декодер по журналу). Порядок «журнал до пересылки» — как в
+// кадровом pump.
 func pumpRaw(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter) error {
 	tmp := make([]byte, 4096)
 	for {
@@ -341,11 +346,11 @@ func pumpRaw(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter) error {
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, tmp[:n])
-			if _, werr := wr.Write(chunk); werr != nil {
-				return fmt.Errorf("запись в ногу: %w", werr)
-			}
 			if jerr := jw.data(recData, id, dir, time.Now().UnixNano(), chunk); jerr != nil {
 				return jerr
+			}
+			if _, werr := wr.Write(chunk); werr != nil {
+				return fmt.Errorf("запись в ногу: %w", werr)
 			}
 		}
 		if err != nil {
