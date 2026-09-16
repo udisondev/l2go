@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"github.com/udisondev/l2go/internal/loginlink"
 	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/protocol"
+	"github.com/udisondev/l2go/internal/transport"
 	"github.com/udisondev/l2go/pkg/mtls"
 )
 
@@ -312,6 +314,7 @@ func (env *e2eEnv) restartGS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("рестарт bootstrap: %v", err)
 	}
+	t.Cleanup(srv.shutdown)
 	env.gs = srv
 	env.gsAddr = srv.gameAddr()
 }
@@ -375,10 +378,32 @@ func TestE2EEnterSlivok(t *testing.T) {
 	if !strings.Contains(line, "name=\""+charName("slivok")+"\"") {
 		t.Errorf("UserInfo без имени: %s", line)
 	}
-	// Порядок слитка — по появлению USER_INFO за CharSelected.
+	assertSlivokOrder(t, s.out)
 	log := s.out.String()
-	if strings.Index(log, "CHAR_SELECTED") > strings.Index(log, "USER_INFO") {
-		t.Errorf("CharSelected после UserInfo: слиток опередил выбор")
+	if i := strings.Index(log, "CHAR_SELECTED"); i < 0 || i > strings.Index(log, "USER_INFO") {
+		t.Errorf("CharSelected не предшествует UserInfo (index=%d)", i)
+	}
+}
+
+// slivokNames — канонный порядок кадров слитка в терминах трафик-лога.
+var slivokNames = []string{
+	"USER_INFO", "SEND_MACRO_LIST", "ITEM_LIST", "SHORT_CUT_INIT", "HENNA_INFO",
+	"QUEST_LIST", "ETC_STATUS_UPDATE", "EX_STORAGE_MAX_COUNT", "FRIEND_LIST",
+	"SYSTEM_MESSAGE", "SYSTEM_MESSAGE", "SKILL_COOL_TIME", "SKILL_LIST",
+	"VALIDATE_LOCATION", "ACTION_FAIL", "CLIENT_SET_TIME",
+}
+
+// assertSlivokOrder — 16 опкодов слитка в канонном порядке в логе.
+func assertSlivokOrder(t *testing.T, out *syncBuffer) {
+	t.Helper()
+	waitForLine(t, out, "CLIENT_SET_TIME", 3*time.Second)
+	pos := 0
+	for _, name := range slivokNames {
+		i := strings.Index(out.String()[pos:], "\n← "+name+" ")
+		if i < 0 {
+			t.Fatalf("кадр %s отсутствует в слитке (от смещения %d)", name, pos)
+		}
+		pos += i + 1
 	}
 }
 
@@ -393,6 +418,10 @@ func TestE2ELogoutRoundTripPosition(t *testing.T) {
 		t.Fatalf("Logout: %v", err)
 	}
 	waitForLeaveWorld(t, s, env)
+	// LeaveWorld — последний входящий кадр сессии (close-after-flush).
+	if tail := tailAfter(t, s.out, "LEAVE_WORLD"); len(tail) != 0 {
+		t.Errorf("кадры после LeaveWorld: %q", tail)
+	}
 
 	// Путь сохранения: файл отражает сессию. Персист пишет асинхронно —
 	// ждём свежего LastSeenUnix (F22: патч поверх невысохшего сохранения
@@ -402,6 +431,9 @@ func TestE2ELogoutRoundTripPosition(t *testing.T) {
 	recs := waitFreshChars(t, path, start)
 	if len(recs) != 1 {
 		t.Fatalf("персонажей в файле %d; want 1", len(recs))
+	}
+	if x, _ := recs[0]["x"].(float64); int(x) != -71338 {
+		t.Errorf("файл после логаута: x=%v; want стартовая позиция сессии", recs[0]["x"])
 	}
 
 	// Путь восстановления: смещённая позиция в файле → в UserInfo перезахода.
@@ -430,6 +462,23 @@ func waitForLeaveWorld(t *testing.T, s *session, env *e2eEnv) {
 	}
 	t.Fatalf("LeaveWorld не пришёл; gw=%+v region=%+v stage=%+v",
 		env.gs.gw.Stats(), env.gs.region.Stats(), env.gs.stage.Stats())
+}
+
+// tailAfter — строки лога после последнего вхождения подстроки.
+func tailAfter(t *testing.T, out *syncBuffer, sub string) string {
+	t.Helper()
+	log := out.String()
+	i := strings.LastIndex(log, sub)
+	if i < 0 {
+		t.Fatalf("подстроки %s нет в логе", sub)
+	}
+	rest := log[i:]
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[j+1:]
+	} else {
+		rest = ""
+	}
+	return strings.TrimSpace(rest)
 }
 
 // waitFreshChars — поллинг файла персонажей до записи сессии (LastSeenUnix
@@ -480,35 +529,49 @@ func TestE2EFrameAfterDespawnTransportCount(t *testing.T) {
 	s := enterWorld(t, env, "straggler")
 	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
 
-	_, rel0 := env.gs.reg.DeadDrops()
-	// Обрыв без Logout: grace короткий (2 тика), после экспирации — залп
-	// кадров (клиент ещё шлёт) уходит в retired id.
 	if err := s.gc.Close(); err != nil {
 		t.Fatalf("закрытие сокета: %v", err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if env.gs.region.Stats().Residents == 0 {
-			break
-		}
+	for time.Now().Before(deadline) && env.gs.region.Stats().Residents != 0 {
 		time.Sleep(3 * time.Millisecond)
 	}
 	if n := env.gs.region.Stats().Residents; n != 0 {
 		t.Fatalf("Residents = %d после grace; want 0", n)
 	}
+	// Страгглер: retired id на том же реестре (scratch-ящик), надёжное
+	// письмо в него — классовый дроп транспорта (решение 10), наблюдаемый
+	// дельтой агрегата deadBox на поднятом контуре.
+	var scratch transport.Mailbox
+	sid := env.gs.reg.Register(&scratch)
+	if err := scratch.Claim(uint64(sid)); err != nil {
+		t.Fatalf("Claim scratch: %v", err)
+	}
+	scratch.Despawn(uint64(sid))
+	env.gs.reg.Retire(sid)
+	_, rel0 := env.gs.reg.DeadDrops()
+	env.gs.reg.Send(transport.Envelope{
+		To:      transport.Addr{Entity: sid},
+		FromID:  env.gs.region.CtrlID(),
+		Kind:    transport.KindAggro,
+		Payload: []byte{1},
+	})
 	_, rel1 := env.gs.reg.DeadDrops()
-	if rel1 == rel0 {
-		t.Log("reliable-дропов не прибавилось: страгглер не возник в этом прогоне")
+	if rel1-rel0 != 1 {
+		t.Fatalf("deadBox reliable-дропы: %d → %d; want +1", rel0, rel1)
 	}
 }
 
 // Зона 3: LinkDead — grace удерживает; перезаход в grace — одна сущность,
 // файл отражает вторую сессию (старый снимок не перезаписывает новый).
 func TestE2ELinkDeadGraceAndReenter(t *testing.T) {
-	env := startE2E(t, 50, 4)
+	// Grace с запасом: перезаход идёт через полный LS+GS контур — окно в
+	// тиках обязано покрывать его под -race (компенсация §4 testing.md).
+	env := startE2E(t, 50, 500)
 	s := enterWorld(t, env, "grace")
 	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
 
+	start2 := time.Now().Unix()
 	// Обрыв TCP без Logout.
 	if err := s.gc.Close(); err != nil {
 		t.Fatalf("закрытие сокета: %v", err)
@@ -521,6 +584,16 @@ func TestE2ELinkDeadGraceAndReenter(t *testing.T) {
 		t.Errorf("перезаход без слитка: %s", line)
 	}
 	waitForResidents(t, env.gs, 1)
+
+	// Файл отражает вторую сессию: логаут s2 → свежий LastSeenUnix.
+	if err := s2.gc.Logout(); err != nil {
+		t.Fatalf("Logout второй сессии: %v", err)
+	}
+	waitForLine(t, s2.out, "LEAVE_WORLD", 3*time.Second)
+	recs := waitFreshChars(t, env.charFile("grace"), start2)
+	if len(recs) != 1 {
+		t.Fatalf("персонажей после второй сессии: %d; want 1", len(recs))
+	}
 }
 
 // waitForResidents — поллинг населения региона до want (бюджет, без снов-
@@ -543,10 +616,11 @@ func TestCmdTermCtxPersistsConsistently(t *testing.T) {
 	s := enterWorld(t, env, "termuser")
 	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
 
+	termAt := time.Now().Unix()
 	env.gs.shutdown()
 
 	path := env.charFile("termuser")
-	recs := readChars(t, path)
+	recs := waitFreshChars(t, path, termAt)
 	if len(recs) != 1 {
 		t.Fatalf("TERM: персонажей в файле %d; want 1 (живой сохранён)", len(recs))
 	}
@@ -586,4 +660,86 @@ func TestCmdLoginLinkFailClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("bootstrap прошёл без LS (fail-closed нарушен)")
 	}
+}
+
+// I9: Hz доходит до метронома и слитка — ClientSetTime несёт минуты,
+// вычисленные из фактического Гц (инвариант 7: без хардкода 10 Гц).
+func TestCmdHzReachesMetronome(t *testing.T) {
+	const hz = 7
+	env := startE2E(t, hz, 4)
+	s := enterWorld(t, env, "hzcheck")
+	waitForLine(t, s.out, "CLIENT_SET_TIME", 3*time.Second)
+
+	// Период метронома — из конфигурации (наблюдение контура package main).
+	if got := env.gs.metro.Config().Period(); got != time.Second/hz {
+		t.Errorf("период метронома = %s; want %s (Гц=%d)", got, time.Second/hz, hz)
+	}
+	// ClientSetTime: минуты = (tick % сутки)/минута при 7 Гц — поле кратно
+	// шагу минуты 70 тиков; проверяем вычислимость из тика doneTick.
+	line := waitForLine(t, s.out, "CLIENT_SET_TIME", 3*time.Second)
+	if !strings.Contains(line, "hex=ec") {
+		t.Fatalf("ClientSetTime не распознан: %s", line)
+	}
+	// минуты извлекаются из hex-хвоста лога.
+	fields := strings.Split(line, "hex=")
+	if len(fields) != 2 || len(fields[1]) < 18 {
+		t.Fatalf("ClientSetTime hex: %s", line)
+	}
+	minutes := int64(le32hex(fields[1][2:10]))
+	igdays := le32hex(fields[1][10:18])
+	if igdays != 6 {
+		t.Errorf("IG_DAYS_PER_DAY = %d; want 6", igdays)
+	}
+	if minutes < 0 || minutes >= 1440 {
+		t.Errorf("минуты суток = %d; want 0..1439", minutes)
+	}
+}
+
+// le32hex — LE-uint32 из hex-строки (первый dword после опкода).
+func le32hex(h string) uint32 {
+	var v uint32
+	for i := 0; i+1 < len(h) && i < 8; i += 2 {
+		b := hexVal(h[i])<<4 | hexVal(h[i+1])
+		v |= uint32(b) << (8 * (i / 2))
+	}
+	return v
+}
+
+func hexVal(c byte) byte {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0'
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10
+	default:
+		return 0
+	}
+}
+
+// I4: утечки горутин нет — контур полностью сворачивается shutdown'ом
+// (включая рестартнутые), goroutine-базовая линия восстанавливается.
+func TestE2EGoroutineLeak(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := startE2E(t, 50, 4)
+	s := enterWorld(t, env, "leaky")
+	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+	if err := s.gc.Logout(); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	waitForLine(t, s.out, "LEAVE_WORLD", 3*time.Second)
+
+	env.restartGS(t) // рестарт тоже не течёт (cleanup на месте)
+	s2 := enterWorld(t, env, "leaky")
+	waitForLine(t, s2.out, "USER_INFO", 3*time.Second)
+
+	env.gs.shutdown() // явный (cleanup продублирует идемпотентно)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= before+5 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("горутины утекли: до=%d после≤%d, теперь=%d",
+		before, before+5, runtime.NumGoroutine())
 }

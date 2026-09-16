@@ -4,7 +4,10 @@
 // читатель по свою сторону).
 package transport
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // EnterWorldMsg — контрольное письмо входа в мир (шлюз→регион, KindEnterWorld).
 type EnterWorldMsg struct {
@@ -30,11 +33,11 @@ func EncodeLetter(v any) ([]byte, error) {
 }
 
 // DecodeLetter разбирает байты конверта в контрольное письмо; битый вход —
-// ошибка, не паника (валидация на применении у читателя).
+// ошибка с причиной (валидация на применении у читателя), не паника.
 func DecodeLetter[T any](payload []byte) (T, error) {
 	var v T
 	if err := json.Unmarshal(payload, &v); err != nil {
-		return v, ErrBadLetter
+		return v, fmt.Errorf("%w: %v", ErrBadLetter, err)
 	}
 	return v, nil
 }

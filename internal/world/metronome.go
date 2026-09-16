@@ -120,6 +120,9 @@ func NewMetronome(cfg Config) (*Metronome, error) {
 // Now — текущий глобальный номер тика (монотонен).
 func (m *Metronome) Now() Tick { return Tick(m.tick.Load()) }
 
+// Config — копия конфигурации метронома (наблюдение wire-up'ом/тестами).
+func (m *Metronome) Config() Config { return m.cfg }
+
 // Alerts — счётчик алертов вотчдога (один на эпизод лага).
 func (m *Metronome) Alerts() uint64 { return m.alerts.Load() }
 

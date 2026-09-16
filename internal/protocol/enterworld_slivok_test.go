@@ -19,7 +19,7 @@ func TestEnterworldWritersGoldenHex(t *testing.T) {
 		want string // hex полного кадра с опкодом
 	}{
 		{"SendMacroList-пустой", EmptySendMacroListSize, WriteEmptySendMacroList,
-			"e70000000000000000"},
+			"e702000000000000"},
 		{"HennaInfo-без-красок", EmptyHennaInfoSize, WriteEmptyHennaInfo,
 			"e4" + "000000000000" + "03000000" + "00000000"},
 		{"QuestList-пустой", EmptyQuestListSize, WriteEmptyQuestList, "800000"},

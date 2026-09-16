@@ -45,6 +45,7 @@ func (r *Registry) DeadDrops() (faf, reliable int64) {
 	return st.FinalFireAndForget, st.FinalReliable
 }
 
+// NewRegistry создаёт реестр с капом FAF на ящик (<=0 — дефолт).
 func NewRegistry(fafCap int) *Registry {
 	r := &Registry{fafCap: fafCap}
 	if fafCap <= 0 {

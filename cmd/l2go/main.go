@@ -263,8 +263,9 @@ func bootstrap(cfg config) (*server, error) {
 	go func() { defer close(s.regionDone); s.region.Run(worldCtx) }()
 	go func() { defer close(s.linkDone); _ = s.link.Run(wireCtx) }()
 	go func() { defer close(s.wireDone); s.gw.Run(wireCtx) }()
-	go func() { _ = s.connS.Serve(ln) }()
 
+	// Приём открывается ТОЛЬКО после регистрации (fail-closed стыка, P3.4):
+	// незарегистрированный GS не принимает ни одного коннекта.
 	regTO := cfg.RegisterTimeout
 	if regTO <= 0 {
 		regTO = linkRegisterTO
@@ -275,6 +276,7 @@ func bootstrap(cfg config) (*server, error) {
 		s.shutdown()
 		return nil, fmt.Errorf("l2go: регистрация на LS %s: %w", cfg.LinkAddr, err)
 	}
+	go func() { _ = s.connS.Serve(ln) }()
 	slog.Info("l2go: контур поднят", "addr", s.addr, "hz", cfg.Hz, "link", cfg.LinkAddr)
 	return s, nil
 }

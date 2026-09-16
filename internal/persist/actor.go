@@ -269,7 +269,10 @@ func (a *Actor) AllowSender(ids ...transport.EntityID) error {
 	if a.started.Load() {
 		return fmt.Errorf("persist: AllowSender после старта Run")
 	}
-	a.cfg.Senders = append(a.cfg.Senders, ids...)
+	// copy-on-write: горутина актора читает слайс без лока.
+	next := make([]transport.EntityID, len(a.cfg.Senders), len(a.cfg.Senders)+len(ids))
+	copy(next, a.cfg.Senders)
+	a.cfg.Senders = append(next, ids...)
 	return nil
 }
 
@@ -388,7 +391,8 @@ func (a *Actor) handleSaveChar(req Request) Reply {
 		return req.fail(CodeIO, err)
 	}
 	// upsert по слоту: заменяется запись слота, остальные (офлайн-персонажи
-	// аккаунта) сохраняются как есть; CreatedUnix наследуется от записи слота.
+	// аккаунта) сохраняются как есть; CreatedUnix наследуется от записи слота;
+	// подмена имени (слот живёт у другого персонажа) — аномалия отправителя.
 	now := time.Now().Unix()
 	ch.Account = account
 	ch.LastSeenUnix = now
@@ -396,6 +400,9 @@ func (a *Actor) handleSaveChar(req Request) Reply {
 	recs := make([]CharRecord, 0, len(old)+1)
 	for _, r := range old {
 		if r.Slot == ch.Slot {
+			if lowercaseASCII(r.Name) != lowercaseASCII(ch.Name) {
+				return req.failMsg("", "имя слота принадлежит другому персонажу")
+			}
 			ch.CreatedUnix = r.CreatedUnix
 			continue
 		}

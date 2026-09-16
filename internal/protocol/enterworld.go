@@ -120,28 +120,27 @@ const (
 )
 
 // IGDaysPerDay — константа скорости часов клиента (GameTimeTaskManager
-// IG_DAYS_PER_DAY = 6: игровые сутки за 4 реальных часа).
+// IG_DAYS_PER_DAY = 6: игровые сутки за 4 реальных часа), Mobius
+// CT_0_Interlude @43ac8878.
 const IGDaysPerDay = int32(6)
 
 // Идентификаторы системных сообщений слитка (Mobius CT_0_Interlude
-// SystemMessageId.java @43ac8878: @ClientString id 34 / 1260).
-const (
-	SystemMessageIDWelcomeToTheWorld    SystemMessageID = 34
-	SystemMessageIDSevenSignsRecruiting SystemMessageID = 1260
-)
+// SystemMessageId.java @43ac8878: @ClientString id 1260; welcome id 34 —
+// константа chat.go с P3.5).
+const SystemMessageIDSevenSignsRecruiting SystemMessageID = 1260
 
-// Пустой SendMacroList (GS→C): D(rev) B B B. Порты L2J Mobius CT_0_Interlude
-// @43ac8878: serverpackets/SendMacroList.java (MacroList.sendUpdate шлёт ≥1
-// пакет даже при пустом списке).
-const EmptySendMacroListSize = 9
+// Пустой SendMacroList (GS→C): D(rev) B B B. Порт L2J Mobius CT_0_Interlude
+// @43ac8878: serverpackets/SendMacroList.java; ревизия 2 — свежий персонаж
+// канона (MacroList.java: ctor _revision=1, sendUpdate инкрементирует).
+const EmptySendMacroListSize = 8
 
-// WriteEmptySendMacroList пишет пустой кадр SendMacroList (rev=0, count=0).
+// WriteEmptySendMacroList пишет пустой кадр SendMacroList (rev=2, count=0).
 func WriteEmptySendMacroList(dst []byte) int {
 	if len(dst) < EmptySendMacroListSize {
 		panic(shortDst("WriteEmptySendMacroList", len(dst), EmptySendMacroListSize))
 	}
 	dst[0] = byte(sendMacroList)
-	WriteD(dst[1:], 0)
+	WriteD(dst[1:], 2)
 	dst[5] = 0
 	dst[6] = 0
 	dst[7] = 0
@@ -149,7 +148,8 @@ func WriteEmptySendMacroList(dst []byte) int {
 }
 
 // HennaInfo без красок (GS→C): 6×B(статы красок=0) D(слоты=3) D(размер=0).
-// Порт sp_HennaInfo.java (константа 3 — канонические слоты красок).
+// Порт L2J Mobius CT_0_Interlude @43ac8878: serverpackets/HennaInfo.java
+// (константа 3 — канонические слоты красок).
 const EmptyHennaInfoSize = 15
 
 // WriteEmptyHennaInfo пишет кадр HennaInfo без красок.
@@ -166,8 +166,8 @@ func WriteEmptyHennaInfo(dst []byte) int {
 	return EmptyHennaInfoSize
 }
 
-// Пустой QuestList (GS→C): H(количество). Порт sp_QuestList.java (паддинг
-// 128 Б каноном закомментирован).
+// Пустой QuestList (GS→C): H(количество). Порт L2J Mobius CT_0_Interlude
+// @43ac8878: serverpackets/QuestList.java (паддинг 128 Б закомментирован).
 const EmptyQuestListSize = 3
 
 // WriteEmptyQuestList пишет пустой кадр QuestList.
@@ -180,7 +180,8 @@ func WriteEmptyQuestList(dst []byte) int {
 	return EmptyQuestListSize
 }
 
-// EtcStatusUpdate нейтральный (GS→C): 7×D(0). Порт sp_EtcStatusUpdate.java.
+// EtcStatusUpdate нейтральный (GS→C): 7×D(0). Порт L2J Mobius CT_0_Interlude
+// @43ac8878: serverpackets/EtcStatusUpdate.java.
 const NeutralEtcStatusSize = 29
 
 // WriteNeutralEtcStatus пишет нейтральный кадр EtcStatusUpdate.
@@ -219,7 +220,8 @@ func WriteExStorageMaxCount(dst []byte) int {
 	return ExStorageMaxCountSize
 }
 
-// Пустой FriendList (GS→C): D(количество). Порт sp_FriendList.java.
+// Пустой FriendList (GS→C): D(количество). Порт L2J Mobius CT_0_Interlude
+// @43ac8878: serverpackets/FriendList.java.
 const EmptyFriendListSize = 5
 
 // WriteEmptyFriendList пишет пустой кадр FriendList.
@@ -232,7 +234,8 @@ func WriteEmptyFriendList(dst []byte) int {
 	return EmptyFriendListSize
 }
 
-// Пустой SkillCoolTime (GS→C): D(количество). Порт sp_SkillCoolTime.java.
+// Пустой SkillCoolTime (GS→C): D(количество). Порт L2J Mobius CT_0_Interlude
+// @43ac8878: serverpackets/SkillCoolTime.java.
 const EmptySkillCoolTimeSize = 5
 
 // WriteEmptySkillCoolTime пишет пустой кадр SkillCoolTime.
@@ -264,7 +267,8 @@ func WriteClientSetTime(dst []byte, clientMinutes, igDays int32) int {
 }
 
 // LeaveWorld (GS→C): маркер из одного опкода — финальный кадр логаута
-// (клиент возвращается к выбору сервера). Порт sp_LeaveWorld.java.
+// (клиент возвращается к выбору сервера). Порт L2J Mobius CT_0_Interlude
+// @43ac8878: serverpackets/LeaveWorld.java.
 const LeaveWorldSize = 1
 
 // WriteLeaveWorld пишет кадр LeaveWorld.
@@ -276,8 +280,9 @@ func WriteLeaveWorld(dst []byte) int {
 	return LeaveWorldSize
 }
 
-// RestartResponse (GS→C): D(результат). Порт sp_RestartResponse.java
-// (RequestRestart отвечает false + ActionFailed — рестарт фазы 3 недоступен).
+// RestartResponse (GS→C): D(результат). Порт L2J Mobius CT_0_Interlude
+// @43ac8878: serverpackets/RestartResponse.java (RequestRestart отвечает
+// false + ActionFailed — рестарт фазы 3 недоступен).
 const RestartResponseSize = 5
 
 // WriteRestartResponse пишет кадр RestartResponse.

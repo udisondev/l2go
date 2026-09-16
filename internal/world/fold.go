@@ -87,7 +87,6 @@ type saveState struct {
 	Entity  transport.EntityID // Corr ответа (вечен и уникален)
 	NextTry Tick
 	Dead    bool
-	Alerted bool
 }
 
 // State — счётчики и связки свёртки: детерминированная функция входов.
@@ -159,12 +158,13 @@ func Fold(tick Tick, delta uint64, rng *rand.Rand, st *State, ents []*Entity, po
 			}
 		}
 	}
-	// Письма применяются в порядке дрена; рождения этого шага — локально,
-	// LinkDead в той же пачке находит своё нерождённое рождение по conn.
-	pendingEnters := make(map[uint64]int) // conn → индекс в res.Births
+	// Письма применяются в порядке дрена; рождения этого шага — локально:
+	// LinkDead/повторный вход того же аккаунта в той же пачке находят своё
+	// нерождённое рождение (тени Accounts материализуются актором позже).
+	pending := newPendingEnters()
 	for i := range portions {
 		for j := range portions[i].Envs {
-			foldLetter(tick, st, ents, &portions[i].Envs[j], rules, &res, pendingEnters)
+			foldLetter(tick, st, ents, &portions[i].Envs[j], rules, &res, pending)
 		}
 	}
 	foldExpiries(tick, st, ents, rules, &res)
@@ -188,8 +188,39 @@ func newStateMaps(st *State) *State {
 	return st
 }
 
-// foldLetter — одно письмо шага по типу.
-func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, rules Rules, res *StepResult, pendingEnters map[uint64]int) {
+// pendingEnters — нерождённые входы шага: по конну (LinkDead) и по аккаунту
+// (вытеснение повторным входом той же пачки — тень Accounts ещё не
+// материализована актором).
+type pendingEnters struct {
+	byConn    map[uint64]int   // conn → индекс в res.Births
+	byAccount map[string][]int // аккаунт → индексы
+}
+
+func newPendingEnters() *pendingEnters {
+	return &pendingEnters{byConn: make(map[uint64]int), byAccount: make(map[string][]int)}
+}
+
+// foldLetter — одно письмо шага по типу. Отправитель зеркально сверяется с
+// адресами Rules (валидация на применении у владельца: KindPersistReply —
+// только персист, контрольные шлюза — только шлюз).
+func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, rules Rules, res *StepResult, pending *pendingEnters) {
+	switch env.Kind {
+	case transport.KindEnterWorld, transport.KindLinkDead:
+		if env.FromID != rules.Gateway {
+			st.DeadLetters++
+			return
+		}
+	case transport.KindPersistReply:
+		if env.FromID != rules.Persist {
+			st.DeadLetters++
+			return
+		}
+	case transport.KindClientFrame:
+		if env.FromID != rules.Gateway {
+			st.DroppedFrames++
+			return
+		}
+	}
 	switch env.Kind {
 	case transport.KindEnterWorld:
 		msg, err := transport.DecodeLetter[transport.EnterWorldMsg](env.Payload)
@@ -197,16 +228,16 @@ func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, r
 			st.DeadLetters++
 			return
 		}
-		foldEnterWorld(tick, st, msg, res, pendingEnters)
+		foldEnterWorld(tick, st, msg, res, pending)
 	case transport.KindLinkDead:
 		msg, err := transport.DecodeLetter[transport.ConnRefMsg](env.Payload)
 		if err != nil {
 			st.DeadLetters++
 			return
 		}
-		foldLinkDead(tick, st, msg.Conn, rules, res, pendingEnters)
+		foldLinkDead(tick, st, msg.Conn, rules, res, pending)
 	case transport.KindPersistReply:
-		foldPersistReply(tick, st, env.Payload)
+		foldPersistReply(tick, st, rules, env.Payload)
 	case transport.KindClientFrame:
 		foldClientFrame(tick, st, ents, env, rules, res)
 	default:
@@ -217,9 +248,18 @@ func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, r
 // foldEnterWorld — вход: вытеснение живой сущности аккаунта (без её
 // персиста — снимок перезахода свеже́е), рождение новой, очистка SaveQ
 // аккаунта (ретраи старого снимка не переживают перезаход).
-func foldEnterWorld(tick Tick, st *State, msg transport.EnterWorldMsg, res *StepResult, pendingEnters map[uint64]int) {
+// foldEnterWorld — вход: валидация записи на применении (аккаунт нормализован
+// и совпадает с конвертом, имя в домене), вытеснение живой сущности аккаунта
+// (без её персиста — снимок перезахода свеже́е) — материализованной тенью ИЛИ
+// нерождённым входом той же пачки, очистка SaveQ аккаунта, рождение новой.
+func foldEnterWorld(tick Tick, st *State, msg transport.EnterWorldMsg, res *StepResult, pending *pendingEnters) {
 	var rec persist.CharRecord
 	if err := json.Unmarshal(msg.Char, &rec); err != nil {
+		st.DeadLetters++
+		return
+	}
+	if norm, err := persist.NormalizeLogin(msg.Account); err != nil || norm != msg.Account ||
+		rec.Account != msg.Account || !persist.ValidName(rec.Name) {
 		st.DeadLetters++
 		return
 	}
@@ -229,19 +269,27 @@ func foldEnterWorld(tick Tick, st *State, msg transport.EnterWorldMsg, res *Step
 		removeLeaving(st, sh.ID)
 		st.CleanBirth(msg.Account, sh.Conn, sh.ID)
 	}
+	// Вытеснение нерождённого входа той же пачки: тень аккаунта ещё не
+	// материализована актором, повторный вход гасит первое рождение (без спавна).
+	for _, idx := range pending.byAccount[msg.Account] {
+		if b := &res.Births[idx]; b.Ent.Player != nil {
+			b.Ent.Player.DisplacedSameStep = true
+		}
+	}
 	res.Births = append(res.Births, Birth{Ent: Entity{
 		Pos:    Position{X: int32(rec.X), Y: int32(rec.Y), Z: int32(rec.Z)},
 		HP:     int32(rec.HP),
 		Player: &Player{Rec: rec, ConnID: msg.Conn, PendingTeleport: true},
 	}})
-	pendingEnters[msg.Conn] = len(res.Births) - 1
+	pending.byConn[msg.Conn] = len(res.Births) - 1
+	pending.byAccount[msg.Account] = append(pending.byAccount[msg.Account], len(res.Births)-1)
 }
 
 // foldLinkDead — обрыв коннекта: живому — grace-удержание; входу этого шага —
 // пометка «вошёл и оборвался» (актор не пошлёт слиток/бинд, сущность сразу в
 // grace); неизвестному — dead-letter.
-func foldLinkDead(tick Tick, st *State, conn uint64, rules Rules, res *StepResult, pendingEnters map[uint64]int) {
-	if idx, ok := pendingEnters[conn]; ok {
+func foldLinkDead(tick Tick, st *State, conn uint64, rules Rules, res *StepResult, pending *pendingEnters) {
+	if idx, ok := pending.byConn[conn]; ok {
 		if b := &res.Births[idx]; b.Ent.Player != nil {
 			b.Ent.Player.EnterLeaving = true
 		}
@@ -304,7 +352,9 @@ func foldLogout(tick Tick, st *State, ent *Entity, rules Rules, res *StepResult)
 }
 
 // foldExpiries — истёкшие grace-удержания: путь логаута БЕЗ LeaveWorld и
-// ConnClose (сокет мёртв); порядок — по (Deadline, Entity).
+// ConnClose (сокет мёртв); порядок — по (Deadline, Entity). Guard владения:
+// сущность, вытесненная перезаходом (тень аккаунта указывает на другую),
+// не сохраняется — её снимок устарел относительно новой сессии.
 func foldExpiries(tick Tick, st *State, ents []*Entity, rules Rules, res *StepResult) {
 	i := 0
 	for i < len(st.Leaving) && st.Leaving[i].Deadline <= tick {
@@ -313,9 +363,12 @@ func foldExpiries(tick Tick, st *State, ents []*Entity, rules Rules, res *StepRe
 		if idx < len(ents) && ents[idx].ID == id && ents[idx].Player != nil {
 			ent := ents[idx]
 			ent.Moving = false
-			queueSave(tick, st, ent, rules, res)
+			acc := ent.Player.Rec.Account
+			if sh, ok := st.Accounts[acc]; !ok || sh.ID == id {
+				queueSave(tick, st, ent, rules, res)
+			}
 			res.Retires = append(res.Retires, Retire{ID: id})
-			st.CleanBirth(ent.Player.Rec.Account, ent.Player.ConnID, id)
+			st.CleanBirth(acc, ent.Player.ConnID, id)
 		}
 		i++
 	}
@@ -363,7 +416,7 @@ func sendSave(res *StepResult, rules Rules, q *saveState) {
 
 // foldPersistReply — ответ персиста: ok гасит попытку; валидационный отказ —
 // Dead + счётчик Unsavable; IO — повтор по каденсу (сам повтор — foldRetries).
-func foldPersistReply(tick Tick, st *State, payload []byte) {
+func foldPersistReply(tick Tick, st *State, rules Rules, payload []byte) {
 	reply, err := persist.DecodeReply(payload)
 	if err != nil {
 		st.DeadLetters++
@@ -378,7 +431,7 @@ func foldPersistReply(tick Tick, st *State, payload []byte) {
 		case reply.OK:
 			delete(st.SaveQ, acc)
 		case reply.Code == persist.CodeIO:
-			q.NextTry = tick // ближайший foldRetries переотправит
+			q.NextTry = tick + Tick(rules.SaveRetryTicks) // каденс решения 6
 		default:
 			if !q.Dead {
 				q.Dead = true

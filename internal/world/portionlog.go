@@ -136,7 +136,7 @@ func NewPortionLog(dir string, region RegionID, period time.Duration, payloads b
 	if maxFileBytes == 0 {
 		maxFileBytes = defaultMaxFileBytes
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("world: каталог лога порций %s: %w", dir, err)
 	}
 	l := &PortionLog{
@@ -158,7 +158,7 @@ func portionFileName(dir string, region RegionID, seq int) string {
 }
 
 func (l *PortionLog) openFile() error {
-	f, err := os.Create(portionFileName(l.dir, l.region, l.seq))
+	f, err := os.OpenFile(portionFileName(l.dir, l.region, l.seq), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("world: открыть лог порций %s: %w", portionFileName(l.dir, l.region, l.seq), err)
 	}
@@ -428,8 +428,12 @@ func parseFile(data []byte) (FileHeader, []StepRecord, []PanicRecord, error) {
 	}
 	pos += n
 	hdr.Version = ver
+	if ver != portionVersion {
+		return hdr, nil, nil, fmt.Errorf("world: лог порций версии %d не поддерживается (ожидается %d)",
+			ver, portionVersion)
+	}
 	if pos >= len(data) {
-		return hdr, nil, nil, fmt.Errorf("world: лог порций: флаги не читаются")
+		return hdr, nil, nil, fmt.Errorf("world: лог порций: флаги не читается")
 	}
 	hdr.Payloads = data[pos]&flagPayloads != 0
 	pos++

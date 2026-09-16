@@ -21,7 +21,6 @@ type EnterWorldData struct {
 	User            protocol.UserInfoData
 	Heading         int32
 	GameTimeMinutes int32
-	IGDays          int32
 }
 
 // GameTimeMinutes — игровые минуты суток из тика метронома (канон
@@ -56,7 +55,7 @@ func ComposeEnterWorld(d EnterWorldData) [][]byte {
 	put(protocol.ExStorageMaxCountSize, protocol.WriteExStorageMaxCount)
 	put(protocol.EmptyFriendListSize, protocol.WriteEmptyFriendList)
 	put(protocol.SystemMessageSize, func(dst []byte) int {
-		return protocol.WriteSystemMessage(dst, protocol.SystemMessageIDWelcomeToTheWorld)
+		return protocol.WriteSystemMessage(dst, protocol.SystemMessageWelcomeToTheWorldOfLineageII)
 	})
 	put(protocol.SystemMessageSize, func(dst []byte) int {
 		return protocol.WriteSystemMessage(dst, protocol.SystemMessageIDSevenSignsRecruiting)
@@ -68,7 +67,7 @@ func ComposeEnterWorld(d EnterWorldData) [][]byte {
 	})
 	put(protocol.ActionFailedSize, protocol.WriteActionFailed)
 	put(protocol.ClientSetTimeSize, func(dst []byte) int {
-		return protocol.WriteClientSetTime(dst, d.GameTimeMinutes, d.IGDays)
+		return protocol.WriteClientSetTime(dst, d.GameTimeMinutes, protocol.IGDaysPerDay)
 	})
 	return frames
 }

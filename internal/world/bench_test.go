@@ -38,13 +38,15 @@ func newBenchRegion(b *testing.B, cfg Config, population int) *Region {
 
 // deliverLoad — доставка per писем каждому жителю плюс контрольная смесь
 // (каждое 16-е письмо — контрольное в ящик региона; приоритетная ветвь K и
-// общий список в цене) — по критерию F7.
+// общий список в цене) — по критерию F7. Контрольный Kind — KindSeed
+// (нейтральная default-ветка свёртки): P3.7 научила fold разбирать
+// контрольные входа/выхода, JSON-путь EnterWorld исказил бы смысл смеси.
 func deliverLoad(r *Region, per int) {
 	n := 0
 	for _, res := range r.residents {
 		for range per {
 			if n%16 == 0 {
-				r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
+				r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindSeed})
 			} else {
 				r.reg.Send(transport.Envelope{To: transport.Addr{Entity: res.ent.ID}, FromID: 5, Kind: transport.KindAggro})
 			}

@@ -253,13 +253,13 @@ func (r *Region) Remove(id transport.EntityID) {
 // сама закрывает лог порций.
 func (r *Region) Run(ctx context.Context) {
 	r.started.Store(true)
+	defer r.shutdown()
+	defer r.closeLog()
+	defer r.finalSave()
 	if !r.rules.valid() {
 		slog.Error("world: регион без Wire — шаги не исполняются", "region", r.id)
 		return
 	}
-	defer r.shutdown()
-	defer r.closeLog()
-	defer r.finalSave()
 	for {
 		select {
 		case <-ctx.Done():
@@ -616,6 +616,11 @@ func (r *Region) applyEffects(res StepResult, tick Tick) []AppliedBirth {
 			slog.Error("world: рождение жителя не удалось", "region", r.id, "err", err)
 			continue
 		}
+		if ent.Player != nil && ent.Player.DisplacedSameStep {
+			// Вытеснено повторным входом той же пачки: сущность не рождается
+			// вовсе (ретайрить нечего — жителем не становился).
+			continue
+		}
 		ent.ID = id
 		births = append(births, AppliedBirth{ID: id, Ent: &ent})
 		if ent.Player == nil {
@@ -627,7 +632,7 @@ func (r *Region) applyEffects(res StepResult, tick Tick) []AppliedBirth {
 			continue
 		}
 		r.sendBind(ent.Player.ConnID, id)
-		r.composeSlivok(id, ent.Player, tick)
+		r.composeEnterWorld(id, ent.Player, tick)
 	}
 	for _, rt := range res.Retires {
 		r.Remove(rt.ID)
@@ -648,19 +653,15 @@ func (r *Region) sendBind(conn uint64, id transport.EntityID) {
 	})
 }
 
-// composeSlivok — слиток входа в пуши шага (кадры — encode-обёрткой;
+// composeEnterWorld — слиток входа в пуши шага (кадры — encode-обёрткой;
 // gameTime — из тика метронома, IG-сутки 4 реальных часа).
-func (r *Region) composeSlivok(id transport.EntityID, p *Player, tick Tick) {
-	if r.pusher == nil {
-		return
-	}
+func (r *Region) composeEnterWorld(id transport.EntityID, p *Player, tick Tick) {
 	hz := r.cfg.Hz
 	frames := encode.ComposeEnterWorld(encode.EnterWorldData{
 		Entity:          uint64(id),
 		User:            userInfoOf(p),
 		Heading:         int32(p.Rec.Heading),
 		GameTimeMinutes: encode.GameTimeMinutes(uint64(tick), hz),
-		IGDays:          protocol.IGDaysPerDay,
 	})
 	for _, f := range frames {
 		r.pendingPushes = append(r.pendingPushes, FramePush{Client: p.ConnID, Frame: f, Crypt: true})

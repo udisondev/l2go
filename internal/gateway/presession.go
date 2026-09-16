@@ -285,8 +285,14 @@ func (g *Gateway) onSelectedFrame(gc *gconn, frame []byte) {
 		g.failLogin(gc, protocol.GSReasonAccessFailedTryLater)
 		return
 	}
+	char, err := transport.EncodeLetter(*gc.char)
+	if err != nil {
+		slog.Error("gateway: кодирование снимка персонажа", "err", err)
+		g.failLogin(gc, protocol.GSReasonAccessFailedTryLater)
+		return
+	}
 	g.sendRegion(transport.KindEnterWorld,
-		enterWorldMsg{Conn: uint64(gc.id), Account: gc.account, Char: *gc.char})
+		transport.EnterWorldMsg{Conn: uint64(gc.id), Account: gc.account, Char: char})
 	gc.phase = phWorld
 	g.conn.SetReadMode(gc.id, conn.ModeStationary)
 }

@@ -347,7 +347,7 @@ func (g *Gateway) teardownMark(gc *gconn, notifyWorld, byClose bool) {
 	// бинд ещё не применён) тоже обязана дойти до региона — иначе сущность-
 	// сирота навсегда (P3.7-F7); регион резолвит коннект по своим картам.
 	if notifyWorld && gc.phase >= phWorld {
-		g.sendRegion(transport.KindLinkDead, connRefMsg{Conn: uint64(gc.id)})
+		g.sendRegion(transport.KindLinkDead, transport.ConnRefMsg{Conn: uint64(gc.id)})
 	}
 	if g.accounts[gc.account] == gc.id {
 		delete(g.accounts, gc.account)
@@ -400,21 +400,28 @@ func (g *Gateway) onLetter(env *transport.Envelope) {
 	switch env.Kind {
 	case transport.KindPersistReply:
 		g.onPersistReply(env)
-	case transport.KindConnBind:
-		var m connBindMsg
-		if err := json.Unmarshal(env.Payload, &m); err != nil {
-			slog.Error("gateway: битый KindConnBind", "err", err)
-			return
-		}
-		gc := g.conns[conn.ConnID(m.Conn)]
-		if gc == nil {
+	case transport.KindConnBind, transport.KindConnClose:
+		// Зеркальный whitelist: контрольные письма региона — только от региона.
+		if env.FromID != g.cfg.Region.Entity {
 			g.deadLetters.Add(1)
 			return
 		}
-		gc.entity = m.Entity
-	case transport.KindConnClose:
-		var m connRefMsg
-		if err := json.Unmarshal(env.Payload, &m); err != nil {
+		if env.Kind == transport.KindConnBind {
+			m, err := transport.DecodeLetter[transport.ConnBindMsg](env.Payload)
+			if err != nil {
+				slog.Error("gateway: битый KindConnBind", "err", err)
+				return
+			}
+			gc := g.conns[conn.ConnID(m.Conn)]
+			if gc == nil {
+				g.deadLetters.Add(1)
+				return
+			}
+			gc.entity = m.Entity
+			return
+		}
+		m, err := transport.DecodeLetter[transport.ConnRefMsg](env.Payload)
+		if err != nil {
 			slog.Error("gateway: битый KindConnClose", "err", err)
 			return
 		}

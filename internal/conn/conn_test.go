@@ -473,3 +473,54 @@ func ioReadFull(conn net.Conn, buf []byte) (int, error) {
 	}
 	return total, nil
 }
+
+// F2: кадр в момент Close — дедлайн не воскресает, Close не буксует
+// (интерливинг arm↔SetDeadline(past) под dlMu).
+func TestConnFrameAtCloseNoDeadlineRevive(t *testing.T) {
+	cfg := testConfig()
+	cfg.IdleTimeout = 3 * time.Second
+	cfg.HandshakeTimeout = 3 * time.Second
+	out := newFakeOutbounds()
+	addr, s := startServer(t, cfg, out)
+
+	c := dial(t, addr)
+	ev := recvEvent(t, s.Events())
+	s.SetReadMode(ev.Conn, ModePresession)
+	// Кадр в момент остановки: ридёр мог перевооружить дедлайн ПОСЛЕ тычка
+	// Close в прошлое — тогда wg.Wait буксовал бы до IdleTimeout.
+	done := make(chan struct{})
+	go func() { defer close(done); s.Close() }()
+	_, _ = c.Write([]byte{1, 0, 'x'}) // укороченный кадр-хвост
+	select {
+	case <-done:
+	case <-time.After(cfg.IdleTimeout - 500*time.Millisecond):
+		t.Fatal("Close буксует: дедлайн воскрес после тычка в прошлое")
+	}
+	_ = c.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 8)
+	if _, err := c.Read(buf); err == nil {
+		t.Error("сокет жив после Close")
+	}
+}
+
+// F3: Close до первого кадра — readLoop не вооружает будущий дедлайн,
+// wg.Wait не буксует до HandshakeTimeout.
+func TestConnCloseBeforeFirstFrameNoArm(t *testing.T) {
+	cfg := testConfig()
+	cfg.HandshakeTimeout = 2 * time.Second
+	out := newFakeOutbounds()
+	addr, s := startServer(t, cfg, out)
+
+	c := dial(t, addr)
+	ev := recvEvent(t, s.Events())
+	// Сразу SetReadMode(stationary) до какого-либо кадра, затем Close:
+	// ранний arm не должен пережить остановку.
+	s.SetReadMode(ev.Conn, ModeStationary)
+
+	start := time.Now()
+	s.Close()
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Close буксовал %s (дедлайн воскрес)", elapsed)
+	}
+	_ = c.Close()
+}

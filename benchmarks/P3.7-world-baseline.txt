@@ -1,0 +1,19 @@
+# P3.7 baseline — регион-актор (контрольная смесь KindSeed после P3.7-S8)
+# linux/amd64 (локальная машина владельца); go test -bench BenchmarkRegionTick -benchtime 1000x -count 10
+# Дата: 2026-09-16. Медианы; idle-шаг — бюджет 2 аллок (P3.2).
+# Контекст: P3.7 добавила диспетчер контрольных писем свёртки (foldLetter);
+# контрольный Kind смеси сменён EnterWorld→Seed (S8: JSON-путь искажал смесь).
+# Сверять с P3.2-world-baseline.txt (та же машина): дельта = диспетчер писем.
+
+pop=100/load=0/payloads=false                    med      552.6 ns/op       24 B/op     2 allocs/op
+pop=100/load=1/payloads=false                    med     8901.5 ns/op     6614 B/op     3 allocs/op
+pop=100/load=1/payloads=true                     med     9745.5 ns/op     6615 B/op     3 allocs/op
+pop=100/load=10/payloads=false                   med    59530.5 ns/op    64462 B/op    17 allocs/op
+pop=1000/load=0/payloads=false                   med     4967.0 ns/op       32 B/op     2 allocs/op
+pop=1000/load=1/payloads=false                   med   105609.0 ns/op    65902 B/op    18 allocs/op
+pop=1000/load=1/payloads=true                    med   113379.0 ns/op    65905 B/op    18 allocs/op
+pop=1000/load=10/payloads=false                  med   570044.5 ns/op   645683 B/op   159 allocs/op
+pop=10000/load=0/payloads=false                  med    56155.0 ns/op      105 B/op     2 allocs/op
+pop=10000/load=1/payloads=false                  med  1175995.5 ns/op   657766 B/op   162 allocs/op
+pop=10000/load=1/payloads=true                   med  1146665.0 ns/op   657863 B/op   162 allocs/op
+pop=10000/load=10/payloads=false                 med  7150981.0 ns/op   6428693 B/op   1570 allocs/op

@@ -390,3 +390,149 @@ func TestFoldDeterministicDumpAndEffects(t *testing.T) {
 		}
 	}
 }
+
+// Пачка одного шага [EnterWorld(c1), LinkDead(c1), EnterWorld(c2)] — окно
+// F7/инв-М1: зомби-рождения не остаётся, свежий снимок не перезаписывается.
+func TestFoldSameStepDisplacement(t *testing.T) {
+	st := newState()
+	res := fold1(10, st, nil,
+		enterMsg(1, "acc", mkRec("acc", "Vasya", 0)),
+		linkDeadMsg(1),
+		enterMsg(2, "acc", mkRec("acc", "Vasya", 0)))
+	if len(res.Births) != 2 {
+		t.Fatalf("рождений %d; want 2", len(res.Births))
+	}
+	if !res.Births[0].Ent.Player.EnterLeaving {
+		t.Fatal("первое рождение не помечено EnterLeaving")
+	}
+	if !res.Births[0].Ent.Player.DisplacedSameStep {
+		t.Fatal("первое рождение не вытеснено повторным входом той же пачки")
+	}
+	// Материализация: актор пропускает вытеснённое, спавнит только второе.
+	id := transport.EntityID(100)
+	var ents []*Entity
+	for _, b := range res.Births {
+		if b.Ent.Player != nil && b.Ent.Player.DisplacedSameStep {
+			continue
+		}
+		id++
+		b.Ent.ID = id
+		ents = append(ents, &b.Ent)
+		st.ResolveBirth(b.Ent.Player.Rec.Account, b.Ent.Player.ConnID, id)
+	}
+	if len(ents) != 1 {
+		t.Fatalf("сущностей после материализации %d; want 1", len(ents))
+	}
+	// Экспирация «зомби» невозможна (его нет в Leaving); сохранение
+	// единственной сущности владеет аккаунтом.
+	res2 := fold1(11, st, ents, linkDeadMsg(2))
+	res3 := fold1(11+Tick(testRules().GraceTicks), st, ents)
+	saves := 0
+	for _, env := range res3.Out {
+		if env.Kind == transport.KindPersistRequest {
+			saves++
+		}
+	}
+	if saves != 1 {
+		t.Fatalf("сохранений на экспирации: %d; want 1", saves)
+	}
+	_ = res2
+}
+
+// C5-хвост: экспирация не шлёт KindConnClose.
+func TestFoldGraceExpiryNoConnClose(t *testing.T) {
+	st := newState()
+	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
+	ents := applyBirth(st, res)
+	fold1(11, st, ents, linkDeadMsg(7))
+	res2 := fold1(11+Tick(testRules().GraceTicks), st, ents)
+	for _, env := range res2.Out {
+		if env.Kind == transport.KindConnClose {
+			t.Fatal("экспирация шлёт ConnClose в мёртвый сокет")
+		}
+	}
+}
+
+// C14: IO-отказ — повтор по каденсу (не немедленный, не Dead).
+func TestFoldPersistReplyIORetryCadence(t *testing.T) {
+	st := newState()
+	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
+	ents := applyBirth(st, res)
+	id := ents[0].ID
+	fold1(11, st, ents, clientFrame(id, protocol.OpLogout))
+
+	ioRep, _ := persist.EncodeReply(persist.Reply{Op: persist.OpSaveChar, Corr: uint64(id), Code: persist.CodeIO})
+	fold1(12, st, ents, transport.Envelope{
+		To: transport.Addr{Entity: 1}, FromID: 900,
+		Kind: transport.KindPersistReply, Payload: ioRep})
+	q := st.SaveQ["acc"]
+	if q == nil || q.Dead {
+		t.Fatal("IO-отказ убил очередь (want каденс)")
+	}
+	for tk := Tick(13); tk < 12+Tick(testRules().SaveRetryTicks); tk++ {
+		r := fold1(tk, st, ents)
+		for _, env := range r.Out {
+			if env.Kind == transport.KindPersistRequest {
+				t.Fatalf("IO-повтор раньше каденса: тик %d", tk)
+			}
+		}
+	}
+	r := fold1(12+Tick(testRules().SaveRetryTicks), st, ents)
+	saw := 0
+	for _, env := range r.Out {
+		if env.Kind == transport.KindPersistRequest {
+			saw++
+		}
+	}
+	if saw != 1 {
+		t.Fatalf("IO-повторов на каденсе: %d; want 1", saw)
+	}
+}
+
+// C17: глубокое сравнение эффектов двух прогонов (порядок Out/Pushes).
+func TestFoldDeterministicEffectsDeep(t *testing.T) {
+	run := func() StepResult {
+		st := newState()
+		r1 := fold1(10, st, nil,
+			enterMsg(7, "acc", mkRec("acc", "Vasya", 0)),
+			enterMsg(8, "acc2", mkRec("acc2", "Petya", 0)))
+		ents := applyBirth(st, r1)
+		return fold1(11, st, ents,
+			clientFrame(ents[0].ID, protocol.OpLogout),
+			clientFrame(ents[1].ID, protocol.OpCRequestRestart))
+	}
+	a, b := run(), run()
+	for i := range a.Out {
+		if string(a.Out[i].Payload) != string(b.Out[i].Payload) || a.Out[i].Kind != b.Out[i].Kind {
+			t.Fatalf("Out[%d] недетерминирован", i)
+		}
+	}
+	for i := range a.Pushes {
+		if string(a.Pushes[i].Frame) != string(b.Pushes[i].Frame) || a.Pushes[i].Client != b.Pushes[i].Client {
+			t.Fatalf("Pushes[%d] недетерминирован", i)
+		}
+	}
+}
+
+// C16-хвост: битый JSON записи — dead-letter.
+func TestFoldEnterWorldBrokenCharJSON(t *testing.T) {
+	st := newState()
+	env := transport.Envelope{
+		To: transport.Addr{Entity: 1}, FromID: 901,
+		Kind:    transport.KindEnterWorld,
+		Payload: append([]byte(`{"conn":7,"account":"acc","char":`), []byte("{bad")...),
+	}
+	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, nil, portion(env), nil, testRules())
+	if len(res.Births) != 0 || st.DeadLetters != 1 {
+		t.Fatalf("битый Char: births=%d deadLetters=%d", len(res.Births), st.DeadLetters)
+	}
+	// несогласованный аккаунт записи с конвертом — тоже dead-letter.
+	body, _ := transport.EncodeLetter(transport.EnterWorldMsg{
+		Conn: 7, Account: "acc", Char: mustJSONChar(mkRec("other", "Vasya", 0))})
+	res2 := Fold(11, 1, rand.New(rand.NewPCG(1, 11)), st, nil,
+		portion(transport.Envelope{To: transport.Addr{Entity: 1}, FromID: 901,
+			Kind: transport.KindEnterWorld, Payload: body}), nil, testRules())
+	if len(res2.Births) != 0 || st.DeadLetters != 2 {
+		t.Fatalf("чужой аккаунт записи: births=%d deadLetters=%d", len(res2.Births), st.DeadLetters)
+	}
+}

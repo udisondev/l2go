@@ -26,6 +26,8 @@ type enterHarness struct {
 	reg     *transport.Registry
 	metro   *Metronome
 	r       *Region
+	rCancel context.CancelFunc
+	rDone   chan struct{}
 	pushes  *pushCollector
 	gwBox   transport.Mailbox
 	gwID    transport.EntityID
@@ -81,9 +83,13 @@ func newEnterHarness(t *testing.T, cfg Config) *enterHarness {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
+	rctx, rCancel := context.WithCancel(t.Context())
+	h.rCancel = rCancel
+	h.rDone = make(chan struct{})
 	t.Cleanup(cancel)
+	t.Cleanup(rCancel)
 	go m.Run(ctx)
-	go r.Run(ctx)
+	go func() { defer close(h.rDone); r.Run(rctx) }()
 	return h
 }
 
@@ -92,6 +98,16 @@ func (h *enterHarness) send(t *testing.T, env transport.Envelope) {
 	t.Helper()
 	h.reg.Send(env)
 	waitTick(t, h.r)
+}
+
+// regionDone — выход Run (сохранитель исполнен).
+func (h *enterHarness) regionDone() bool {
+	select {
+	case <-h.rDone:
+		return true
+	default:
+		return false
+	}
 }
 
 func waitTick(t *testing.T, r *Region) {
@@ -141,7 +157,7 @@ func TestRegionConnBindAfterSpawn(t *testing.T) {
 }
 
 // Слиток: 16 пушей с ObjectID-базой тем же шагом, что и бинд.
-func TestRegionSlivokComposedAfterApplyEffects(t *testing.T) {
+func TestRegionEnterWorldFramesComposedAfterApplyEffects(t *testing.T) {
 	h := newEnterHarness(t, DefaultConfig())
 	body, _ := transport.EncodeLetter(transport.EnterWorldMsg{
 		Conn: 7, Account: "acc", Char: mustJSONChar(mkRec("acc", "Vasya", 0))})
@@ -231,7 +247,8 @@ func TestRegionActiveWhileSaveQPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.reg.Send(h.ctrlLetter(transport.KindPersistReply, reply))
+	h.reg.Send(transport.Envelope{To: transport.Addr{Entity: h.r.CtrlID()},
+		FromID: h.pID, Kind: transport.KindPersistReply, Payload: reply})
 	// Шаг, гасящий очередь, разбужен письмом; после него — затишье спящего
 	// региона (жителей нет, SaveQ пуст): ждём остановки фазовых счётчиков.
 	deadline := time.Now().Add(2 * time.Second)
@@ -250,5 +267,45 @@ func TestRegionActiveWhileSaveQPending(t *testing.T) {
 	t4 := h.r.Stats().DoneTick
 	if t4 > t3+2 {
 		t.Fatal("регион не уснул после погашения SaveQ (пустой шумит шагами)")
+	}
+}
+
+// D5: финальный сохранитель — живой игрок и висящая SaveQ-запись получают
+// OpSaveChar при отмене ctx региона (Run-defer, горутина региона).
+func TestRegionShutdownSavesAndDrains(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Hz = 100
+	cfg.GraceTicks = 2
+	cfg.SaveRetryTicks = 2
+	h := newEnterHarness(t, cfg)
+	body, _ := transport.EncodeLetter(transport.EnterWorldMsg{
+		Conn: 7, Account: "acc", Char: mustJSONChar(mkRec("acc", "Vasya", 0))})
+	h.send(t, h.ctrlLetter(transport.KindEnterWorld, body))
+	ld, _ := transport.EncodeLetter(transport.ConnRefMsg{Conn: 7})
+	h.reg.Send(h.ctrlLetter(transport.KindLinkDead, ld)) // без ответа персиста
+
+	// Ждём: экспирация → SaveQ зависла (персист молчит — ретраи живы).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && h.r.Stats().Residents > 0 {
+		time.Sleep(3 * time.Millisecond)
+	}
+	if n := h.r.Stats().Residents; n != 0 {
+		t.Fatalf("Residents = %d; want 0 (экспирация)", n)
+	}
+
+	h.rCancel() // TERM-путь: отмена ctx региона
+	rDone := time.Now().Add(2 * time.Second)
+	for time.Now().Before(rDone) && !h.regionDone() {
+		time.Sleep(3 * time.Millisecond)
+	}
+	saves := 0
+	for _, env := range h.pBox.ExtractInto(h.pToken, nil) {
+		if env.Kind == transport.KindPersistRequest {
+			saves++
+		}
+	}
+	h.pBox.AckNotify()
+	if saves < 2 {
+		t.Fatalf("финальных сохранений %d; want ≥2 (живой до экспирации + дрен SaveQ)", saves)
 	}
 }

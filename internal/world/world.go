@@ -55,7 +55,12 @@ type Player struct {
 	Rec             persist.CharRecord
 	ConnID          uint64
 	PendingTeleport bool
-	EnterLeaving    bool
+	// EnterLeaving — «вошёл и оборвался тем же шагом»: актор не шлёт
+	// слиток/бинд, сущность сразу в grace.
+	EnterLeaving bool
+	// DisplacedSameStep — рождение вытеснено повторным входом того же
+	// аккаунта той же пачки: актор не спавнит сущность вовсе.
+	DisplacedSameStep bool
 }
 
 // Entity — состояние сущности: мутируется только горутиной региона-владельца;

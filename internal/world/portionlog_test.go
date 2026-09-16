@@ -269,3 +269,83 @@ func TestPortionLogEncodeZeroAlloc(t *testing.T) {
 		t.Fatalf("аллокаций на запись = %.0f; want 0 (вне роста буфера)", allocs)
 	}
 }
+
+// E1: версия цепочки проверяется строго — v1/мусор дают явную ошибку.
+func TestPortionLogVersionStrict(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewPortionLog(dir, 7, 100*time.Millisecond, false, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.LogStep(StepInput{Tick: 1}); err != nil {
+		t.Fatalf("LogStep: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "portion-7-*.log"))
+	if len(files) != 1 {
+		t.Fatalf("файлов %d", len(files))
+	}
+	raw, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// подменить версию на 1 (байты после магии — uvarint версии)
+	patched := append([]byte(nil), raw...)
+	patched[len(portionMagic)] = 1
+	if err := os.WriteFile(files[0], patched, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := ReadPortionLogDir(dir, 7); err == nil {
+		t.Fatal("цепочка v1 прочитана v2-читателем молча")
+	}
+	// мусорная версия
+	patched[len(portionMagic)] = 0x7f
+	if err := os.WriteFile(files[0], patched, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := ReadPortionLogDir(dir, 7); err == nil {
+		t.Fatal("мусорная версия прочитана молча")
+	}
+}
+
+// E2: roundtrip Player с отрицательными int64 (X/Exp/CreatedUnix).
+func TestPortionLogPlayerRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewPortionLog(dir, 9, 100*time.Millisecond, false, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	ent := Entity{Owner: 9, Pos: Position{X: -71338, Y: 258271, Z: -3104}, HP: 80,
+		Player: &Player{Rec: mkRec("acc", "Vasya", 0)}}
+	ent.Player.Rec.X = -71338
+	ent.Player.Rec.Exp = -42
+	ent.Player.Rec.CreatedUnix = -5
+	ent.Player.Rec.LastSeenUnix = -7
+	ent.Player.ConnID = 12345
+	ent.Player.PendingTeleport = true
+	if err := l.LogStep(StepInput{Tick: 3, Births: []AppliedBirth{{ID: 77, Ent: &ent}}}); err != nil {
+		t.Fatalf("LogStep: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, steps, _, err := ReadPortionLogDir(dir, 9)
+	if err != nil {
+		t.Fatalf("ReadPortionLogDir: %v", err)
+	}
+	if len(steps) != 1 || len(steps[0].Births) != 1 {
+		t.Fatalf("шаги/рождения: %d/%d", len(steps), len(steps[0].Births))
+	}
+	got := steps[0].Births[0].Ent
+	if got.Player == nil {
+		t.Fatal("Player не восстановлен")
+	}
+	g := got.Player
+	if g.Rec.Account != "acc" || g.Rec.Name != "Vasya" || g.Rec.Exp != -42 ||
+		g.Rec.CreatedUnix != -5 || g.Rec.LastSeenUnix != -7 || g.Rec.X != -71338 ||
+		g.ConnID != 12345 || !g.PendingTeleport || g.EnterLeaving {
+		t.Fatalf("Player roundtrip: %+v", g.Rec)
+	}
+}

@@ -20,7 +20,6 @@ func slivokData() EnterWorldData {
 		},
 		Heading:         0,
 		GameTimeMinutes: 905,
-		IGDays:          6,
 	}
 }
 

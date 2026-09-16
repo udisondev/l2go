@@ -85,8 +85,8 @@ func (fr *fakeRegion) drain(autoBind bool) {
 		switch env.Kind {
 		case transport.KindEnterWorld:
 			fr.enter.Add(1)
-			var m enterWorldMsg
-			if json.Unmarshal(env.Payload, &m) != nil {
+			m, err := transport.DecodeLetter[transport.EnterWorldMsg](env.Payload)
+			if err != nil {
 				continue
 			}
 			p := &playerFake{box: &transport.Mailbox{}}
@@ -100,7 +100,7 @@ func (fr *fakeRegion) drain(autoBind bool) {
 					To:      transport.Addr{Entity: env.FromID},
 					FromID:  fr.id,
 					Kind:    transport.KindConnBind,
-					Payload: mustJSON(connBindMsg{Conn: m.Conn, Entity: p.id}),
+					Payload: mustJSON(transport.ConnBindMsg{Conn: m.Conn, Entity: p.id}),
 				})
 				fr.binds.Add(1)
 			}
@@ -314,7 +314,7 @@ func TestGatewayFullFlow(t *testing.T) {
 		To:      transport.Addr{Entity: h.gw.id},
 		FromID:  h.region.id,
 		Kind:    transport.KindConnClose,
-		Payload: mustJSON(connRefMsg{Conn: 1}), // первый коннект харнесса
+		Payload: mustJSON(transport.ConnRefMsg{Conn: 1}), // первый коннект харнесса
 	})
 	select {
 	case err := <-runDone:
@@ -749,3 +749,47 @@ func TestGatewayEighthCharRejected(t *testing.T) {
 }
 
 func itoaGW(i int) string { return string(rune('a' + i)) }
+
+// G1: обрыв коннекта в phWorld без бинда (RTT-окно EnterWorld→ConnBind) —
+// региону всё равно уходит KindLinkDead (условие по фазе, не по entity; F7).
+func TestGatewayLinkDeadByPhaseNotEntity(t *testing.T) {
+	h := newHarness(t, alwaysValid(), 2*time.Second, true)
+
+	gc := dialClient(t, h.addr)
+	if err := gc.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gc.Auth(testEndpoint(), "tester"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gc.CreateChar(protocol.CharacterCreateData{Name: "Hero"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.SelectChar(0); err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan error, 1)
+	go func() { runDone <- gc.Run(t.Context()) }()
+	if err := gc.EnterWorld(); err != nil {
+		t.Fatal(err)
+	}
+	// Бинд НЕ возвращаем: регион молчит, шлюз живёт с entity == 0 в phWorld.
+	waitFor(t, "EnterWorld у региона", func() bool {
+		h.region.drain(false)
+		return h.region.enter.Load() == 1
+	})
+
+	// Обрыв TCP без Logout — LinkDead обязан уйти (по фазе ≥ phWorld).
+	if err := gc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "LinkDead у региона", func() bool {
+		h.region.drain(false)
+		return h.region.link.Load() == 1
+	})
+	select {
+	case <-runDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run не завершился после обрыва")
+	}
+}
