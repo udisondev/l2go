@@ -110,6 +110,19 @@ func (h *enterHarness) regionDone() bool {
 	}
 }
 
+// waitForResidents — поллинг населения региона до want (бюджет).
+func waitForResidents(t *testing.T, r *Region, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.Stats().Residents == want {
+			return
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("Residents = %d; want %d", r.Stats().Residents, want)
+}
+
 func waitTick(t *testing.T, r *Region) {
 	t.Helper()
 	target := r.Stats().DoneTick + 1
@@ -195,6 +208,7 @@ func TestRegionGraceExpiryRealTicks(t *testing.T) {
 	if n := h.r.Stats().Residents; n != 0 {
 		t.Fatalf("Residents = %d после grace; want 0", n)
 	}
+	waitTick(t, h.r) // фаза B шага исполнена (happens-before писем)
 	batch := h.pBox.ExtractInto(h.pToken, nil)
 	h.pBox.AckNotify()
 	saw := false
@@ -307,5 +321,53 @@ func TestRegionShutdownSavesAndDrains(t *testing.T) {
 	h.pBox.AckNotify()
 	if saves < 2 {
 		t.Fatalf("финальных сохранений %d; want ≥2 (живой до экспирации + дрен SaveQ)", saves)
+	}
+}
+
+// M1-свидетель (S8-контроль): пачка [Enter,LinkDead,Enter] в один ctrl-дрен —
+// Residents==1 (призрак не рождается), один бинд, финальное сохранение одно.
+func TestRegionSameStepDisplacementNoGhost(t *testing.T) {
+	h := newEnterHarness(t, Config{Hz: 100, GraceTicks: 3, SaveRetryTicks: 2})
+	mkEnter := func(conn uint64) transport.Envelope {
+		body, err := transport.EncodeLetter(transport.EnterWorldMsg{
+			Conn: conn, Account: "acc", Char: mustJSONChar(mkRec("acc", "Vasya", 0))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h.ctrlLetter(transport.KindEnterWorld, body)
+	}
+	ld, _ := transport.EncodeLetter(transport.ConnRefMsg{Conn: 1})
+	h.reg.Send(mkEnter(1))
+	h.reg.Send(h.ctrlLetter(transport.KindLinkDead, ld))
+	h.reg.Send(mkEnter(2))
+	waitTick(t, h.r)
+	waitForResidents(t, h.r, 1)
+
+	binds := 0
+	for _, env := range h.gwBox.ExtractInto(h.gwToken, nil) {
+		if env.Kind == transport.KindConnBind {
+			binds++
+		}
+	}
+	h.gwBox.AckNotify()
+	if binds != 1 {
+		t.Fatalf("биндов шлюзу %d; want 1 (только живой вход)", binds)
+	}
+
+	// Финальный сохранитель: ровно одно сохранение живой сущности (призрак
+	// не рождён — финально сохранить нечего).
+	h.rCancel()
+	for !h.regionDone() {
+		time.Sleep(2 * time.Millisecond)
+	}
+	saves := 0
+	for _, env := range h.pBox.ExtractInto(h.pToken, nil) {
+		if env.Kind == transport.KindPersistRequest {
+			saves++
+		}
+	}
+	h.pBox.AckNotify()
+	if saves != 1 {
+		t.Fatalf("финальных сохранений %d; want 1 (призрак не сохраняется)", saves)
 	}
 }

@@ -433,7 +433,7 @@ func parseFile(data []byte) (FileHeader, []StepRecord, []PanicRecord, error) {
 			ver, portionVersion)
 	}
 	if pos >= len(data) {
-		return hdr, nil, nil, fmt.Errorf("world: лог порций: флаги не читается")
+		return hdr, nil, nil, fmt.Errorf("world: лог порций: флаги не читаются")
 	}
 	hdr.Payloads = data[pos]&flagPayloads != 0
 	pos++

@@ -611,14 +611,15 @@ func (r *Region) applyEffects(res StepResult, tick Tick) []AppliedBirth {
 	births := make([]AppliedBirth, 0, len(res.Births))
 	for _, b := range res.Births {
 		ent := b.Ent
+		if ent.Player != nil && ent.Player.DisplacedSameStep {
+			// Вытеснено повторным входом той же пачки: сущность не рождается
+			// ВООБЩЕ — ни ящика, ни резидента, ни финального сохранения
+			// (проверка строго до Spawn: рождённый призрак жил бы вечно).
+			continue
+		}
 		id, err := r.Spawn(ent)
 		if err != nil {
 			slog.Error("world: рождение жителя не удалось", "region", r.id, "err", err)
-			continue
-		}
-		if ent.Player != nil && ent.Player.DisplacedSameStep {
-			// Вытеснено повторным входом той же пачки: сущность не рождается
-			// вовсе (ретайрить нечего — жителем не становился).
 			continue
 		}
 		ent.ID = id

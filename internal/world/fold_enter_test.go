@@ -22,8 +22,11 @@ func mkRec(account, name string, slot int) persist.CharRecord {
 }
 
 func enterMsg(conn uint64, acc string, rec persist.CharRecord) transport.Envelope {
-	body, _ := transport.EncodeLetter(transport.EnterWorldMsg{
+	body, err := transport.EncodeLetter(transport.EnterWorldMsg{
 		Conn: conn, Account: acc, Char: mustJSONChar(rec)})
+	if err != nil {
+		panic("тест: кодирование EnterWorldMsg: " + err.Error())
+	}
 	return transport.Envelope{
 		To: transport.Addr{Entity: 1}, FromID: 901,
 		Kind: transport.KindEnterWorld, Payload: body,
@@ -39,7 +42,10 @@ func mustJSONChar(r persist.CharRecord) []byte {
 }
 
 func linkDeadMsg(conn uint64) transport.Envelope {
-	body, _ := transport.EncodeLetter(transport.ConnRefMsg{Conn: conn})
+	body, err := transport.EncodeLetter(transport.ConnRefMsg{Conn: conn})
+	if err != nil {
+		panic("тест: кодирование ConnRefMsg: " + err.Error())
+	}
 	return transport.Envelope{
 		To: transport.Addr{Entity: 1}, FromID: 901,
 		Kind: transport.KindLinkDead, Payload: body,
@@ -77,6 +83,7 @@ func applyBirth(st *State, res StepResult) []*Entity {
 
 // Вход: рождение с позицией снимка, тени после материализации, очистка SaveQ.
 func TestFoldEnterWorldBirth(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	st.SaveQ["acc"] = &saveState{Account: "acc"} // мёртвый ретрай старого снимка
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
@@ -101,6 +108,7 @@ func TestFoldEnterWorldBirth(t *testing.T) {
 
 // Вытеснение: повторный вход аккаунта ретирит старую сущность БЕЗ персиста.
 func TestFoldEnterWorldDisplacesWithoutPersist(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -124,6 +132,7 @@ func TestFoldEnterWorldDisplacesWithoutPersist(t *testing.T) {
 // LinkDead: grace-запись; повторный LinkDead — no-op; неизвестный conn —
 // dead-letter.
 func TestFoldLinkDeadGraceRecord(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -169,6 +178,7 @@ func TestFoldLinkDeadGraceRecord(t *testing.T) {
 // Logout: остановка движения, сохранение (Corr=EntityID), Retire, LeaveWorld,
 // ConnClose, развязка.
 func TestFoldLogoutFrameEffects(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -221,6 +231,7 @@ func TestFoldLogoutFrameEffects(t *testing.T) {
 // Развязка Accounts условна: EnterWorld новой сессии раньше Logout старой в
 // одном шаге — бинд новой не стирается.
 func TestFoldLogoutConditionalAccountsUnbind(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -241,6 +252,7 @@ func TestFoldLogoutConditionalAccountsUnbind(t *testing.T) {
 
 // RequestRestart: отказ канона, коннект жив.
 func TestFoldRequestRestartFrame(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -257,6 +269,7 @@ func TestFoldRequestRestartFrame(t *testing.T) {
 
 // Кадры Leaving/неизвестным — дроп с метрикой, позиция не меняется.
 func TestFoldFrameInGraceDropped(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -280,13 +293,13 @@ func TestFoldFrameInGraceDropped(t *testing.T) {
 // Ретраи: строго через SaveRetryTicks; ok гасит; валидационный отказ — стоп;
 // IO — повтор; поздний ответ — no-op.
 func TestFoldSaveRetryAndReplies(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
 	id := ents[0].ID
 
-	res2 := fold1(11, st, ents, clientFrame(id, protocol.OpLogout))
-	_ = res2
+	fold1(11, st, ents, clientFrame(id, protocol.OpLogout))
 
 	// Тихое ожидание: до t+SaveRetryTicks повторов нет.
 	rules := testRules()
@@ -321,6 +334,7 @@ func TestFoldSaveRetryAndReplies(t *testing.T) {
 }
 
 func TestFoldPersistReplyValidationStopsAndStaleNoOp(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -394,6 +408,7 @@ func TestFoldDeterministicDumpAndEffects(t *testing.T) {
 // Пачка одного шага [EnterWorld(c1), LinkDead(c1), EnterWorld(c2)] — окно
 // F7/инв-М1: зомби-рождения не остаётся, свежий снимок не перезаписывается.
 func TestFoldSameStepDisplacement(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil,
 		enterMsg(1, "acc", mkRec("acc", "Vasya", 0)),
@@ -425,7 +440,7 @@ func TestFoldSameStepDisplacement(t *testing.T) {
 	}
 	// Экспирация «зомби» невозможна (его нет в Leaving); сохранение
 	// единственной сущности владеет аккаунтом.
-	res2 := fold1(11, st, ents, linkDeadMsg(2))
+	fold1(11, st, ents, linkDeadMsg(2))
 	res3 := fold1(11+Tick(testRules().GraceTicks), st, ents)
 	saves := 0
 	for _, env := range res3.Out {
@@ -436,11 +451,11 @@ func TestFoldSameStepDisplacement(t *testing.T) {
 	if saves != 1 {
 		t.Fatalf("сохранений на экспирации: %d; want 1", saves)
 	}
-	_ = res2
 }
 
 // C5-хвост: экспирация не шлёт KindConnClose.
 func TestFoldGraceExpiryNoConnClose(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -455,6 +470,7 @@ func TestFoldGraceExpiryNoConnClose(t *testing.T) {
 
 // C14: IO-отказ — повтор по каденсу (не немедленный, не Dead).
 func TestFoldPersistReplyIORetryCadence(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	res := fold1(10, st, nil, enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
 	ents := applyBirth(st, res)
@@ -491,6 +507,7 @@ func TestFoldPersistReplyIORetryCadence(t *testing.T) {
 
 // C17: глубокое сравнение эффектов двух прогонов (порядок Out/Pushes).
 func TestFoldDeterministicEffectsDeep(t *testing.T) {
+	t.Parallel()
 	run := func() StepResult {
 		st := newState()
 		r1 := fold1(10, st, nil,
@@ -502,6 +519,10 @@ func TestFoldDeterministicEffectsDeep(t *testing.T) {
 			clientFrame(ents[1].ID, protocol.OpCRequestRestart))
 	}
 	a, b := run(), run()
+	if len(a.Out) != len(b.Out) || len(a.Pushes) != len(b.Pushes) {
+		t.Fatalf("длины эффектов: Out %d/%d Pushes %d/%d",
+			len(a.Out), len(b.Out), len(a.Pushes), len(b.Pushes))
+	}
 	for i := range a.Out {
 		if string(a.Out[i].Payload) != string(b.Out[i].Payload) || a.Out[i].Kind != b.Out[i].Kind {
 			t.Fatalf("Out[%d] недетерминирован", i)
@@ -516,6 +537,7 @@ func TestFoldDeterministicEffectsDeep(t *testing.T) {
 
 // C16-хвост: битый JSON записи — dead-letter.
 func TestFoldEnterWorldBrokenCharJSON(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	env := transport.Envelope{
 		To: transport.Addr{Entity: 1}, FromID: 901,

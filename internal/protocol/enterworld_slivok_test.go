@@ -86,22 +86,29 @@ func TestClientSetTimeGolden(t *testing.T) {
 func TestSlivokConstantsMatchCatalog(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name string
 		op   byte
 		want string
 	}{
-		{"SEND_MACRO_LIST", sendMacroList, "SEND_MACRO_LIST"},
-		{"HENNA_INFO", hennaInfo, "HENNA_INFO"},
-		{"QUEST_LIST", questList, "QUEST_LIST"},
-		{"ETC_STATUS_UPDATE", etcStatusUpdate, "ETC_STATUS_UPDATE"},
-		{"FRIEND_LIST", friendList, "FRIEND_LIST"},
-		{"SKILL_COOL_TIME", skillCoolTime, "SKILL_COOL_TIME"},
-		{"CLIENT_SET_TIME", clientSetTime, "CLIENT_SET_TIME"},
-		{"LEAVE_WORLD", leaveWorld, "LEAVE_WORLD"},
-		{"RESTART_RESPONSE", restartResponse, "RESTART_RESPONSE"},
+		{sendMacroList, "SEND_MACRO_LIST"},
+		{hennaInfo, "HENNA_INFO"},
+		{questList, "QUEST_LIST"},
+		{etcStatusUpdate, "ETC_STATUS_UPDATE"},
+		{friendList, "FRIEND_LIST"},
+		{skillCoolTime, "SKILL_COOL_TIME"},
+		{clientSetTime, "CLIENT_SET_TIME"},
+		{leaveWorld, "LEAVE_WORLD"},
+		{restartResponse, "RESTART_RESPONSE"},
 	} {
-		if _, ok := GameServerPacketName(tc.op); !ok {
-			t.Errorf("опкод %s (0x%02X) отсутствует в каталоге", tc.want, tc.op)
+		name, ok := GameServerPacketName(tc.op)
+		if !ok || name != tc.want {
+			t.Errorf("опкод 0x%02X: каталог даёт %q (ok=%v); want %q", tc.op, name, ok, tc.want)
 		}
+	}
+	// Ex-под и C→GS опкод слитка — своими каталогами.
+	if name, ok := GameServerExName(exStorageSub); !ok || name != "EX_STORAGE_MAX_COUNT" {
+		t.Errorf("Ex sub 0x%02X: %q (ok=%v); want EX_STORAGE_MAX_COUNT", exStorageSub, name, ok)
+	}
+	if name, ok := GameClientPacketName(requestRestart); !ok || name != "REQUEST_RESTART" {
+		t.Errorf("опкод 0x%02X: %q (ok=%v); want REQUEST_RESTART", requestRestart, name, ok)
 	}
 }

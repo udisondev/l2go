@@ -30,7 +30,7 @@ type testEnv struct {
 	done    chan struct{}
 }
 
-func newTestEnv(t *testing.T, cfg Config) *testEnv {
+func newTestEnv(t *testing.T, cfg Config, allow ...bool) *testEnv {
 	t.Helper()
 	if cfg.Dir == "" {
 		cfg.Dir = t.TempDir()
@@ -51,10 +51,12 @@ func newTestEnv(t *testing.T, cfg Config) *testEnv {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	// отправитель теста — доверенный (whitelist); чужие ящики — в
-	// TestActorSaveCharFromIDWhitelist.
-	if err := a.AllowSender(env.senderID); err != nil {
-		t.Fatalf("AllowSender: %v", err)
+	// отправитель теста — доверенный по умолчанию (whitelist); случай без
+	// whitelist — TestActorRunRequiresWhitelist.
+	if len(allow) == 0 || allow[0] {
+		if err := a.AllowSender(env.senderID); err != nil {
+			t.Fatalf("AllowSender: %v", err)
+		}
 	}
 	env.actor = a
 	return env
@@ -710,11 +712,7 @@ func TestActorSaveCharFromIDWhitelist(t *testing.T) {
 		Kind: transport.KindPersistRequest, Payload: payload,
 	})
 	waitHandled(t, env.actor, 1)
-	select {
-	case r := <-env.replyCh:
-		t.Fatalf("вне whitelist получен ответ %+v", r)
-	case <-time.After(200 * time.Millisecond):
-	}
+	// оракул — файл: чужому отправителю никто не отвечает и не пишет
 	if _, err := os.Stat(filepath.Join(env.dir, "chars", "acc.json")); !os.IsNotExist(err) {
 		t.Error("файл создан письмом вне whitelist")
 	}
@@ -725,14 +723,23 @@ func TestActorSaveCharFromIDWhitelist(t *testing.T) {
 	}
 }
 
-// TestActorRunRequiresWhitelist — Run с пустым whitelist не работает.
+// TestActorRunRequiresWhitelist — Run с пустым whitelist не работает:
+// письма обрабатываются молча (без ответа), процесса-деградации нет.
 func TestActorRunRequiresWhitelist(t *testing.T) {
-	env := newTestEnv(t, Config{DrainTimeout: time.Second, PanicLimit: 3})
+	cfg := Config{DrainTimeout: time.Second, PanicLimit: 3}
+	env := newTestEnv(t, cfg, false)
 	env.start()
 	defer env.stop()
-	rep := env.ask(Request{Op: OpCharList, Corr: 1, Account: "acc"}, time.Second)
-	if !rep.OK {
-		t.Fatalf("легитимный отправитель отклонён: %+v", rep)
+	env.send(Request{Op: OpCharList, Corr: 1, Account: "acc"})
+	// Актор с пустым whitelist не работает: Run выходит сразу (журнал при
+	// старте), письма не обрабатываются, файлов нет.
+	select {
+	case <-env.actor.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run с пустым whitelist не завершился")
+	}
+	if _, err := os.Stat(filepath.Join(env.dir, "chars", "acc.json")); !os.IsNotExist(err) {
+		t.Error("файл создан актором с пустым whitelist")
 	}
 }
 
@@ -747,7 +754,10 @@ func TestActorSaveCharCorrEchoAndIdempotentRetry(t *testing.T) {
 	base := mkChar("acc", "Vasya", 0)
 	base.ClassID, base.Race, base.Level = 0, 0, 1
 	rep := env.ask(Request{Op: OpSaveChar, Corr: 42, Account: "acc", Char: base}, 5*time.Second)
-	if rep.OK && rep.Corr != 42 {
+	if !rep.OK {
+		t.Fatalf("SaveChar = %+v", rep)
+	}
+	if rep.Corr != 42 {
 		t.Errorf("Corr = %d; want 42", rep.Corr)
 	}
 	again := env.ask(Request{Op: OpSaveChar, Corr: 43, Account: "acc", Char: base}, 5*time.Second)

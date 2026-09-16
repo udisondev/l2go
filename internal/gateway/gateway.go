@@ -436,6 +436,11 @@ func (g *Gateway) onLetter(env *transport.Envelope) {
 }
 
 func (g *Gateway) onPersistReply(env *transport.Envelope) {
+	if env.FromID != g.cfg.Persist {
+		// Ответ персиста приходит только от персиста (зеркальный whitelist).
+		g.deadLetters.Add(1)
+		return
+	}
 	reply, err := persist.DecodeReply(env.Payload)
 	if err != nil {
 		slog.Error("gateway: неразобранный ответ персиста", "err", err)
