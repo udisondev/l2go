@@ -273,10 +273,13 @@ func (g *Gateway) onSelect(gc *gconn, frame []byte) {
 	gc.phase = phSelected
 }
 
-// onSelectedFrame: EnterWorld — контрольное письмо региону.
+// onSelectedFrame: EnterWorld — контрольное письмо региону. Служебные кадры
+// живого клиента в этом окне (КТ-3: RequestManorList между CharSelected и
+// EnterWorld) переживаются молча — как в стационарной фазе; фатал здесь рвал
+// коннект на чёрном экране.
 func (g *Gateway) onSelectedFrame(gc *gconn, frame []byte) {
 	if frame[0] != protocol.OpCEnterWorld {
-		g.failLogin(gc, protocol.GSReasonAccessFailedTryLater)
+		g.unknownOps.Add(1)
 		return
 	}
 	if _, ok := protocol.NewEnterWorldView(frame); !ok || gc.char == nil {

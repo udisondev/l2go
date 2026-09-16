@@ -326,6 +326,91 @@ func TestGatewayFullFlow(t *testing.T) {
 	}
 }
 
+// Живой клиент Interlude между CharSelected и EnterWorld шлёт служебные кадры
+// (КТ-3: RequestManorList 0xD0:08) — окно выбора переживает их молча: коннект
+// жив, EnterWorld доходит до региона, метрика UnknownOp растёт.
+func TestGatewaySelectedWindowToleratesHousekeeping(t *testing.T) {
+	h := newHarness(t, alwaysValid(), 2*time.Second, true)
+
+	gc := dialClient(t, h.addr)
+	if err := gc.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gc.Auth(testEndpoint(), "tester"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gc.CreateChar(protocol.CharacterCreateData{Name: "Hero"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.SelectChar(0); err != nil {
+		t.Fatal(err)
+	}
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- gc.Run(t.Context()) }()
+	if err := gc.SendRaw([]byte{0xd0, 0x08, 0x00}, "REQUEST_MANOR_LIST"); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.EnterWorld(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "EnterWorld у региона", func() bool {
+		h.region.drain(true)
+		return h.region.enter.Load() == 1
+	})
+	if err := gc.MoveToLocation(1, 2, 3, 4, 5, 6, 1); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "стационарный кадр в ящике игрока", func() bool {
+		h.tick()
+		h.region.drain(false)
+		for _, p := range h.region.players {
+			for _, env := range h.region.playerFrames(p) {
+				if env.Kind == transport.KindClientFrame &&
+					len(env.Payload) > 0 && env.Payload[0] == protocol.OpCMoveToLocation {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	if st := h.gw.Stats(); st.UnknownOp < 1 {
+		t.Errorf("UnknownOp = %d; want ≥1 (ManorList учтён, не убил коннект)", st.UnknownOp)
+	}
+	if err := gc.Logout(); err != nil {
+		t.Fatal(err)
+	}
+	// Logout прочитан сервером до ConnClose — закрытие чистое (EOF, не RST
+	// от непрочитанных байт).
+	waitFor(t, "Logout у региона", func() bool {
+		h.tick()
+		h.region.drain(false)
+		for _, p := range h.region.players {
+			for _, env := range h.region.playerFrames(p) {
+				if env.Kind == transport.KindClientFrame &&
+					len(env.Payload) > 0 && env.Payload[0] == protocol.OpLogout {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	h.reg.Send(transport.Envelope{
+		To:      transport.Addr{Entity: h.gw.id},
+		FromID:  h.region.id,
+		Kind:    transport.KindConnClose,
+		Payload: mustJSON(transport.ConnRefMsg{Conn: 1}), // первый коннект харнесса
+	})
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("Run завершился с ошибкой: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("коннект не закрылся — служебный кадр в окне выбора всё же убил его")
+	}
+}
+
 // Коалесинг MoveToLocation под лавиной: в ящике игрока — один конверт
 // (последний побеждает), метрика растёт.
 func TestGatewayMoveCoalescing(t *testing.T) {

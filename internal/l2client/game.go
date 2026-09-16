@@ -288,6 +288,12 @@ func (gc *GameClient) MoveToLocation(targetX, targetY, targetZ, originX, originY
 		Field{K: "target", V: num32(targetX)})
 }
 
+// SendRaw — отправка сырого кадра C→GS (доставляет Run): живые прогоны и
+// тесты нестандартных клиентских кадров.
+func (gc *GameClient) SendRaw(wire []byte, name string) error {
+	return gc.command(wire, name)
+}
+
 // command — отправка команды стационарной фазы (отправляет только Run).
 func (gc *GameClient) command(wire []byte, name string, fields ...Field) error {
 	select {
