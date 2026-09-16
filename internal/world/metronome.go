@@ -20,9 +20,17 @@ type Config struct {
 	WatchdogTicks   int  // 30 тиков (3 с при 10 Гц): короче — шум на разовых пиках
 	HeartbeatTicks  int  // 10 тиков (секунда): окно потерянного пробуждения заметно человеком лишь выше
 	FreezePanics    int  // 3 подряд: короткая серия — уже сигнал систематического бага
+	GraceTicks      int  // окно удержания сущности после LinkDead (50 ≈ 5 с при 10 Гц): защита от мигания реконнекта
+	SaveRetryTicks  int  // каденс повторов сохранения при молчании/IO-отказе персиста (10 ≈ 1 с при 10 Гц)
 	LogPayloads     bool // payload-байты в логе порций: заголовки — всегда
 	LogMaxFileBytes int64
 }
+
+// Дефолты тиковых окон входа/выхода (P3.7).
+const (
+	DefaultGraceTicks     = 50
+	DefaultSaveRetryTicks = 10
+)
 
 // DefaultConfig — дефолты с аргументацией в комментариях полей.
 func DefaultConfig() Config {
@@ -34,6 +42,8 @@ func DefaultConfig() Config {
 		WatchdogTicks:   30,
 		HeartbeatTicks:  10,
 		FreezePanics:    3,
+		GraceTicks:      DefaultGraceTicks,
+		SaveRetryTicks:  DefaultSaveRetryTicks,
 		LogPayloads:     false,
 		LogMaxFileBytes: defaultMaxFileBytes,
 	}
@@ -51,6 +61,8 @@ func (c Config) validate() error {
 		{"WatchdogTicks", c.WatchdogTicks},
 		{"HeartbeatTicks", c.HeartbeatTicks},
 		{"FreezePanics", c.FreezePanics},
+		{"GraceTicks", c.GraceTicks},
+		{"SaveRetryTicks", c.SaveRetryTicks},
 	} {
 		if v.n <= 0 {
 			return fmt.Errorf("world: %s = %d; want > 0", v.name, v.n)

@@ -136,6 +136,9 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 	return r, nil
 }
 
+// CtrlID — адрес контрольного ящика региона (получатели контрольных писем).
+func (r *Region) CtrlID() transport.EntityID { return r.ctrlID }
+
 // Stats — снимок метрик региона (атомики; состояние свёртки не входит — оно
 // принадлежит горутине региона, наружу — через Dump после остановки).
 func (r *Region) Stats() RegionStats {
