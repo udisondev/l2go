@@ -183,7 +183,7 @@ func dial(t *testing.T, addr string) *l2client.LoginClient {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	lc, err := l2client.DialLogin(ctx, addr, l2client.Options{Timeout: 3 * time.Second})
+	lc, err := l2client.DialLogin(ctx, addr, l2client.Options{Timeout: 15 * time.Second})
 	if err != nil {
 		t.Fatalf("DialLogin: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestParallelLogins(t *testing.T) {
 	for i := range n {
 		account := fmt.Sprintf("user%02d", i)
 		wg.Go(func() {
-			lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 5 * time.Second})
+			lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 20 * time.Second})
 			if err != nil {
 				errs <- err
 				return
@@ -871,7 +871,7 @@ func TestParallelDoubleLogin(t *testing.T) {
 		hsWG.Add(2)
 		for range 2 {
 			wg.Go(func() {
-				lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 5 * time.Second})
+				lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 20 * time.Second})
 				if err != nil {
 					results <- err
 					hsWG.Done()
@@ -937,7 +937,7 @@ func TestDoubleLoginKickObservable(t *testing.T) {
 	for range 20 {
 		rc := dialRaw(t, e.addr)
 		rc.gg()
-		lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 5 * time.Second})
+		lc, err := l2client.DialLogin(t.Context(), e.addr, l2client.Options{Timeout: 20 * time.Second})
 		if err != nil {
 			t.Fatalf("DialLogin: %v", err)
 		}

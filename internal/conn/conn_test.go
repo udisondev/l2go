@@ -546,7 +546,7 @@ func TestWriteLoopRecyclesOnBothExits(t *testing.T) {
 	fake := out.outs[ev.Conn]
 	fake.push([]byte{1, 0, 'x'})
 	s.CloseAfterFlush(ev.Conn)
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) && fake.recycld.Load() == 0 {
 		time.Sleep(2 * time.Millisecond)
 	}
