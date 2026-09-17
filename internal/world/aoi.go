@@ -71,16 +71,19 @@ func charInfoOf(rec replica.Record) protocol.CharInfoData {
 		HairStyle:             rec.HairStyle,
 		HairColor:             rec.HairColor,
 		Face:                  rec.Face,
-		Standing:              !rec.Moving,
-		Running:               rec.Moving,
-		ClassID:               rec.ClassID,
-		Heading:               rec.Heading,
+		// Standing/Running — независимые байты канона (golden P3.5 пиннит
+		// true/true для новичка: стоящий в run-режиме); Entity.Moving — флаг
+		// интента МИГРАЦИИ региона (world.go), не локомоции; движению — P3.9
+		Standing: true,
+		Running:  true,
+		ClassID:  rec.ClassID,
+		Heading:  rec.Heading,
 	}
 }
 
-// composeJoin — события join → кадры (чистая функция; пушится регионом в
-// pendingPushes ПОСЛЕ Apply — слив только применённого стадинга). Update —
-// каркас P3.9 (кадры наполнит движение); NPC-ввод — P3.10.
+// composeJoin — события join → кадры (пушится регионом в pendingPushes ПОСЛЕ
+// Apply — слив только применённого стадинга). Update — каркас P3.9 (кадры
+// наполнит движение); NPC-ввод — счётчик-метрика до P3.10.
 func (r *Region) composeJoin(events []replica.Event) []FramePush {
 	pushes := make([]FramePush, 0, len(events))
 	for _, ev := range events {
@@ -120,8 +123,8 @@ func (a *logAdviser) Snapshot(cell replica.CellID, id transport.EntityID) (repli
 		panic(fmt.Sprintf("world: advisory-чтение %d вне окна свёртки (после LogStep)", id))
 	}
 	snap, ok := a.src.Read(cell, id)
-	if ok {
-		a.r.adviseBuf = append(a.r.adviseBuf, AdvisoryIn{Cell: cell, Entity: id})
-	}
+	// логируется КАЖДОЕ чтение, включая промах: ok — часть ответа источника,
+	// ветвление будущего потребителя по нему обязано быть воспроизводимым в реплее
+	a.r.adviseBuf = append(a.r.adviseBuf, AdvisoryIn{Cell: cell, Entity: id})
 	return snap, ok
 }

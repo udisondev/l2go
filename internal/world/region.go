@@ -100,10 +100,10 @@ type Region struct {
 
 	pendingPushes []FramePush // пуши шага (исполнение — фазой B раньше писем)
 
-	// Фаза AoI: блоб шага, события, кадры join и курсор доставки (долговечный
-	// хвост: недоставленное переносится в голову следующего шага).
+	// Фаза AoI: блоб шага, кадры join и курсор доставки (долговечный
+	// хвост: недоставленное переносится в голову следующего шага); события —
+	// слайс-вид стадинга Join, мир между шагами не хранит.
 	nextBlob   *replica.Blob
-	events     []replica.Event
 	joinPushes []FramePush
 	pushCursor int
 	aoiRecs    []replica.Record
@@ -571,8 +571,8 @@ func (r *Region) aoiStep() {
 		}
 		r.aoiObs = append(r.aoiObs, replica.Observer{Entity: res.ent.ID, ConnID: res.ent.Player.ConnID})
 	}
-	r.events = r.join.Step(r.aoiObs, r.nextBlob)
-	r.joinPushes = r.composeJoin(r.events)
+	events := r.join.Step(r.aoiObs, r.nextBlob)
+	r.joinPushes = r.composeJoin(events)
 	r.join.Apply()
 	if r.forcePanicPostApply.Load() {
 		panic("world: инъекция сбоя между Apply и merge фазы AoI")

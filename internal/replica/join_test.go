@@ -36,11 +36,7 @@ func TestJoinSetEqualityPopulationIntersectsRadius(t *testing.T) {
 		for i := range recs {
 			recs[i] = recAt(transport.EntityID(i+1), int32(rng.IntN(9000)-4500), int32(rng.IntN(9000)-4500))
 		}
-		var obsRec Record
-		for {
-			obsRec = recAt(transport.EntityID(n+1), int32(rng.IntN(9000)-4500), int32(rng.IntN(9000)-4500))
-			break
-		}
+		obsRec := recAt(transport.EntityID(n+1), int32(rng.IntN(9000)-4500), int32(rng.IntN(9000)-4500))
 		cfg := JoinConfig{Enter: 3500, Exit: 4200}
 		p := NewPublisher()
 		j := NewJoin(cfg)
@@ -110,17 +106,12 @@ func TestJoinRadiusBoundariesExact(t *testing.T) {
 				intro = true
 			}
 		}
-		holdOK := true
-		if c.want == "gone" {
-			holdOK = false
-		}
 		if c.want == "in" && !intro {
 			t.Errorf("d=%d: ввода нет; want ввод", c.d)
 		}
 		if (c.want == "out" || c.want == "hold" || c.want == "gone") && intro {
 			t.Errorf("d=%d: ввод есть; want нет", c.d)
 		}
-		_ = holdOK
 		// удержание/выход: шаг изменения дистанции недостижим без Changed —
 		// проверяем сменой позиции цели (Changed) на ту же дистанцию
 		if c.want == "hold" || c.want == "gone" {
@@ -360,9 +351,6 @@ func TestJoinGoneWithoutMarkerRemovesImmediately(t *testing.T) {
 	if len(events) != 1 || events[0].Kind != EventRemove || events[0].Target.Entity != 2 {
 		t.Fatalf("исчезновение: события %v; want Remove(2)", events)
 	}
-	for slot := range p.Committed().header.Moving {
-		_ = slot
-	}
 	if len(p.Committed().header.Moving) != 0 {
 		t.Fatalf("Moving-маркеры порождены в фазе 3")
 	}
@@ -430,9 +418,8 @@ func TestJoinStepStagesWithoutMutatingView(t *testing.T) {
 	if len(e1) != 1 {
 		t.Fatalf("первый Step: %v", e1)
 	}
-	v := j.views[1]
-	if v == nil || len(v.ids) != 0 {
-		t.Fatalf("Step мутировал view: %+v", v)
+	if v := j.views[1]; v != nil {
+		t.Fatalf("Step создал view до Apply (слепящее окно новорождённого): %+v", v)
 	}
 	e2 := j.Step([]Observer{obsOf(obs)}, blob)
 	if len(e2) != 1 || e2[0] != e1[0] {

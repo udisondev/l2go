@@ -1,7 +1,3 @@
-// Событийный join у владельца наблюдателя: view set по стабильным слотам
-// сегмента (O(1) array-indexed на пару, хеш на пару запрещён — ADR-0004 ось 3),
-// гистерезис enter/exit, стадирование диффов с Apply и примирение поколений
-// после паник-окон (детект BaseGen ≠ appliedGen — механический, не флаг).
 package replica
 
 import (
@@ -66,8 +62,7 @@ type Join struct {
 	views      map[transport.EntityID]*viewSet
 	appliedGen uint64
 	last       *Blob
-	staging    []Event
-	events     []Event
+	staging    []Event // единый буфер событий шага: мир читает после Step, Apply применяет
 
 	// ForcePanicInApply — тестовый шов recover-политики владельца: паника на
 	// применении стадинга после продвижения appliedGen (детект примирения
@@ -87,14 +82,13 @@ func NewJoin(cfg JoinConfig) *Join {
 // частично) — один полный примирительный проход с полным эмитом.
 func (j *Join) Step(obs []Observer, blob *Blob) []Event {
 	j.staging = j.staging[:0]
-	j.events = j.events[:0]
 	j.last = blob
 	if blob.base != j.appliedGen {
 		j.reconcile(obs, blob)
-		return j.events
+	} else {
+		j.stepEvents(obs, blob)
 	}
-	j.stepEvents(obs, blob)
-	return j.events
+	return j.staging
 }
 
 // Apply применяет стадинг к view set. ПЕРВОЙ операцией продвигает appliedGen —
@@ -107,19 +101,28 @@ func (j *Join) Apply() {
 	if j.ForcePanicInApply.Load() && len(j.staging) > 0 {
 		panic(fmt.Sprintf("replica: инъекция сбоя в Apply (после appliedGen=%d)", j.appliedGen))
 	}
-	for _, ev := range j.staging {
-		v := j.views[ev.Obs.Entity]
-		if v == nil {
-			continue // наблюдатель исчез между Step и Apply — дропнут reconcile
+	// события шага сгруппированы обходом по наблюдателям: view резолвится
+	// при смене наблюдателя (M лукапов на проход, не на пару — ось 3);
+	// view-set новорождённого создаётся здесь — применением стадинга
+	var cur *viewSet
+	var curObs transport.EntityID
+	for i := range j.staging {
+		ev := &j.staging[i]
+		if i == 0 || ev.Obs.Entity != curObs {
+			cur, curObs = j.views[ev.Obs.Entity], ev.Obs.Entity
+			if cur == nil {
+				cur = &viewSet{}
+				j.views[curObs] = cur
+			}
 		}
-		for ev.slot >= len(v.ids) {
-			v.ids = append(v.ids, 0)
+		for ev.slot >= len(cur.ids) {
+			cur.ids = append(cur.ids, 0)
 		}
 		switch ev.Kind {
 		case EventIntroduce:
-			v.ids[ev.slot] = ev.Target.Entity
+			cur.ids[ev.slot] = ev.Target.Entity
 		case EventRemove:
-			v.ids[ev.slot] = 0
+			cur.ids[ev.slot] = 0
 		case EventUpdate:
 			// членство не меняется; last-known не хранится — compose фазы 3
 			// самодостаточен пейлоадом события (P3.9 дополнит при надобности)
@@ -169,19 +172,15 @@ func (j *Join) stepEvents(obs []Observer, blob *Blob) {
 	refs := resolveObs(j, obs, blob)
 	obsSet := make(map[transport.EntityID]struct{}, len(obs))
 	for i := range refs {
-		o := obs[i]
-		obsSet[o.Entity] = struct{}{}
+		obsSet[obs[i].Entity] = struct{}{}
 		if refs[i].slot < 0 {
 			continue // без записи в сегменте пары не разрешаются
 		}
-		if refs[i].v == nil {
-			refs[i].v = &viewSet{}
-			j.views[o.Entity] = refs[i].v
-			j.fullPass(refs[i], blob, false)
-			refs[i].covered = true
-			continue
-		}
-		if bitHas(seg.changed, refs[i].slot) {
+		// newborn (view нет) и двинувшийся — полный проход; сам view-set
+		// создаётся ТОЛЬКО применением стадинга в Apply: паника между Step и
+		// Apply не оставляет «пустого скелета», слепящего новорождённого
+		// (следующий Step снова видит его новорождённым)
+		if refs[i].v == nil || bitHas(seg.changed, refs[i].slot) {
 			j.fullPass(refs[i], blob, false)
 			refs[i].covered = true
 		}
@@ -237,10 +236,14 @@ func (j *Join) stepEvents(obs []Observer, blob *Blob) {
 // (при fullEmit — включая уже членов: повторные вводы безвредны по канону —
 // примирение), Remove всем членам, покинувшим членство или сегмент.
 func (j *Join) fullPass(ref obsRef, blob *Blob, fullEmit bool) {
-	seg := &blob.seg
-	v := j.views[ref.o.Entity]
-	if v == nil || ref.slot < 0 {
+	if ref.slot < 0 {
 		return
+	}
+	seg := &blob.seg
+	empty := viewSet{}
+	v := j.views[ref.o.Entity]
+	if v == nil {
+		v = &empty // newborn: членства нет — ввод всех в enter-радиусе
 	}
 	for slot := range seg.records {
 		rec := &seg.records[slot]
@@ -306,11 +309,10 @@ func deltas(obs, rec *Record, cfg JoinConfig) (dx, dy, dz, limit int64) {
 	return dx, dy, dz, limit
 }
 
-// emit — стадирует событие (возврат событий — тот же буфер; запись события
-// предшествует любой мутации view — инвариент применяемости).
+// emit — стадирует событие в единый буфер (возврат Step — этот же слайс;
+// запись события предшествует любой мутации view — инвариент применяемости).
 func (j *Join) emit(ev Event) {
 	j.staging = append(j.staging, ev)
-	j.events = append(j.events, ev)
 }
 
 // reconcile — примирительный полный проход (детект BaseGen ≠ appliedGen):
@@ -319,9 +321,6 @@ func (j *Join) reconcile(obs []Observer, blob *Blob) {
 	alive := make(map[transport.EntityID]struct{}, len(obs))
 	for _, o := range obs {
 		alive[o.Entity] = struct{}{}
-		if _, ok := j.views[o.Entity]; !ok {
-			j.views[o.Entity] = &viewSet{}
-		}
 	}
 	for ent := range j.views {
 		if _, live := alive[ent]; live {
@@ -335,10 +334,6 @@ func (j *Join) reconcile(obs []Observer, blob *Blob) {
 	for i := range refs {
 		if refs[i].slot < 0 {
 			continue
-		}
-		if refs[i].v == nil {
-			refs[i].v = &viewSet{}
-			j.views[refs[i].o.Entity] = refs[i].v
 		}
 		j.fullPass(refs[i], blob, true)
 	}

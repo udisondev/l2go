@@ -1,9 +1,7 @@
-// Блоб издателя: иммутабельное per-owner поколение с SoA-сегментом одной
-// ячейки (фаза 3), dirty-манифестом и стабильными плотными слотами; издатель
-// Build-ит во владеемые блобом структуры и мутируется только в Commit.
 package replica
 
 import (
+	"sort"
 	"sync/atomic"
 
 	"github.com/udisondev/l2go/internal/transport"
@@ -80,11 +78,11 @@ type Blob struct {
 // между ними оставляет согласованную пару view/prev — опубликованное может
 // отстать на поколение, безвредно).
 type Publisher struct {
-	gen      uint64 // поколение последнего Commit
-	slots    map[transport.EntityID]int
-	free     []int
-	prev     *segment // база dirty-сравнения (последний Commit)
-	comitted atomic.Pointer[Blob]
+	gen       uint64 // поколение последнего Commit
+	slots     map[transport.EntityID]int
+	free      []int
+	prev      *segment // база dirty-сравнения (последний Commit)
+	committed atomic.Pointer[Blob]
 }
 
 // NewPublisher создаёт издателя (нулевое значение тоже работоспособно).
@@ -105,17 +103,22 @@ func (p *Publisher) Build(recs []Record) *Blob {
 	free := make([]int, len(p.free))
 	copy(free, p.free)
 
-	// ушедшие записи: слот освобождается, карта — под новое население
+	// ушедшие записи: слот освобождается, карта — под новое население;
+	// сбор свободных слотов — по отсортированным ключам (детерминизм
+	// наполнения free-list: map-итерация рандомизирована)
 	present := make(map[transport.EntityID]struct{}, len(recs))
 	for i := range recs {
 		present[recs[i].Entity] = struct{}{}
 	}
+	var departed []int
 	for ent, slot := range slots {
 		if _, ok := present[ent]; !ok {
 			delete(slots, ent)
-			free = append(free, slot)
+			departed = append(departed, slot)
 		}
 	}
+	sort.Ints(departed)
+	free = append(free, departed...)
 
 	b := &Blob{gen: p.gen + 1, base: p.gen}
 	maxSlot := -1
@@ -137,8 +140,8 @@ func (p *Publisher) Build(recs []Record) *Blob {
 		slot, ok := slots[rec.Entity]
 		if !ok {
 			if len(free) > 0 {
-				slot = free[len(free)-1]
-				free = free[:len(free)-1]
+				slot = free[0] // младший свободный (free отсортирован)
+				free = free[1:]
 			} else {
 				slot = len(b.seg.records)
 			}
@@ -207,17 +210,17 @@ func (p *Publisher) Commit(b *Blob) {
 	p.slots = b.slots
 	p.free = b.free
 	p.gen = b.gen
-	p.comitted.Store(b)
+	p.committed.Store(b)
 }
 
 // Committed возвращает текущее закоммиченное поколение (nil до первого Commit).
-func (p *Publisher) Committed() *Blob { return p.comitted.Load() }
+func (p *Publisher) Committed() *Blob { return p.committed.Load() }
 
 // Read — advisory-точечное чтение по закоммиченному поколению: линейный
 // поиск по сегменту (точечные чтения per-candidate редки; aux-индекс — по
 // измерениям, база — BenchmarkAdvisoryRead).
 func (p *Publisher) Read(cell CellID, id transport.EntityID) (Snapshot, bool) {
-	b := p.comitted.Load()
+	b := p.committed.Load()
 	if b == nil {
 		return Snapshot{}, false
 	}

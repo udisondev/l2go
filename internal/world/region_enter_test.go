@@ -6,6 +6,7 @@ package world
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,13 +14,35 @@ import (
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// pushCollector — коллектор пушей по шву FramePusher.
+// pushCollector — коллектор пушей по шву FramePusher. Push зовётся и из
+// phaseB горутины региона, и из recovered-доставки — доступ под мьютексом;
+// тесты читают копию через Snapshot (гонка харнесса = та же находка, что и
+// гонка прод-кода).
 type pushCollector struct {
+	mu     sync.Mutex
 	pushes []FramePush
 }
 
 func (c *pushCollector) Push(id uint64, frame []byte, crypt bool) {
+	c.mu.Lock()
 	c.pushes = append(c.pushes, FramePush{Client: id, Frame: frame, Crypt: crypt})
+	c.mu.Unlock()
+}
+
+// Snapshot возвращает копию накопленных пушей.
+func (c *pushCollector) Snapshot() []FramePush {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]FramePush, len(c.pushes))
+	copy(out, c.pushes)
+	return out
+}
+
+// Reset очищает коллектор.
+func (c *pushCollector) Reset() {
+	c.mu.Lock()
+	c.pushes = nil
+	c.mu.Unlock()
 }
 
 type enterHarness struct {
@@ -177,15 +200,15 @@ func TestRegionEnterWorldFramesComposedAfterApplyEffects(t *testing.T) {
 	h.send(t, h.ctrlLetter(transport.KindEnterWorld, body))
 
 	// шаг завершён — пуши уже исполнены фазой B
-	if n := len(h.pushes.pushes); n != 16 {
+	if n := len(h.pushes.Snapshot()); n != 16 {
 		t.Fatalf("пушей слитка %d; want 16", n)
 	}
-	if h.pushes.pushes[0].Client != 7 || !h.pushes.pushes[0].Crypt {
-		t.Fatalf("первый пуш: %+v", h.pushes.pushes[0])
+	if sp := h.pushes.Snapshot(); sp[0].Client != 7 || !sp[0].Crypt {
+		t.Fatalf("первый пуш: %+v", h.pushes.Snapshot()[0])
 	}
 	// UserInfo: ObjectID = база + ID (ID ≥ 1)
-	if h.pushes.pushes[0].Frame[0] != 0x04 {
-		t.Fatalf("первый кадр не UserInfo: %#x", h.pushes.pushes[0].Frame[0])
+	if sp := h.pushes.Snapshot(); sp[0].Frame[0] != 0x04 {
+		t.Fatalf("первый кадр не UserInfo: %#x", sp[0].Frame[0])
 	}
 }
 

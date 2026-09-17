@@ -25,11 +25,12 @@ func benchPop(n, m int) ([]Record, []Observer) {
 }
 
 // BenchmarkJoinFullPass — полный проход M×N (d²-отсечка + предикат + дифф
-// view + эмит). Оговорка: компоновка проволочных кадров (CharInfo) ВНЕ
-// метрики; якорь ADR-0004 7–11 нс/пара — ПОЛНАЯ константа
-// (скан+компоновка+выборка): core-часть без компоновки сопоставима с ~её
-// половиной (~3–6 нс/пара); полная константа фазы 3 видна в
-// BenchmarkRegionTick (фаза AoI входит в шаг региона). Худший случай О-4.
+// view + эмит) в примирительном режиме (блоб не закоммичен — appliedGen
+// рассинхронизирован с базой, каждый шаг полный проход с полным эмитом):
+// это верхняя оценка пути (рождение/движение наблюдателя и пост-паник-окна).
+// Оговорка: компоновка проволочных кадров (CharInfo) ВНЕ метрики; якорь
+// ADR-0004 7–11 нс/пара — ПОЛНАЯ константа (скан+компоновка+выборка);
+// событийный стационар — BenchmarkJoinSteadyDirty.
 func BenchmarkJoinFullPass(b *testing.B) {
 	const n, m = 1000, 32
 	recs, obs := benchPop(n, m)
@@ -64,9 +65,17 @@ func BenchmarkJoinSteadyDirty(b *testing.B) {
 	moved := append([]Record(nil), recs...)
 	b.ReportAllocs()
 	b.ResetTimer()
+	flip := false
 	for b.Loop() {
+		// bounce: позиции возвращаются в исходные — dirty стабилен,
+		// членство не дрейфует из радиуса (кластер x∈[-1000..], enter=3500)
+		flip = !flip
 		for i := range k {
-			moved[i].X += 10
+			if flip {
+				moved[i].X += 10
+			} else {
+				moved[i].X -= 10
+			}
 		}
 		blob := p.Build(moved)
 		j.Step(obs, blob)
@@ -105,9 +114,12 @@ func BenchmarkAdvisoryRead(b *testing.B) {
 			p.Commit(p.Build(recs))
 			b.ReportAllocs()
 			b.ResetTimer()
+			// средний элемент сегмента: линейный скан до конца — наклон
+			// стоимости по N фальсифицируем (первый элемент мерил бы O(1))
+			mid := transport.EntityID(n / 2)
 			for b.Loop() {
-				if _, ok := p.Read(0, transport.EntityID(1)); !ok {
-					b.Fatalf("Read потерял запись 1")
+				if _, ok := p.Read(0, mid); !ok {
+					b.Fatalf("Read потерял запись %d", mid)
 				}
 			}
 		})

@@ -777,9 +777,6 @@ func TestE2ESingleClientJoinSilence(t *testing.T) {
 	s := enterWorld(t, env, "lone")
 	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
 	time.Sleep(150 * time.Millisecond) // ≥3 тиков 50 Гц без событий членства
-	for _, line := range s.out.String() {
-		_ = line
-	}
 	if txt := s.out.String(); strings.Contains(txt, "CHAR_INFO") || strings.Contains(txt, "DELETE_OBJECT") {
 		t.Errorf("одиночный клиент получил join-кадры: лог содержит CHAR_INFO/DELETE_OBJECT")
 	}
