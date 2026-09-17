@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"sort"
 
+	"github.com/udisondev/l2go/internal/geo"
 	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/transport"
@@ -44,31 +45,22 @@ type StepResult struct {
 	Retires []Retire
 }
 
-// AdvisoryIn — залогированный advisory-вход шага: адрес чтения и его
-// значение (позиция/эпоха/найденность) — реплей инъектирует значения, не
-// адреса; Found=false пишется нулевыми значениями (детерминизм записи).
-type AdvisoryIn struct {
-	Cell   uint32
-	Entity transport.EntityID
-	X      int32
-	Y      int32
-	Z      int32
-	Epoch  uint64
-	Found  bool
-}
-
-// Rules — параметры поведения свёртки: тиковые окна и адресаты контрольных
-// писем (актор передаёт значением из своего конфига и wire-up; глобалов нет).
+// Rules — параметры поведения свёртки: тиковые окна, период метронома (тики
+// переводятся во время движением; реплей подставляет из заголовка лога порций)
+// и адресаты контрольных писем (актор передаёт значением из своего конфига и
+// wire-up; глобалов нет).
 type Rules struct {
 	GraceTicks     int                // окно удержания после LinkDead
 	SaveRetryTicks int                // каденс повторов сохранения
+	PeriodNS       int64              // период метронома: dt = тики × период (D1)
 	Persist        transport.EntityID // адрес персист-актора
 	Gateway        transport.EntityID // адрес шлюза
 	From           transport.EntityID // ctrl-ящик региона (отправитель)
 }
 
 func (r Rules) valid() bool {
-	return r.GraceTicks > 0 && r.SaveRetryTicks > 0 && r.Persist != 0 && r.Gateway != 0 && r.From != 0
+	return r.GraceTicks > 0 && r.SaveRetryTicks > 0 && r.PeriodNS > 0 &&
+		r.Persist != 0 && r.Gateway != 0 && r.From != 0
 }
 
 // shadowEntity — материализованное актором рождение игрока: тень для решений
@@ -111,9 +103,12 @@ type State struct {
 	Leaving  []leaveState                  // сортировано (Deadline, Entity)
 	SaveQ    map[string]*saveState         // аккаунт → попытка сохранения
 
-	DroppedFrames uint64 // кадры Leaving/неизвестных сущностей
-	DeadLetters   uint64 // контрольные письма без адресата
-	Unsavable     uint64 // валидационные отказы персиста (стоп ретраев)
+	DroppedFrames   uint64 // кадры Leaving/неизвестных сущностей
+	DeadLetters     uint64 // контрольные письма без адресата
+	Unsavable       uint64 // валидационные отказы персиста (стоп ретраев)
+	SpeedFlags      uint64 // флаги спидхака (токен-бакет ниже −SLACK)
+	SnapBacks       uint64 // коррекции ValidateLocation (дрейф/спидхак/телепорт)
+	CannotMoveNoops uint64 // CannotMoveAnymore вне движения (валидный no-op)
 }
 
 // newState — состояние с инициализированными картами.
@@ -146,9 +141,14 @@ func (st *State) CleanBirth(account string, conn uint64, id transport.EntityID) 
 
 // Fold — детерминированная функция шага: применяет порции к состоянию и
 // населению, возвращает эффекты шага. Порядок: счётчики → письма порций (в
-// порядке дрена) → экспирации grace → ретраи сохранений. Чистота: fold не
-// читает ничего, кроме аргументов; мутация state/ents — владение актора.
-func Fold(tick Tick, delta uint64, rng *rand.Rand, st *State, ents []*Entity, portions []Portion, adv []AdvisoryIn, rules Rules) StepResult {
+// порядке дрена, интенты движения — фаза B capped) → фаза A (advance по dt)
+// → экспирации grace → ретраи сохранений. Письма раньше advance —
+// запись-отклонение от ADR-0002 §5 (A→B) ради латентности старта: канон
+// начинает движение при обработке письма, A→B добавил бы 100 мс; кредит ≤1
+// тика детерминирован и одинаков в прогоне и реплее. Чистота: fold не читает
+// ничего, кроме аргументов (гео — аргумент, глобал запрещён); мутация
+// state/ents — владение актора.
+func Fold(tick Tick, delta uint64, rng *rand.Rand, st *State, ents []*Entity, portions []Portion, adv []AdvisoryIn, rules Rules, gm *geo.Map) StepResult {
 	st.Steps++
 	st.LastDelta = delta
 	st.Noise += rng.Uint64()
@@ -167,12 +167,14 @@ func Fold(tick Tick, delta uint64, rng *rand.Rand, st *State, ents []*Entity, po
 	// Письма применяются в порядке дрена; рождения этого шага — локально:
 	// LinkDead/повторный вход того же аккаунта в той же пачке находят своё
 	// нерождённое рождение (тени Accounts материализуются актором позже).
+	mov := &movement{gm: gm, budget: moveLettersCap}
 	pending := newPendingEnters()
 	for i := range portions {
 		for j := range portions[i].Envs {
-			foldLetter(tick, st, ents, &portions[i].Envs[j], rules, &res, pending)
+			foldLetter(tick, st, ents, &portions[i].Envs[j], rules, &res, pending, mov)
 		}
 	}
+	foldAdvance(delta, rules, ents, &res)
 	foldExpiries(tick, st, ents, rules, &res)
 	foldRetries(tick, st, rules, &res)
 	for _, e := range ents {
@@ -209,7 +211,7 @@ func newPendingEnters() *pendingEnters {
 // foldLetter — одно письмо шага по типу. Отправитель зеркально сверяется с
 // адресами Rules (валидация на применении у владельца: KindPersistReply —
 // только персист, контрольные шлюза — только шлюз).
-func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, rules Rules, res *StepResult, pending *pendingEnters) {
+func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, rules Rules, res *StepResult, pending *pendingEnters, mov *movement) {
 	switch env.Kind {
 	case transport.KindEnterWorld, transport.KindLinkDead:
 		if env.FromID != rules.Gateway {
@@ -245,7 +247,7 @@ func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, r
 	case transport.KindPersistReply:
 		foldPersistReply(tick, st, rules, env.Payload)
 	case transport.KindClientFrame:
-		foldClientFrame(tick, st, ents, env, rules, res)
+		foldClientFrame(tick, st, ents, env, rules, res, mov)
 	default:
 		// Прочие типы — вне свёртки входа/выхода (фазы 4+); счёт учтён.
 	}
@@ -269,6 +271,12 @@ func foldEnterWorld(tick Tick, st *State, msg transport.EnterWorldMsg, res *Step
 		st.DeadLetters++
 		return
 	}
+	// Позиция записи — за trust-границей (персист-файл): сетка мира
+	// проверяется до сужения до int32 (значение 2^32+k заворачивается кастом).
+	if !geo.InWorld(rec.X, rec.Y) {
+		st.DeadLetters++
+		return
+	}
 	delete(st.SaveQ, msg.Account)
 	if sh, ok := st.Accounts[msg.Account]; ok {
 		res.Retires = append(res.Retires, Retire{ID: sh.ID}) // без персиста
@@ -283,9 +291,10 @@ func foldEnterWorld(tick Tick, st *State, msg transport.EnterWorldMsg, res *Step
 		}
 	}
 	res.Births = append(res.Births, Birth{Ent: Entity{
-		Pos:    Position{X: int32(rec.X), Y: int32(rec.Y), Z: int32(rec.Z)},
-		HP:     int32(rec.HP),
-		Player: &Player{Rec: rec, ConnID: msg.Conn, PendingTeleport: true},
+		Pos:     Position{X: int32(rec.X), Y: int32(rec.Y), Z: int32(rec.Z)},
+		Heading: int32(rec.Heading) & 0xFFFF, // запись за trust-границей — домен [0,65536)
+		HP:      int32(rec.HP),
+		Player:  &Player{Rec: rec, ConnID: msg.Conn, PendingTeleport: true, SpeedBudget: speedCAP},
 	}})
 	pending.byConn[msg.Conn] = len(res.Births) - 1
 	pending.byAccount[msg.Account] = append(pending.byAccount[msg.Account], len(res.Births)-1)
@@ -309,9 +318,10 @@ func foldLinkDead(tick Tick, st *State, conn uint64, rules Rules, res *StepResul
 }
 
 // foldClientFrame — стационарный кадр из ящика сущности: Logout — полный
-// выход; RequestRestart — отказ канона; Leaving/неизвестным — классовый дроп
-// с метрикой (кадр не применяется).
-func foldClientFrame(tick Tick, st *State, ents []*Entity, env *transport.Envelope, rules Rules, res *StepResult) {
+// выход; RequestRestart — отказ канона; движение — интент/сверка/упор (P3.9);
+// чат — P3.11; Leaving/неизвестным — классовый дроп с метрикой (кадр не
+// применяется).
+func foldClientFrame(tick Tick, st *State, ents []*Entity, env *transport.Envelope, rules Rules, res *StepResult, mov *movement) {
 	if len(env.Payload) == 0 {
 		st.DroppedFrames++
 		return
@@ -338,17 +348,21 @@ func foldClientFrame(tick Tick, st *State, ents []*Entity, env *transport.Envelo
 		pushFrame(res, ent.Player.ConnID, protocol.RestartResponseSize,
 			func(dst []byte) int { return protocol.WriteRestartResponse(dst, false) })
 		pushFrame(res, ent.Player.ConnID, protocol.ActionFailedSize, protocol.WriteActionFailed)
+	case protocol.OpCMoveToLocation:
+		foldMoveToLocation(st, ent, env, mov, res)
+	case protocol.OpCValidatePosition:
+		foldValidatePosition(st, ent, env, res)
+	case protocol.OpCCannotMoveAnymore:
+		foldCannotMoveAnymore(st, ent, env, res)
 	default:
-		// Движение/чат — потребители P3.9/P3.11; кадр валиден, применения
-		// в фазе 3 нет.
+		// Чат — потребитель P3.11; кадр валиден, применения в фазе 3 нет.
 	}
 }
 
 // foldLogout — полный выход: остановка движения, финальный персист (Corr =
 // EntityID), Retire, LeaveWorld клиенту, ConnClose шлюзу, развязка.
 func foldLogout(tick Tick, st *State, ent *Entity, rules Rules, res *StepResult) {
-	ent.Moving = false
-	ent.Dest = ent.Pos
+	stopSegment(ent)
 	queueSave(tick, st, ent, rules, res)
 	res.Retires = append(res.Retires, Retire{ID: ent.ID})
 	pushFrame(res, ent.Player.ConnID, protocol.LeaveWorldSize, protocol.WriteLeaveWorld)
@@ -368,7 +382,7 @@ func foldExpiries(tick Tick, st *State, ents []*Entity, rules Rules, res *StepRe
 		idx := sort.Search(len(ents), func(k int) bool { return ents[k].ID >= id })
 		if idx < len(ents) && ents[idx].ID == id && ents[idx].Player != nil {
 			ent := ents[idx]
-			ent.Moving = false
+			stopSegment(ent)
 			acc := ent.Player.Rec.Account
 			if sh, ok := st.Accounts[acc]; !ok || sh.ID == id {
 				queueSave(tick, st, ent, rules, res)
@@ -394,11 +408,19 @@ func foldRetries(tick Tick, st *State, rules Rules, res *StepResult) {
 	}
 }
 
-// queueSave — постановка финального сохранения (снимок из Player.Rec и
-// текущей позиции сущности) с первой отправкой.
+// saveSnapshot — единая точка снимка: запись персиста получает текущую
+// позицию и живой heading сущности (обе точки сохранения — queueSave свёртки
+// и finalSave актора).
+func saveSnapshot(rec persist.CharRecord, e *Entity) persist.CharRecord {
+	rec.X, rec.Y, rec.Z = int(e.Pos.X), int(e.Pos.Y), int(e.Pos.Z)
+	rec.Heading = int(e.Heading)
+	return rec
+}
+
+// queueSave — постановка финального сохранения (снимок saveSnapshot: позиция
+// и живой heading) с первой отправкой.
 func queueSave(tick Tick, st *State, ent *Entity, rules Rules, res *StepResult) {
-	rec := ent.Player.Rec
-	rec.X, rec.Y, rec.Z = int(ent.Pos.X), int(ent.Pos.Y), int(ent.Pos.Z)
+	rec := saveSnapshot(ent.Player.Rec, ent)
 	q := &saveState{Account: rec.Account, Char: rec, Entity: ent.ID,
 		NextTry: tick + Tick(rules.SaveRetryTicks)}
 	st.SaveQ[rec.Account] = q
@@ -531,6 +553,9 @@ func (st *State) Dump(ents []*Entity) []byte {
 	buf = binary.AppendUvarint(buf, st.DroppedFrames)
 	buf = binary.AppendUvarint(buf, st.DeadLetters)
 	buf = binary.AppendUvarint(buf, st.Unsavable)
+	buf = binary.AppendUvarint(buf, st.SpeedFlags)
+	buf = binary.AppendUvarint(buf, st.SnapBacks)
+	buf = binary.AppendUvarint(buf, st.CannotMoveNoops)
 	buf = binary.AppendUvarint(buf, uint64(len(ents)))
 	for _, e := range ents {
 		buf = appendEntity(buf, e)
@@ -579,7 +604,7 @@ func sortedConnKeys(st *State) []uint64 {
 }
 
 // appendEntity — детерминированная сериализация сущности (поля по убыванию
-// значимости; Servants, Transfers и Player — полностью).
+// значимости; отрезок движения и Servants, Transfers и Player — полностью).
 func appendEntity(buf []byte, e *Entity) []byte {
 	buf = binary.AppendUvarint(buf, uint64(e.ID))
 	buf = binary.AppendUvarint(buf, uint64(e.Owner))
@@ -589,6 +614,12 @@ func appendEntity(buf []byte, e *Entity) []byte {
 	buf = binary.AppendUvarint(buf, uint64(e.Dest.X))
 	buf = binary.AppendUvarint(buf, uint64(e.Dest.Y))
 	buf = binary.AppendUvarint(buf, uint64(e.Dest.Z))
+	buf = binary.AppendUvarint(buf, uint64(e.Heading))
+	buf = binary.AppendUvarint(buf, uint64(e.MoveFrom.X))
+	buf = binary.AppendUvarint(buf, uint64(e.MoveFrom.Y))
+	buf = binary.AppendUvarint(buf, uint64(e.MoveFrom.Z))
+	buf = binary.AppendUvarint(buf, uint64(e.MoveDist))
+	buf = binary.AppendUvarint(buf, uint64(e.MoveDone))
 	if e.Moving {
 		buf = append(buf, 1)
 	} else {
@@ -654,6 +685,12 @@ func appendPlayer(buf []byte, p *Player) []byte {
 	buf = binary.AppendVarint(buf, r.CreatedUnix)
 	buf = binary.AppendVarint(buf, r.LastSeenUnix)
 	buf = binary.AppendUvarint(buf, p.ConnID)
+	buf = binary.AppendVarint(buf, p.SpeedBudget) // бакет бывает отрицательным (ниже −SLACK)
+	if p.SpeedFlagged {
+		buf = append(buf, 1)
+	} else {
+		buf = append(buf, 0)
+	}
 	if p.PendingTeleport {
 		buf = append(buf, 1)
 	} else {

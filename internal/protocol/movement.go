@@ -20,6 +20,15 @@ const (
 	deleteObject       = 0x12
 )
 
+// Опкоды GS→C-кадров движения — клиентский харнесс (компоновка пишет кадры
+// через Write*-писатели, опкоды не читает).
+const (
+	OpDeleteObject       = deleteObject
+	OpCharMoveToLocation = charMoveToLocation
+	OpStopMove           = stopMove
+	OpValidateLocation   = validateLocation
+)
+
 // Размеры кадров с опкодом (конвенция AttackSize).
 const (
 	MoveToLocationSize     = 29 // опкод + 7×D

@@ -25,7 +25,7 @@ func TestRegionStressSenders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{}, emptyGeo)
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
 	}

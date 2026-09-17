@@ -9,20 +9,21 @@ import (
 	"sync/atomic"
 
 	"github.com/udisondev/l2go/internal/encode"
+	"github.com/udisondev/l2go/internal/geo"
 	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/replica"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// Фазы шага — порядок drain → fold → эффекты населения → join → B → publish
-// → ack; маркер текущей фазы едет в лог при панике.
+// Фазы шага — порядок drain → fold → эффекти населения → log → AoI → B →
+// publish → ack; маркер текущей фазы едет в лог при панике.
 const (
 	phaseDrain byte = iota + 1
 	phaseFold
 	phaseEffects
-	phaseJoin
 	phaseLog
+	phaseAoI
 	phaseB
 	phasePublish
 	phaseAck
@@ -40,7 +41,6 @@ type resident struct {
 	ent   *Entity
 	box   transport.Mailbox
 	token uint64
-	view  *replica.View // известность игрока-наблюдателя (outbound, вне реплея)
 }
 
 // Region — горутина-актор региона: мутации состояния — только здесь
@@ -60,8 +60,14 @@ type Region struct {
 	reg     *transport.Registry
 	log     *PortionLog
 	pusher  FramePusher
+	gm      *geo.Map // гео мира: read-only статики, аргумент свёртки
 	rules   Rules
 	started atomic.Bool
+
+	pub       *replica.Publisher
+	join      *replica.Join
+	adv       *logAdviser
+	advWindow bool // окно advisory-чтений: от начала шага до LogStep
 
 	ctrl      transport.Mailbox
 	ctrlID    transport.EntityID
@@ -76,29 +82,42 @@ type Region struct {
 	frozenFlag   atomic.Bool
 	resCount     atomic.Int64
 	backlogLen   atomic.Int64
-	saveQLen     atomic.Int64 // несохранённые персонажи (IO-ретраи): sync из шага региона
 	drainOverrun atomic.Int64 // кумулятивные письма сверх drainBudget (пачка неделима)
 
 	// Только горутина региона:
-	residents           []*resident // сортированный по ent.ID слайс (обход — D3)
-	ents                []*Entity   // кэш проекции для fold
-	popVersion          uint64      // поколение населения: инкремент на Spawn/Remove
-	entsVer             uint64      // поколение, на котором построен кэш
-	stepTick            Tick        // номер текущего шага (для маркера паники)
-	state               *State
-	lastStep            Tick
-	slept               bool // регион деактивирован: первый шаг после сна — delta=0
-	activeFlag          bool
-	panicStreak         int
-	curPhase            byte
-	forcePanic          byte // инъекция сбоя для тестов recover-политики; 0 — выключена
-	forcePanicJoinApply bool // инъекция сбоя между кадром и apply view (Ост-4)
-	outbox              []transport.Envelope
-	backlogNoted        bool
+	residents    []*resident // сортированный по ent.ID слайс (обход — D3)
+	ents         []*Entity   // кэш проекции для fold
+	popVersion   uint64      // поколение населения: инкремент на Spawn/Remove
+	entsVer      uint64      // поколение, на котором построен кэш
+	stepTick     Tick        // номер текущего шага (для маркера паники)
+	state        *State
+	lastStep     Tick
+	slept        bool // регион деактивирован: первый шаг после сна — delta=0
+	activeFlag   bool
+	panicStreak  int
+	curPhase     byte
+	forcePanic   atomic.Uint32 // инъекция сбоя для тестов recover-политики; 0 — выключена (тест-горутина пишет при живом Run — атомик)
+	outbox       []transport.Envelope
+	backlogNoted bool
 
 	pendingPushes []FramePush // пуши шага (исполнение — фазой B раньше писем)
 
-	// Буферы дрена — поля региона, переиспользуются между шагами.
+	// Фаза AoI: блоб шага, кадры join и курсор доставки (долговечный
+	// хвост: недоставленное переносится в голову следующего шага); события —
+	// слайс-вид стадинга Join, мир между шагами не хранит.
+	nextBlob   *replica.Blob
+	joinPushes []FramePush
+	pushCursor int
+	aoiRecs    []replica.Record
+	aoiObs     []replica.Observer
+
+	// forcePanicPostApply — тестовый шов окна [Apply, merge] (recover-политика;
+	// атомик: пишется тест-горутиной при живом Run).
+	forcePanicPostApply atomic.Bool
+
+	npcIntroduceSkipped atomic.Uint64
+
+	// Буферы дрена — поля региона, переиспользуемые между шагами.
 	ctrlBatch []transport.Envelope
 	prioBuf   []transport.Envelope
 	restBuf   []transport.Envelope
@@ -111,47 +130,45 @@ type Region struct {
 	phDrain   atomic.Uint64
 	phFold    atomic.Uint64
 	phEffects atomic.Uint64
-	phJoin    atomic.Uint64
+	phAoI     atomic.Uint64
 	phB       atomic.Uint64
 	phPublish atomic.Uint64
 	phAck     atomic.Uint64
-
-	// Publish-шов репликации (P3.2): иммутабельный SoA-блоб ячейки,
-	// атомарный свап в фазе publish; advisory читает тот же указатель.
-	snapPtr atomic.Pointer[replica.Blob]
-
-	// Только горутина региона (join-стадия):
-	blobBuilder *replica.Builder
-	blobGen     uint64
-	joinPending bool          // «join был, публикации не было» — reconcile-флаг (F19)
-	joinBlob    *replica.Blob // поколение, ожидающее публикации
-
-	joinPairs    atomic.Int64 // машинный датчик событийности: дистанционные пары (F5)
-	joinCalls    atomic.Int64 // вызовы Join (idle — не растёт: гард F5 на акторе)
-	payloadReads atomic.Int64 // чтения пейлоадных колонок join-стадии (шов 1)
 }
 
 // NewRegion создаёт регион: контрольный ящик регистрируется в реестре и
 // клеймится (токен = uint64(ctrlID), ID монотонные с 1). Регион рождается
-// спящим: первый шаг — delta=0.
-func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Config, log *PortionLog, pusher FramePusher) (*Region, error) {
+// спящим: первый шаг — delta=0. Карта гео обязательна: движение без геодаты
+// не живёт (пустая карта — легальная деградация «мир без стен»
+// NullRegion-семантикой канона, с логом на старте).
+func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Config, log *PortionLog, pusher FramePusher, gm *geo.Map) (*Region, error) {
 	if metro == nil || reg == nil || log == nil || pusher == nil {
 		return nil, fmt.Errorf("world: NewRegion(%d): метроном, реестр, лог и пушер кадров обязательны", id)
+	}
+	if gm == nil {
+		return nil, fmt.Errorf("world: NewRegion(%d): карта гео обязательна", id)
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("world: NewRegion(%d): %w", id, err)
 	}
 	r := &Region{
-		id:          id,
-		cfg:         cfg,
-		metro:       metro,
-		reg:         reg,
-		log:         log,
-		pusher:      pusher,
-		state:       newState(),
-		slept:       true,
-		blobBuilder: replica.NewBuilder(),
+		id:     id,
+		cfg:    cfg,
+		metro:  metro,
+		reg:    reg,
+		log:    log,
+		pusher: pusher,
+		gm:     gm,
+		state:  newState(),
+		slept:  true,
+		pub:    replica.NewPublisher(),
+		join:   replica.NewJoin(replica.CanonJoinConfig()),
 	}
+	if empty := geoRegionCount(gm); empty == 0 {
+		slog.Warn("world: артефакт без гео-регионов — движение без стен (NullRegion)",
+			"region", id)
+	}
+	r.adv = &logAdviser{src: r.pub, r: r}
 	r.ringCh = make(chan struct{}, 1)
 	r.fbCh = make(chan struct{}, 1)
 	r.ctrlID = reg.Register(&r.ctrl)
@@ -166,8 +183,9 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 // CtrlID — адрес контрольного ящика региона (получатели контрольных писем).
 func (r *Region) CtrlID() transport.EntityID { return r.ctrlID }
 
-// Wire — адресаты контрольных писем свёртки (шлюз, персист). Вызов обязателен
-// до старта Run: регион рождается раньше шлюза, адрес при New неизвестен.
+// Wire — адресаты контрольных писем свёртки (шлюз, персист) и период
+// метронома (движение переводит тики во время). Вызов обязателен до старта
+// Run: регион рождается раньше шлюза, адрес при New неизвестен.
 func (r *Region) Wire(gateway, pers transport.EntityID) error {
 	if r.started.Load() {
 		return fmt.Errorf("world: Wire после старта Run")
@@ -175,11 +193,23 @@ func (r *Region) Wire(gateway, pers transport.EntityID) error {
 	r.rules = Rules{
 		GraceTicks:     r.cfg.GraceTicks,
 		SaveRetryTicks: r.cfg.SaveRetryTicks,
+		PeriodNS:       int64(r.cfg.Period()),
 		Persist:        pers,
 		Gateway:        gateway,
 		From:           r.ctrlID,
 	}
 	return nil
+}
+
+// geoRegionCount — число установленных гео-регионов карты (детектор
+// вырожденного артефакта).
+func geoRegionCount(gm *geo.Map) int {
+	n := 0
+	gm.EachRegion(func(_, _ int, _ []byte) bool {
+		n++
+		return true
+	})
+	return n
 }
 
 // Stats — снимок метрик региона (атомики; состояние свёртки не входит — оно
@@ -192,18 +222,14 @@ func (r *Region) Stats() RegionStats {
 		Frozen:       r.frozenFlag.Load(),
 		Residents:    int(r.resCount.Load()),
 		Backlog:      int(r.backlogLen.Load()),
-		SaveQueue:    int(r.saveQLen.Load()),
 		DrainOverrun: uint64(r.drainOverrun.Load()),
 		PhaseDrain:   r.phDrain.Load(),
 		PhaseFold:    r.phFold.Load(),
 		PhaseEffects: r.phEffects.Load(),
-		PhaseJoin:    r.phJoin.Load(),
+		PhaseAoI:     r.phAoI.Load(),
 		PhaseB:       r.phB.Load(),
 		PhasePublish: r.phPublish.Load(),
 		PhaseAck:     r.phAck.Load(),
-		JoinPairs:    uint64(r.joinPairs.Load()),
-		JoinCalls:    uint64(r.joinCalls.Load()),
-		PayloadReads: uint64(r.payloadReads.Load()),
 	}
 }
 
@@ -217,17 +243,13 @@ type RegionStats struct {
 	Residents    int
 	Backlog      int
 	DrainOverrun uint64 // кумулятивные письма сверх drainBudget (пачка неделима)
-	SaveQueue    int    // несохранённые персонажи: логаут/IO-ретраи ждут ответа персиста
 	PhaseDrain   uint64
 	PhaseFold    uint64
 	PhaseEffects uint64
-	PhaseJoin    uint64
+	PhaseAoI     uint64
 	PhaseB       uint64
 	PhasePublish uint64
 	PhaseAck     uint64
-	JoinPairs    uint64 // дистанционные проверки join-стадии (датчик событийности)
-	JoinCalls    uint64 // фактические вызовы Join (idle не растёт — гард F5)
-	PayloadReads uint64 // чтения пейлоадных колонок join-стадии (шов 1)
 }
 
 // Spawn рождает жителя: аллокация ящика (Register + Claim, токен = ID),
@@ -265,9 +287,6 @@ func (r *Region) Remove(id transport.EntityID) {
 	r.residents = append(r.residents[:idx], r.residents[idx+1:]...)
 	r.resCount.Add(-1)
 	r.popVersion++
-	if err := r.blobBuilder.Remove(id); err != nil {
-		slog.Error("world: удаление записи блоба", "entity", id, "err", err)
-	}
 	r.syncMembership()
 }
 
@@ -336,9 +355,7 @@ func (r *Region) finalSave() {
 		if res.ent.Player == nil {
 			continue
 		}
-		rec := res.ent.Player.Rec
-		rec.X, rec.Y, rec.Z = int(res.ent.Pos.X), int(res.ent.Pos.Y), int(res.ent.Pos.Z)
-		r.sendSave(rec, res.ent.ID)
+		r.sendSave(saveSnapshot(res.ent.Player.Rec, res.ent), res.ent.ID)
 		saved++
 	}
 	for _, acc := range sortedSaveKeys(r.state) {
@@ -437,9 +454,25 @@ func (r *Region) recovered(p any) {
 		r.ctrl.DropBatch(r.rereadBuf)
 	}
 	r.adviseBuf = r.adviseBuf[:0]
+	r.advWindow = false
 	if err := r.log.LogPanic(r.stepTick, phase); err != nil {
 		slog.Error("world: маркер паники не записан", "region", r.id, "err", err)
 	}
+	// немедленная доставка выжившего хвоста кадров (оптимизация латентности;
+	// гарантия — перенос resetDrain): под recover — неудача оставляет остаток
+	// живым по курсору, процесс не падает мимо freeze-политики
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("world: паника доставки хвоста в recovered", "region", r.id, "panic", p)
+			}
+		}()
+		for i := r.pushCursor; i < len(r.pendingPushes); i++ {
+			p := r.pendingPushes[i]
+			r.pusher.Push(p.Client, p.Frame, p.Crypt)
+			r.pushCursor = i + 1
+		}
+	}()
 	slog.Error("world: паника в шаге региона — тик провален",
 		"region", r.id, "phase", phase, "panic", p, "streak", r.panicStreak)
 	if r.panicStreak >= r.cfg.FreezePanics {
@@ -471,6 +504,7 @@ func (r *Region) freeze(reason string) {
 // publish → ack. Номер шага — Now() на старте; накопившиеся звонки
 // сбрасываются (non-blocking перечит).
 func (r *Region) step() {
+	r.advWindow = true // advisory-окно: чтения допустимы до LogStep этого шага
 	n := r.metro.Now()
 	r.stepTick = n
 	select {
@@ -493,20 +527,17 @@ func (r *Region) step() {
 	r.curPhase = phaseFold
 	r.injectPanic(phaseFold)
 	rng := rand.New(rand.NewPCG(uint64(r.id), uint64(n)))
-	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf, r.rules)
+	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf, r.rules, r.gm)
 	r.pendingPushes = append(r.pendingPushes, res.Pushes...)
+	// письма свёртки — в outbox сразу после Fold: переживают панику любой
+	// позднейшей фазы (надёжный класс, доставляются phaseB/backlog-ом)
+	r.outbox = append(r.outbox, res.Out...)
 	r.phFold.Add(1)
 
 	r.curPhase = phaseEffects
 	r.injectPanic(phaseEffects)
 	births := r.applyEffects(res, n)
-	r.saveQLen.Store(int64(len(r.state.SaveQ)))
 	r.phEffects.Add(1)
-
-	r.curPhase = phaseJoin
-	r.injectPanic(phaseJoin)
-	r.joinStage()
-	r.phJoin.Add(1)
 
 	r.curPhase = phaseLog
 	r.injectPanic(phaseLog)
@@ -518,17 +549,21 @@ func (r *Region) step() {
 		return
 	}
 	r.adviseBuf = r.adviseBuf[:0]
+	r.advWindow = false // чтения после LogStep — паника шва (не своя порция)
+
+	r.curPhase = phaseAoI
+	r.injectPanic(phaseAoI)
+	r.aoiStep()
+	r.phAoI.Add(1)
 
 	r.curPhase = phaseB
 	r.injectPanic(phaseB)
-	r.outbox = append(r.outbox, res.Out...)
 	r.phaseB()
 	r.phB.Add(1)
 
 	r.curPhase = phasePublish
 	r.injectPanic(phasePublish)
-	r.snapPtr.Store(r.joinBlob)
-	r.joinPending = false // публикация состоялась: reconcile-окно закрыто
+	r.pub.Commit(r.nextBlob)
 	r.phPublish.Add(1)
 
 	r.curPhase = phaseAck
@@ -541,10 +576,37 @@ func (r *Region) step() {
 	r.syncMembership()
 }
 
+// aoiStep — фаза AoI: Build (издатель не мутируется) → Step (стадинг
+// диффов) → компоновка кадров → Apply (view-мутации, appliedGen первой
+// операцией) → merge (слив ТОЛЬКО применённого стадинга). Паника до merge ⇒
+// joinPushes шага дропаются (курсор их не видит), события пере-выведутся
+// манифестом/примирением следующего шага.
+func (r *Region) aoiStep() {
+	r.aoiRecs = r.aoiRecs[:0]
+	for _, res := range r.residents {
+		r.aoiRecs = append(r.aoiRecs, recordOf(res.ent))
+	}
+	r.nextBlob = r.pub.Build(r.aoiRecs)
+	r.aoiObs = r.aoiObs[:0]
+	for _, res := range r.residents {
+		if res.ent.Player == nil || res.ent.Player.EnterLeaving || leavingEntity(r.state, res.ent.ID) {
+			continue // наблюдатели — только живые игроки (Leaving кадры некому доставлять)
+		}
+		r.aoiObs = append(r.aoiObs, replica.Observer{Entity: res.ent.ID, ConnID: res.ent.Player.ConnID})
+	}
+	events := r.join.Step(r.aoiObs, r.nextBlob)
+	r.joinPushes = r.composeJoin(events)
+	r.join.Apply()
+	if r.forcePanicPostApply.Load() {
+		panic("world: инъекция сбоя между Apply и merge фазы AoI")
+	}
+	r.pendingPushes = append(r.pendingPushes, r.joinPushes...)
+}
+
 // injectPanic — тестовый шов инъекции сбоя (критерий «паника в фазе B ⇒
 // счётчики A выросли, B/publish/ack — нет»); в поставке выключен.
 func (r *Region) injectPanic(phase byte) {
-	if r.forcePanic != 0 && r.forcePanic == phase {
+	if fp := r.forcePanic.Load(); fp != 0 && byte(fp) == phase {
 		panic(fmt.Sprintf("world: инъекция сбоя в фазе %d", phase))
 	}
 }
@@ -556,11 +618,15 @@ func (r *Region) injectPanic(phase byte) {
 // перерасход метится стопом обхода). После дрена — AckNotify и перечит
 // (протокол читателя P3.1): письмо в окне дрена обязано дать следующий шаг.
 // resetDrain — сброс буферов дрена на старте шага: паника фазы дрена не
-// дропает пачки прошлого успешного шага. pendingPushes НЕ сбрасываются:
-// неотправленные кадры (паник поздних фаз) доотправляются следующим шагом —
-// дроп кадра = вечная невидимость (ADR-0004 ось 1); обнуление — фазой B
-// после успешного выталкивания.
+// дропает пачки прошлого успешного шага.
 func (r *Region) resetDrain() {
+	// долговечный хвост: недоставленные кадры переносятся в голову (сброс
+	// слайса без переноса запрещён — потеря = вечный фантом/невидимость)
+	if r.pushCursor > 0 {
+		n := copy(r.pendingPushes, r.pendingPushes[r.pushCursor:])
+		r.pendingPushes = r.pendingPushes[:n]
+		r.pushCursor = 0
+	}
 	r.portions = r.portions[:0]
 	r.records = r.records[:0]
 	r.ctrlBatch = r.ctrlBatch[:0]
@@ -703,158 +769,20 @@ func (r *Region) composeEnterWorld(id transport.EntityID, p *Player, tick Tick) 
 	}
 }
 
-// joinStage — стадия известности (фаза 4 ADR-0004 в минимальной экспозиции):
-// сборка блоба из жителей (дифф — против последней публикации), события
-// известности для каждого игрока-наблюдателя (условие вызова F5: дифф или
-// reconcile; движение наблюдателя — P3.9), кадры — немедленно в
-// pendingPushes, apply view — после кадров (паника в окне доигрывается
-// идемпотентно). Reconcile-флаг взводится на входе стадии и снимается
-// публикацией: шаг, начавшийся с флагом, прогоняет абсолютную свёртку
-// (изменения, сократившиеся до публикации, иначе теряются — F19).
-func (r *Region) joinStage() {
-	reconcile := r.joinPending
-	r.joinPending = true
-
-	for _, res := range r.residents {
-		if err := r.blobBuilder.Update(recordOf(res.ent)); err != nil {
-			slog.Error("world: запись блоба", "entity", res.ent.ID, "err", err)
-		}
-	}
-	r.blobGen++
-	blob, diff := r.blobBuilder.Build(r.blobGen, r.snapPtr.Load())
-	r.joinBlob = blob
-
-	diffAny := diff.Any()
-	for _, res := range r.residents {
-		if res.ent.Player == nil {
-			continue
-		}
-		if !diffAny && !reconcile {
-			continue
-		}
-		if res.view == nil {
-			res.view = replica.NewView()
-		}
-		mode := replica.ModeDiff
-		if reconcile {
-			mode = replica.ModeReconcile
-		}
-		r.joinCalls.Add(1)
-		var st replica.JoinStats
-		ev := replica.Join(blob, diff, res.view, recordOf(res.ent), mode, &st)
-		r.joinPairs.Add(int64(st.Pairs))
-		r.payloadReads.Add(int64(st.PayloadReads))
-		// Кадры — раньше apply view (Ост-4): паника в окне доигрывается.
-		for _, slot := range ev.Enters {
-			r.pushJoinFrame(res.ent.Player.ConnID, blob, slot)
-		}
-		for _, ex := range ev.Exits {
-			frame := make([]byte, protocol.DeleteObjectSize)
-			protocol.WriteDeleteObject(frame, int32(encode.ObjectIDBase+ex.ID))
-			r.pendingPushes = append(r.pendingPushes, FramePush{Client: res.ent.Player.ConnID, Frame: frame, Crypt: true})
-		}
-		r.injectPanicJoinApply()
-		ev.Apply(res.view, blob)
-	}
-}
-
-// injectPanicJoinApply — тестовый шов инъекции сбоя между кадрами и apply
-// view (Ост-4): в поставке выключен; паника в окне доигрывается
-// идемпотентно (кадр уже в pendingPushes, view не применён — reconcile-шаг
-// повторит ввод, дубль кадра — обновление по OQ-5).
-func (r *Region) injectPanicJoinApply() {
-	if r.forcePanicJoinApply {
-		panic("world: инъекция сбоя между кадром и apply view")
-	}
-}
-
-// pushJoinFrame — кадр ввода записи в известность наблюдателя: игрок —
-// CharInfo, NPC — NpcInfo (наполняется в P3.10); per-template константы —
-// из persist.Template (расширение порта P3.8), ObjID — ObjectIDBase+Entity.
-func (r *Region) pushJoinFrame(client uint64, blob *replica.Blob, slot int) {
-	objID := int32(encode.ObjectIDBase + blob.ID(slot))
-	tpl := &persist.HumanFighter
-	if blob.Type(slot) == replica.RecordNPC {
-		d := protocol.NpcInfoData{
-			ObjID: objID, DisplayID: blob.TemplateID(slot),
-			X: blob.X(slot), Y: blob.Y(slot), Z: blob.Z(slot), Heading: blob.Heading(slot),
-			PAtkSpd: int32(tpl.BasePAtkSpd), RunSpd: int32(tpl.RunSpd), WalkSpd: int32(tpl.WalkSpd),
-			SwimRunSpd: int32(tpl.SwimSpd), SwimWalkSpd: int32(tpl.SwimSpd),
-			MoveMultiplier: 1, AttackSpeedMultiplier: 1,
-			CollisionRadius: tpl.CollisionR, CollisionHeight: tpl.CollisionH,
-			Name: blob.Name(slot),
-		}
-		frame := make([]byte, protocol.NpcInfoSize(d))
-		protocol.WriteNpcInfo(frame, d)
-		r.pendingPushes = append(r.pendingPushes, FramePush{Client: client, Frame: frame, Crypt: true})
-		return
-	}
-	d := protocol.CharInfoData{
-		X: blob.X(slot), Y: blob.Y(slot), Z: blob.Z(slot), ObjID: objID,
-		Name: blob.Name(slot), Race: blob.Race(slot), Female: blob.Female(slot),
-		BaseClass: blob.ClassID(slot), ClassID: blob.ClassID(slot),
-		MAtkSpd: int32(tpl.BaseMAtkSpd), PAtkSpd: int32(tpl.BasePAtkSpd),
-		RunSpd: int32(tpl.RunSpd), WalkSpd: int32(tpl.WalkSpd),
-		SwimRunSpd: int32(tpl.SwimSpd), SwimWalkSpd: int32(tpl.SwimSpd),
-		MoveMultiplier: 1, AttackSpeedMultiplier: 1,
-		CollisionRadius: tpl.CollisionR, CollisionHeight: tpl.CollisionH,
-		HairStyle: blob.HairStyle(slot), HairColor: blob.HairColor(slot), Face: blob.Face(slot),
-		Standing: true, MaxCp: int32(tpl.BaseCP), CurCp: int32(tpl.BaseCP),
-		Heading: blob.Heading(slot),
-	}
-	frame := make([]byte, protocol.CharInfoSize(d))
-	protocol.WriteCharInfo(frame, d)
-	r.pendingPushes = append(r.pendingPushes, FramePush{Client: client, Frame: frame, Crypt: true})
-}
-
-// recordOf — запись блоба из сущности (значение, не указатель).
-// NPC-записи наполняет P3.10 (TemplateID); игрок — полный пейлоад CharInfo.
-func recordOf(ent *Entity) replica.Record {
-	rec := replica.Record{
-		Entity: ent.ID, X: ent.Pos.X, Y: ent.Pos.Y, Z: ent.Pos.Z,
-		Moving: ent.Moving, Type: replica.RecordPlayer,
-	}
-	if ent.Player == nil {
-		rec.Type = replica.RecordNPC
-		return rec
-	}
-	r := &ent.Player.Rec
-	rec.Name = r.Name
-	rec.ClassID = int32(r.ClassID)
-	rec.Race = int32(r.Race)
-	rec.Female = r.Sex == 1
-	rec.HairStyle = int32(r.HairStyle)
-	rec.HairColor = int32(r.HairColor)
-	rec.Face = int32(r.Face)
-	rec.Heading = int32(r.Heading)
-	return rec
-}
-
-// AdvisoryRead — advisory-чтение снапшота соседей (D4): значение и адрес
-// логируются в порцию (advisory-входы шага), прямой дереференс снапшот-типов
-// невозможен физически. Вызов — из горутины региона (геймплейный потребитель
-// — фаза 4, аггро); промах пишется нулевыми значениями с Found=false.
-func (r *Region) AdvisoryRead(cell uint32, id transport.EntityID) (replica.Snapshot, bool) {
-	in := AdvisoryIn{Cell: cell, Entity: id}
-	blob := r.snapPtr.Load()
-	snap, ok := replica.Lookup(blob, id)
-	if ok {
-		sx, sy, sz := snap.Pos()
-		in.X, in.Y, in.Z, in.Epoch, in.Found = sx, sy, sz, snap.Epoch(), true
-	}
-	r.adviseBuf = append(r.adviseBuf, in)
-	return snap, ok
-}
-
 // phaseB — capped-отправка исходящих. Пуши кадров — СТРОГО раньше писем
 // шага (happens-before «LeaveWorld в стейдж → ConnClose шлюзу»: close-after-
 // flush стейджа выдаёт кадр до разрыва). Письма: сначала backlog, затем
 // свежие (порядок отправителя); кап на шаг, излишек переносится.
 func (r *Region) phaseB() {
-	for _, p := range r.pendingPushes {
+	for i := r.pushCursor; i < len(r.pendingPushes); i++ {
+		p := r.pendingPushes[i]
 		r.pusher.Push(p.Client, p.Frame, p.Crypt)
+		r.pushCursor = i + 1
 	}
-	r.pendingPushes = r.pendingPushes[:0]
+	if r.pushCursor == len(r.pendingPushes) {
+		r.pendingPushes = r.pendingPushes[:0]
+		r.pushCursor = 0
+	}
 	sent := 0
 	for sent < len(r.outbox) && sent < r.cfg.PhaseBCap {
 		r.reg.Send(r.outbox[sent])

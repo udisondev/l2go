@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // Ошибки хранилища: различимы, с именем файла.
@@ -37,7 +39,8 @@ type fileEnvelope struct {
 // ровно один владелец-горутина на каталог (актор chars/, аккаунтный API под
 // своим мьютексом).
 type store struct {
-	dir string
+	dir    string
+	rename func(oldpath, newpath string) error
 
 	// testFailRename — шов инъекции сбоя записи между temp и rename;
 	// testBlockWrite — шов блокировки фазы записи (тест таймаута дрена).
@@ -73,7 +76,7 @@ func openStore(dir string) (*store, error) {
 	if err := cleanTemp(dir); err != nil {
 		return nil, err
 	}
-	return &store{dir: dir}, nil
+	return &store{dir: dir, rename: os.Rename}, nil
 }
 
 // cleanTemp удаляет осиротевшие temp-файлы .tmp-* каталога.
@@ -134,11 +137,32 @@ func (s *store) write(name string, value any) error {
 			return fmt.Errorf("persist: запись %s: %w", name, err)
 		}
 	}
-	if err := os.Rename(tmpName, filepath.Join(s.dir, name)); err != nil {
+	if err := s.renameReplace(tmpName, filepath.Join(s.dir, name)); err != nil {
 		return fmt.Errorf("persist: замена %s: %w", name, err)
 	}
 	s.syncDir()
 	return nil
+}
+
+// renameReplace — атомарная замена. На Windows назначенный файл, открытый
+// в этот момент читателем (поллинг файла тестами/диагностикой), даёт rename
+// access denied (errno 5; окно обмена на стороне чтения — 32); короткий
+// повтор с бюджетом переживает окно чтения. На POSIX оба номера — чужие
+// классы ошибок (EIO/EPIPE от rename не встречаются), ветка мертва.
+func (s *store) renameReplace(tmpName, dst string) error {
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for {
+		err := s.rename(tmpName, dst)
+		if err == nil || !sharingViolation(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+}
+
+// sharingViolation — ошибка занятости назначенного файла заменой.
+func sharingViolation(err error) bool {
+	return errors.Is(err, syscall.Errno(5)) || errors.Is(err, syscall.Errno(32))
 }
 
 // syncDir — best-effort fsync каталога после rename: усиление, не барьер

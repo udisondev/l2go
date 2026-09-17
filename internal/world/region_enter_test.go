@@ -6,6 +6,7 @@ package world
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,19 +14,42 @@ import (
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// pushCollector — коллектор пушей по шву FramePusher.
+// pushCollector — коллектор пушей по шву FramePusher. Push зовётся и из
+// phaseB горутины региона, и из recovered-доставки — доступ под мьютексом;
+// тесты читают копию через Snapshot (гонка харнесса = та же находка, что и
+// гонка прод-кода).
 type pushCollector struct {
+	mu     sync.Mutex
 	pushes []FramePush
 }
 
 func (c *pushCollector) Push(id uint64, frame []byte, crypt bool) {
+	c.mu.Lock()
 	c.pushes = append(c.pushes, FramePush{Client: id, Frame: frame, Crypt: crypt})
+	c.mu.Unlock()
+}
+
+// Snapshot возвращает копию накопленных пушей.
+func (c *pushCollector) Snapshot() []FramePush {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]FramePush, len(c.pushes))
+	copy(out, c.pushes)
+	return out
+}
+
+// Reset очищает коллектор.
+func (c *pushCollector) Reset() {
+	c.mu.Lock()
+	c.pushes = nil
+	c.mu.Unlock()
 }
 
 type enterHarness struct {
 	reg     *transport.Registry
 	metro   *Metronome
 	r       *Region
+	binds   map[uint64]uint64 // кеш bind-писем (изымается один раз; playerEntity)
 	rCancel context.CancelFunc
 	rDone   chan struct{}
 	pushes  *pushCollector
@@ -38,6 +62,13 @@ type enterHarness struct {
 }
 
 func newEnterHarness(t *testing.T, cfg Config) *enterHarness {
+	t.Helper()
+	return newEnterHarnessPusher(t, cfg, nil)
+}
+
+// newEnterHarnessPusher — харнесс с пушером-двойником, назначаемым ДО старта
+// Run (подмена pusher при живой горутине региона — гонка харнесса).
+func newEnterHarnessPusher(t *testing.T, cfg Config, pc FramePusher) *enterHarness {
 	t.Helper()
 	base := DefaultConfig()
 	base.Hz = cfg.Hz
@@ -63,12 +94,16 @@ func newEnterHarness(t *testing.T, cfg Config) *enterHarness {
 	if err != nil {
 		t.Fatalf("лог: %v", err)
 	}
-	pc := &pushCollector{}
-	r, err := NewRegion(m, reg, 1, cfg, log, pc)
+	collector := &pushCollector{}
+	pusher := FramePusher(collector)
+	if pc != nil {
+		pusher = pc
+	}
+	r, err := NewRegion(m, reg, 1, cfg, log, pusher, emptyGeo)
 	if err != nil {
 		t.Fatalf("регион: %v", err)
 	}
-	h := &enterHarness{reg: reg, r: r, pushes: pc, metro: m}
+	h := &enterHarness{reg: reg, r: r, pushes: collector, metro: m}
 	h.gwID = reg.Register(&h.gwBox)
 	h.gwToken = uint64(h.gwID)
 	if err := h.gwBox.Claim(h.gwToken); err != nil {
@@ -108,6 +143,19 @@ func (h *enterHarness) regionDone() bool {
 	default:
 		return false
 	}
+}
+
+// waitForResidents — поллинг населения региона до want (бюджет).
+func waitForResidents(t *testing.T, r *Region, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.Stats().Residents == want {
+			return
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
+	t.Fatalf("Residents = %d; want %d", r.Stats().Residents, want)
 }
 
 func waitTick(t *testing.T, r *Region) {
@@ -164,15 +212,15 @@ func TestRegionEnterWorldFramesComposedAfterApplyEffects(t *testing.T) {
 	h.send(t, h.ctrlLetter(transport.KindEnterWorld, body))
 
 	// шаг завершён — пуши уже исполнены фазой B
-	if n := len(h.pushes.pushes); n != 16 {
+	if n := len(h.pushes.Snapshot()); n != 16 {
 		t.Fatalf("пушей слитка %d; want 16", n)
 	}
-	if h.pushes.pushes[0].Client != 7 || !h.pushes.pushes[0].Crypt {
-		t.Fatalf("первый пуш: %+v", h.pushes.pushes[0])
+	if sp := h.pushes.Snapshot(); sp[0].Client != 7 || !sp[0].Crypt {
+		t.Fatalf("первый пуш: %+v", h.pushes.Snapshot()[0])
 	}
 	// UserInfo: ObjectID = база + ID (ID ≥ 1)
-	if h.pushes.pushes[0].Frame[0] != 0x04 {
-		t.Fatalf("первый кадр не UserInfo: %#x", h.pushes.pushes[0].Frame[0])
+	if sp := h.pushes.Snapshot(); sp[0].Frame[0] != 0x04 {
+		t.Fatalf("первый кадр не UserInfo: %#x", sp[0].Frame[0])
 	}
 }
 
@@ -313,62 +361,47 @@ func TestRegionShutdownSavesAndDrains(t *testing.T) {
 
 // M1-свидетель (S8-контроль): пачка [Enter,LinkDead,Enter] в один ctrl-дрен —
 // Residents==1 (призрак не рождается), один бинд, финальное сохранение одно.
-// Ручные шаги (не живой Run): пачка гарантированно одним дреном — гонка
-// «пробуждение между Send'ами» исключена конструктивно.
 func TestRegionSameStepDisplacementNoGhost(t *testing.T) {
-	h := newJoinHarness(t)
-	var gwBox, pBox transport.Mailbox
-	gwID := h.reg.Register(&gwBox)
-	pID := h.reg.Register(&pBox)
-	if err := gwBox.Claim(uint64(gwID)); err != nil {
-		t.Fatal(err)
-	}
-	if err := pBox.Claim(uint64(pID)); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.r.Wire(gwID, pID); err != nil {
-		t.Fatal(err)
-	}
+	h := newEnterHarness(t, Config{Hz: 100, GraceTicks: 3, SaveRetryTicks: 2})
 	mkEnter := func(conn uint64) transport.Envelope {
 		body, err := transport.EncodeLetter(transport.EnterWorldMsg{
 			Conn: conn, Account: "acc", Char: mustJSONChar(mkRec("acc", "Vasya", 0))})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return transport.Envelope{To: transport.Addr{Entity: h.r.CtrlID()},
-			FromID: gwID, Kind: transport.KindEnterWorld, Payload: body}
+		return h.ctrlLetter(transport.KindEnterWorld, body)
 	}
-	ldBody, _ := transport.EncodeLetter(transport.ConnRefMsg{Conn: 1})
+	ld, _ := transport.EncodeLetter(transport.ConnRefMsg{Conn: 1})
 	h.reg.Send(mkEnter(1))
-	h.reg.Send(transport.Envelope{To: transport.Addr{Entity: h.r.CtrlID()},
-		FromID: gwID, Kind: transport.KindLinkDead, Payload: ldBody})
+	h.reg.Send(h.ctrlLetter(transport.KindLinkDead, ld))
 	h.reg.Send(mkEnter(2))
-	h.step(t)
-	if n := h.r.Stats().Residents; n != 1 {
-		t.Fatalf("Residents = %d; want 1 (призрак не рождается)", n)
-	}
+	waitTick(t, h.r)
+	waitForResidents(t, h.r, 1)
 
 	binds := 0
-	for _, env := range gwBox.ExtractInto(uint64(gwID), nil) {
+	for _, env := range h.gwBox.ExtractInto(h.gwToken, nil) {
 		if env.Kind == transport.KindConnBind {
 			binds++
 		}
 	}
-	gwBox.AckNotify()
+	h.gwBox.AckNotify()
 	if binds != 1 {
 		t.Fatalf("биндов шлюзу %d; want 1 (только живой вход)", binds)
 	}
 
 	// Финальный сохранитель: ровно одно сохранение живой сущности (призрак
 	// не рождён — финально сохранить нечего).
-	h.r.finalSave()
+	h.rCancel()
+	for !h.regionDone() {
+		time.Sleep(2 * time.Millisecond)
+	}
 	saves := 0
-	for _, env := range pBox.ExtractInto(uint64(pID), nil) {
+	for _, env := range h.pBox.ExtractInto(h.pToken, nil) {
 		if env.Kind == transport.KindPersistRequest {
 			saves++
 		}
 	}
-	pBox.AckNotify()
+	h.pBox.AckNotify()
 	if saves != 1 {
 		t.Fatalf("финальных сохранений %d; want 1 (призрак не сохраняется)", saves)
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -122,6 +123,59 @@ func TestStoreAtomicFail(t *testing.T) {
 	entries := readDirT(t, dir)
 	if len(entries) != 1 {
 		t.Errorf("после сбоя в каталоге %d файлов; want 1 (осиротевший temp убран)", len(entries))
+	}
+}
+
+func TestStoreRenameSharingViolationRetry(t *testing.T) {
+	dir := t.TempDir()
+	s := mustOpenStore(t, dir)
+	recs := []CharRecord{{Account: "acc", Name: "Old"}}
+	if err := s.write("acc.json", recs); err != nil {
+		t.Fatal(err)
+	}
+
+	// Оба errno занятости (5 — открыт читателем, 32 — окно обмена) —
+	// повтор до успеха; чужой класс (13) — один вызов, ошибка наружу.
+	for _, errno := range []syscall.Errno{5, 32} {
+		calls := 0
+		inner := s.rename
+		s.rename = func(oldpath, newpath string) error {
+			calls++
+			if calls <= 2 {
+				return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: errno}
+			}
+			return inner(oldpath, newpath)
+		}
+		if err := s.write("acc.json", []CharRecord{{Account: "acc", Name: "New"}}); err != nil {
+			t.Fatalf("write() после errno %d = %v; want повтор до успеха", errno, err)
+		}
+		if calls != 3 {
+			t.Errorf("попыток rename при errno %d = %d; want 3", errno, calls)
+		}
+	}
+
+	other := 0
+	s.rename = func(oldpath, newpath string) error {
+		other++
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.Errno(13)}
+	}
+	if err := s.write("acc.json", recs); err == nil {
+		t.Fatal("write() при errno 13 = nil; want ошибка без повтора")
+	}
+	if other != 1 {
+		t.Errorf("попыток rename при errno 13 = %d; want 1", other)
+	}
+
+	var got []CharRecord
+	if err := s.read("acc.json", &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "New" {
+		t.Errorf("read() = %+v; want запись New (замена дошла до файла)", got)
+	}
+	entries := readDirT(t, dir)
+	if len(entries) != 1 {
+		t.Errorf("в каталоге %d файлов; want 1 (temp ушёл в rename)", len(entries))
 	}
 }
 

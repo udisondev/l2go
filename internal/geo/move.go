@@ -33,6 +33,15 @@ func geoOf(x, y int) (int, int) {
 	return gx, gy
 }
 
+// InWorld сообщает, лежит ли мировая точка в сетке мира. Обратна паник-условию
+// geoOf (та же арифметика WorldToGeoX/Y и та же граница): потребитель обязан
+// проверять недоверенные координаты до контракта geoOf — иначе злой вход на
+// кромке сетки уронит шаг региона паникой (порт границы GeoEngine.getRegion).
+func InWorld(x, y int) bool {
+	gx, gy := WorldToGeoX(x), WorldToGeoY(y)
+	return uint(gx) < regionsX*regionCells && uint(gy) < regionsY*regionCells
+}
+
 // hasGeo сообщает, есть ли геодата у ячейки (соседи за кромкой сетки —
 // нет гео; порт GeoEngine.hasGeoPos).
 func (m *Map) hasGeo(gx, gy int) bool {

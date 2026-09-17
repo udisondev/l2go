@@ -1,255 +1,347 @@
-// Join (ось 4/5 ADR-0004): событийная вычислительная часть известности у
-// владельца наблюдателя — чистая функция над блобом, диффом и view; view
-// мутирует только Apply. Гистерезис enter/exit, абсолютные удаления по
-// вечному id, reconcile-свёртка после паник-шага.
-
 package replica
 
 import (
-	"math/bits"
+	"fmt"
+	"sync/atomic"
 
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// Радиусы гистерезиса членства (OQ-3). Порт aCis (GPLv3, mirror
-// sonizs123/Acis), PcKnownList.getDistanceToWatchObject /
-// getDistanceToForgetObject: watch = max(1800, 3600 − 20×|known|) — здесь
-// пол 1800 (динамическое сжатие — фаза 4+); forget = round(1.5 × watch).
-// Дистанция — 3D (aCis Util.checkIfInShortRadius зовётся с
-// includeZAxis=true). Утверждается владельцем на приёмке задачи.
+// JoinConfig — радиусы членства наблюдателя-игрока (гистерезис: вход при
+// d²≤Enter², выход при d²>Exit², между — удержание; Exit > Enter — иначе
+// «watch-forget-watch-forget»).
+type JoinConfig struct {
+	Enter int32
+	Exit  int32
+}
+
+// CanonJoinConfig — канонная пара тира «пустое поле» PlayerKnownList L2J
+// Interlude: watch 3500 / forget 4200 (адаптивные тиры по размеру knownlist —
+// механизм деградации под толпу, фаза 6).
+func CanonJoinConfig() JoinConfig { return JoinConfig{Enter: 3500, Exit: 4200} }
+
+// Observer — наблюдатель-игрок у владельца (мир передаёт живых).
+type Observer struct {
+	Entity transport.EntityID
+	ConnID uint64
+}
+
+// EventKind — класс события пары (наблюдатель, цель).
+type EventKind uint8
+
+// События: ввод (CharInfo/NpcInfo — P3.10), удаление (DeleteObject),
+// позиционный апдейт (каркас — кадры наполняет P3.9).
 const (
-	DefaultEnterRadius int32 = 1800
-	DefaultExitRadius  int32 = 2700
+	EventIntroduce EventKind = iota
+	EventRemove
+	EventUpdate
 )
 
-// enterSq/exitSq — квадраты радиусов (int64, без переполнения: радиус мала).
-var (
-	enterSq = int64(DefaultEnterRadius) * int64(DefaultEnterRadius)
-	exitSq  = int64(DefaultExitRadius) * int64(DefaultExitRadius)
-)
-
-// Visible — предикат пары (наблюдатель, цель): одна функция для репликации
-// и advisory. Фаза 3: входы-флаги не выставляются (нулевые флаги видны);
-// синтетический бит цели скрывает. Гео-LOS отсутствует — документированное
-// исключение оси 4 ADR-0004 (выжимка OQ-8 — реестр задачи).
-func Visible(obsFlags, tgtFlags uint32) bool {
-	return tgtFlags == 0
+// Event — исходящее событие пары. slot — слот цели в сегменте Step (поле
+// пакета: применяется стадингом Apply).
+type Event struct {
+	Obs    Observer
+	Target Record
+	Kind   EventKind
+	slot   int
 }
 
-// View — известность наблюдателя («кого клиент знает»): пересобираемое
-// outbound-состояние региона-владельца, в модель сущности/чемодан/Dump не
-// входит, игровой логике недоступно. Pair-тест — битмап слота + сравнение
-// вечного id (детект реюза слота), O(1) array-indexed без хеша.
-type View struct {
-	knownSlots []uint64
-	knownIDs   []transport.EntityID // слот-индексированный снимок; 0 — неизвестен
+// viewSet — view set наблюдателя: плотный слайс вечных id по слотам сегмента
+// (id на слоте — детект реюза слота; 0 — не член). Контракт оси 3: доступ на
+// пару — array-indexed по слоту.
+type viewSet struct {
+	ids []transport.EntityID
 }
 
-// NewView — пустая известность (наблюдатель новорождён: полный проход).
-func NewView() *View { return &View{} }
+// Join — событийный join у владельца наблюдателя. Step вычисляет и стадирует
+// диффы (view НЕ мутирует), Apply применяет стадинг; порядок у владельца:
+// Step → компоновка кадров → Apply → merge кадров (реестр P3.8, решение 2).
+// Только горутина владельца.
+type Join struct {
+	cfg        JoinConfig
+	views      map[transport.EntityID]*viewSet
+	appliedGen uint64
+	last       *Blob
+	staging    []Event // единый буфер событий шага: мир читает после Step, Apply применяет
 
-// Empty — известность пуста (никого не введено).
-func (v *View) Empty() bool { return !bitsAny(v.knownSlots) }
-
-// Known — слот известен и держит именно этот вечный id (реюз слота чужой
-// записью не считается известностью старого).
-func (v *View) Known(slot int, id transport.EntityID) bool {
-	return slot>>6 < len(v.knownSlots) && bitGet(v.knownSlots, slot) &&
-		slot < len(v.knownIDs) && v.knownIDs[slot] == id
+	// ForcePanicInApply — тестовый шов recover-политики владельца: паника на
+	// применении стадинга после продвижения appliedGen (детект примирения
+	// обязан сработать); выключено в поставке (прецедент Region.forcePanic;
+	// атомик: пишется тест-горутиной при живом Run).
+	ForcePanicInApply atomic.Bool
 }
 
-// ExitEvent — удаление из известности: вечный id (записи уже может не быть
-// в блобе — swap/деспавн) и слот, который он занимал в view.
-type ExitEvent struct {
-	Slot int
-	ID   transport.EntityID
+// NewJoin создаёт join с конфигурацией радиусов.
+func NewJoin(cfg JoinConfig) *Join {
+	return &Join{cfg: cfg, views: make(map[transport.EntityID]*viewSet)}
 }
 
-// JoinEvents — события известности наблюдателя за вызов: вводы — слоты
-// (живые записи блоба, CharInfo/NpcInfo), удаления — вечные id
-// (DeleteObject). Маркеров переезда фаза 3 не порождает.
-type JoinEvents struct {
-	Enters []int
-	Exits  []ExitEvent
-}
-
-// Apply — применение событий к view (вызывающий кладёт кадры в pendingPushes
-// РАНЬШЕ Apply: паника в межоперационном окне доигрывается идемпотентно).
-func (e JoinEvents) Apply(v *View, b *Blob) {
-	for _, slot := range e.Enters {
-		v.enter(slot, b.ID(slot))
+// Step обрабатывает dirty-манифест блоба × наблюдателей и возвращает события
+// для компоновки кадров; view мутирует только Apply. При next.BaseGen ≠
+// appliedGen (паник-окна: view применён к незакоммиченному или применён
+// частично) — один полный примирительный проход с полным эмитом.
+func (j *Join) Step(obs []Observer, blob *Blob) []Event {
+	j.staging = j.staging[:0]
+	j.last = blob
+	if blob.base != j.appliedGen {
+		j.reconcile(obs, blob)
+	} else {
+		j.stepEvents(obs, blob)
 	}
-	for _, ex := range e.Exits {
-		v.exit(ex.Slot)
-	}
+	return j.staging
 }
 
-func (v *View) enter(slot int, id transport.EntityID) {
-	// Рост ёмкостей удвоением: холодный ввод толпы не копирует слайс на
-	// каждый слот (квадратичный мусор — датчик GC outbound-пути).
-	if slot >= len(v.knownIDs) {
-		n := max(slot+1, 2*len(v.knownIDs), 8)
-		grown := make([]transport.EntityID, n)
-		copy(grown, v.knownIDs)
-		v.knownIDs = grown
+// Apply применяет стадинг к view set. ПЕРВОЙ операцией продвигает appliedGen —
+// бинарное покрытие паник-окон: паника до начала Apply ⇒ базы равны, view
+// нетронут, событийный пере-вывод; после начала (включая частичное применение)
+// ⇒ базы разошлись, примирение полным эмитом покрывает любую степень
+// применённости стадинга.
+func (j *Join) Apply() {
+	j.appliedGen = j.last.gen
+	if j.ForcePanicInApply.Load() && len(j.staging) > 0 {
+		panic(fmt.Sprintf("replica: инъекция сбоя в Apply (после appliedGen=%d)", j.appliedGen))
 	}
-	v.knownIDs[slot] = id
-	w := slot >> 6
-	if w >= len(v.knownSlots) {
-		n := max(w+1, 2*len(v.knownSlots), 1)
-		grown := make([]uint64, n)
-		copy(grown, v.knownSlots)
-		v.knownSlots = grown
-	}
-	v.knownSlots[w] |= 1 << (uint(slot) & 63)
-}
-
-func (v *View) exit(slot int) {
-	if slot >= len(v.knownIDs) {
-		return
-	}
-	v.knownIDs[slot] = 0
-	if w := slot >> 6; w < len(v.knownSlots) {
-		v.knownSlots[w] &^= 1 << (uint(slot) & 63)
-	}
-}
-
-// JoinStats — машинные счётчики событийности (F5): Pairs — дистанционные
-// проверки пар (якорь join-бенча), PayloadReads — чтения пейлоадных колонок
-// (дифф-скан битмапов пейлоадов не читает). Собственность горутины региона.
-type JoinStats struct {
-	Pairs        int
-	PayloadReads int
-}
-
-// JoinMode — режим вызова Join (именованный, не позиционные bool: swap
-// компилируется молча).
-type JoinMode uint8
-
-const (
-	// ModeDiff — событийный режим: только Spawned/Dirty слоты (стационарный
-	// путь; вызов обязан быть обусловлен непустым диффом — F5).
-	ModeDiff JoinMode = iota
-	// ModeObsDirty — собственное движение/флаги наблюдателя: полный проход
-	// по Members от новой позиции.
-	ModeObsDirty
-	// ModeReconcile — доигрывание паник-шага: абсолютная свёртка, раньше и
-	// вне условия диффа (F19).
-	ModeReconcile
-)
-
-// Join — события известности наблюдателя obs за поколение b с диффом d.
-// Удаления абсолютны по вечному id (F19): известный слот, не являющийся
-// живой записью с тем же id (исчез или занят другой записью — swap),
-// удаляется немедленно, без маркера и hold-last.
-// Self-пара исключается (наблюдатель не вводится сам себе).
-func Join(b *Blob, d *Diff, v *View, obs Record, mode JoinMode, st *JoinStats) JoinEvents {
-	var ev JoinEvents
-	full := v.Empty() || mode != ModeDiff
-	if full {
-		v.ensure(b.Len())
-	}
-
-	// Абсолютная сверка известных слотов: O(|known|), дёшево всегда.
-	for w, word := range v.knownSlots {
-		for ; word != 0; word &= word - 1 {
-			slot := w<<6 + bits.TrailingZeros64(word)
-			if slot >= b.Len() || !b.IsMember(slot) || b.ID(slot) != v.knownIDs[slot] {
-				ev.Exits = append(ev.Exits, ExitEvent{Slot: slot, ID: v.knownIDs[slot]})
+	// события шага сгруппированы обходом по наблюдателям: view резолвится
+	// при смене наблюдателя (M лукапов на проход, не на пару — ось 3);
+	// view-set новорождённого создаётся здесь — применением стадинга
+	var cur *viewSet
+	var curObs transport.EntityID
+	for i := range j.staging {
+		ev := &j.staging[i]
+		if i == 0 || ev.Obs.Entity != curObs {
+			cur, curObs = j.views[ev.Obs.Entity], ev.Obs.Entity
+			if cur == nil {
+				cur = &viewSet{}
+				j.views[curObs] = cur
 			}
 		}
-	}
-
-	// far — точно за радиусом без возведения в квадрат (|d| по одной оси
-	// уже превышает радиус: корень суммы не может стать меньше).
-	far := func(dxyz int64, r int64) bool { return dxyz > r || dxyz < -r }
-
-	enter := func(slot int) {
-		id := b.ID(slot)
-		if id == obs.Entity || v.Known(slot, id) {
-			return
+		for ev.slot >= len(cur.ids) {
+			cur.ids = append(cur.ids, 0)
 		}
-		st.Pairs++
-		st.PayloadReads += 3
-		dx := int64(b.X(slot)) - int64(obs.X)
-		dy := int64(b.Y(slot)) - int64(obs.Y)
-		dz := int64(b.Z(slot)) - int64(obs.Z)
-		if far(dx, int64(DefaultEnterRadius)) || far(dy, int64(DefaultEnterRadius)) || far(dz, int64(DefaultEnterRadius)) {
-			return
-		}
-		if dx*dx+dy*dy+dz*dz > enterSq {
-			return
-		}
-		if !Visible(obs.Flags, b.Flags(slot)) {
-			st.PayloadReads++
-			return
-		}
-		ev.Enters = append(ev.Enters, slot)
-	}
-
-	exitCheck := func(slot int) {
-		id := b.ID(slot)
-		if !v.Known(slot, id) {
-			return
-		}
-		st.Pairs++
-		st.PayloadReads += 4
-		dx := int64(b.X(slot)) - int64(obs.X)
-		dy := int64(b.Y(slot)) - int64(obs.Y)
-		dz := int64(b.Z(slot)) - int64(obs.Z)
-		if far(dx, int64(DefaultExitRadius)) || far(dy, int64(DefaultExitRadius)) || far(dz, int64(DefaultExitRadius)) ||
-			dx*dx+dy*dy+dz*dz > exitSq {
-			ev.Exits = append(ev.Exits, ExitEvent{Slot: slot, ID: id})
-			return
-		}
-		if !Visible(obs.Flags, b.Flags(slot)) {
-			ev.Exits = append(ev.Exits, ExitEvent{Slot: slot, ID: id})
+		switch ev.Kind {
+		case EventIntroduce:
+			cur.ids[ev.slot] = ev.Target.Entity
+		case EventRemove:
+			// сверка вечного id: слот мог быть реюзнут новыми жильцом (эмиты
+			// Remove(старого) и Introduce(нового) в любом порядке)
+			if cur.ids[ev.slot] == ev.Target.Entity {
+				cur.ids[ev.slot] = 0
+			}
+		case EventUpdate:
+			// членство не меняется; last-known не хранится — compose фазы 3
+			// самодостаточен пейлоадом события (P3.9 дополнит при надобности)
 		}
 	}
+	j.staging = j.staging[:0]
+}
 
-	if full {
-		for slot := range b.Len() {
-			if !b.IsMember(slot) {
+// obsRef — разрешение наблюдателя на время шага: слот и запись в сегменте
+// вычисляются РАЗ (хеш-lookup только здесь); доступ на пару далее —
+// array-indexed по слоту (контракт оси 3: хеш на пару запрещён).
+type obsRef struct {
+	o       Observer
+	slot    int
+	rec     *Record
+	v       *viewSet
+	covered bool // пара покрыта полным проходом — dirty-цикл пропускает
+}
+
+// resolveObs — разрешение наблюдателей шага: слот, запись и view-указатель
+// вычисляются РАЗ (хеш-lookups слотов/таблицы наблюдателей — только здесь);
+// доступ на пару далее — array-indexed (контракт оси 3: хеш на пару запрещён).
+func resolveObs(j *Join, obs []Observer, blob *Blob) []obsRef {
+	refs := make([]obsRef, len(obs))
+	for i, o := range obs {
+		refs[i] = obsRef{o: o, slot: -1, v: j.views[o.Entity]}
+		slot, ok := blob.slots[o.Entity]
+		if !ok || slot >= len(blob.seg.records) {
+			continue
+		}
+		rec := &blob.seg.records[slot]
+		if rec.Entity != o.Entity {
+			continue
+		}
+		refs[i].slot = slot
+		refs[i].rec = rec
+	}
+	return refs
+}
+
+// stepEvents — событийный путь (базы поколений согласованы). Наблюдатели
+// новорождённые (view нет) и двинувшиеся (слот changed) покрываются ТОЛЬКО
+// своим полным проходом — dirty-цикл их пропускает: каждая пара обрабатывается
+// ровно один раз, дедуп-бухгалтерия не нужна.
+func (j *Join) stepEvents(obs []Observer, blob *Blob) {
+	seg := &blob.seg
+	refs := resolveObs(j, obs, blob)
+	obsSet := make(map[transport.EntityID]struct{}, len(obs))
+	for i := range refs {
+		obsSet[obs[i].Entity] = struct{}{}
+		if refs[i].slot < 0 {
+			continue // без записи в сегменте пары не разрешаются
+		}
+		// newborn (view нет) и двинувшийся — полный проход; сам view-set
+		// создаётся ТОЛЬКО применением стадинга в Apply: паника между Step и
+		// Apply не оставляет «пустого скелета», слепящего новорождённого
+		// (следующий Step снова видит его новорождённым)
+		if refs[i].v == nil || bitHas(seg.changed, refs[i].slot) {
+			j.fullPass(refs[i], blob, false)
+			refs[i].covered = true
+		}
+	}
+	// dirty-слоты × обычные наблюдатели, obs-major (внешний цикл —
+	// наблюдатели, внутренний — слоты): события наблюдателя контигуальны в
+	// staging — Apply резолвит view при смене наблюдателя, без хеша на пару
+	// (ось 3). Порядок битов слота: gone → born → changed (реюз слота:
+	// Remove прежнего жильца раньше ввода нового)
+	for i := range refs {
+		ref := &refs[i]
+		if ref.covered || ref.slot < 0 || ref.v == nil {
+			continue
+		}
+		v := ref.v
+		for slot := range seg.records {
+			gone := bitHas(seg.gone, slot)
+			born := bitHas(seg.born, slot)
+			changed := bitHas(seg.changed, slot)
+			if !gone && !born && !changed {
 				continue
 			}
-			enter(slot)
-			exitCheck(slot)
-		}
-		return ev
-	}
-
-	for w, word := range d.spawned {
-		for ; word != 0; word &= word - 1 {
-			enter(w<<6 + bits.TrailingZeros64(word))
-		}
-	}
-	for w, word := range d.dirty {
-		for ; word != 0; word &= word - 1 {
-			slot := w<<6 + bits.TrailingZeros64(word)
-			if !b.IsMember(slot) || bitGet(d.spawned, slot) {
+			if gone && slot < len(v.ids) && v.ids[slot] != 0 {
+				// ушедший жилец идентифицируется вечным id из view (пейлоад
+				// недоступен — DeleteObject нуждается только в id)
+				j.emit(Event{Obs: ref.o, Target: Record{Entity: v.ids[slot]}, Kind: EventRemove, slot: slot})
+			}
+			rec := seg.records[slot]
+			if rec.Entity == 0 || rec.Entity == ref.o.Entity {
 				continue
 			}
-			exitCheck(slot)
-			enter(slot)
+			member := slot < len(v.ids) && v.ids[slot] == rec.Entity
+			switch {
+			case (born || changed) && !member && inEnter(ref.rec, &rec, j.cfg):
+				j.emit(Event{Obs: ref.o, Target: rec, Kind: EventIntroduce, slot: slot})
+			case changed && member && (beyondExit(ref.rec, &rec, j.cfg) || !Visible(ref.rec.Flags, rec.Flags)):
+				j.emit(Event{Obs: ref.o, Target: rec, Kind: EventRemove, slot: slot})
+			case changed && member:
+				j.emit(Event{Obs: ref.o, Target: rec, Kind: EventUpdate, slot: slot})
+			}
 		}
 	}
-	return ev
+	// дроп view наблюдателей, отсутствующих и в obs, и в блобе (умерли/ушли);
+	// Leaving-наблюдатель (не в obs, жив в блобе) view удерживает до Retire
+	for ent := range j.views {
+		if _, live := obsSet[ent]; live {
+			continue
+		}
+		if _, inBlob := blob.slots[ent]; !inBlob {
+			delete(j.views, ent)
+		}
+	}
 }
 
-// ensure — предварительное расширение view под n слотов (полный проход
-// аллоцирует ёмкость один раз, не по вводу).
-func (v *View) ensure(n int) {
-	if n <= len(v.knownIDs) && (n+63)/64 <= len(v.knownSlots) {
+// fullPass — полный проход пар наблюдателя: Introduce всем в членстве
+// (при fullEmit — включая уже членов: повторные вводы безвредны по канону —
+// примирение), Remove всем членам, покинувшим членство или сегмент.
+func (j *Join) fullPass(ref obsRef, blob *Blob, fullEmit bool) {
+	if ref.slot < 0 {
 		return
 	}
-	if n > len(v.knownIDs) {
-		grown := make([]transport.EntityID, n)
-		copy(grown, v.knownIDs)
-		v.knownIDs = grown
+	seg := &blob.seg
+	empty := viewSet{}
+	v := j.views[ref.o.Entity]
+	if v == nil {
+		v = &empty // newborn: членства нет — ввод всех в enter-радиусе
 	}
-	if w := (n + 63) / 64; w > len(v.knownSlots) {
-		grown := make([]uint64, w)
-		copy(grown, v.knownSlots)
-		v.knownSlots = grown
+	for slot := range seg.records {
+		rec := &seg.records[slot]
+		if rec.Entity == 0 || rec.Entity == ref.o.Entity {
+			continue
+		}
+		member := slot < len(v.ids) && v.ids[slot] == rec.Entity
+		switch {
+		case member:
+			// удержание: выход только за exit-радиус (гистерезис) или предикат
+			if beyondExit(ref.rec, rec, j.cfg) || !Visible(ref.rec.Flags, rec.Flags) {
+				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventRemove, slot: slot})
+			} else if fullEmit {
+				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot}) // повторный ввод — примирение
+			}
+		case inEnter(ref.rec, rec, j.cfg):
+			j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot})
+		}
+	}
+	// члены view за пределами нового сегмента (слоты усохли/заменены) — Remove
+	for slot := range v.ids {
+		if v.ids[slot] == 0 {
+			continue
+		}
+		if slot >= len(seg.records) || seg.records[slot].Entity != v.ids[slot] {
+			j.emit(Event{Obs: ref.o, Target: Record{Entity: v.ids[slot]}, Kind: EventRemove, slot: slot})
+		}
+	}
+}
+
+// inEnter — правило ввода пары: не self ∧ предикат ∧ d²≤Enter².
+func inEnter(obs, rec *Record, cfg JoinConfig) bool {
+	if rec.Entity == obs.Entity {
+		return false
+	}
+	if !Visible(obs.Flags, rec.Flags) {
+		return false
+	}
+	dx, dy, dz, _ := deltas(obs, rec, cfg)
+	enter := int64(cfg.Enter)
+	return dx*dx+dy*dy+dz*dz <= enter*enter
+}
+
+// beyondExit — правило выхода члена: d²>Exit² (гистерезис: кольцо
+// Enter<d≤Exit удерживает члена).
+func beyondExit(obs, rec *Record, cfg JoinConfig) bool {
+	dx, dy, dz, exit := deltas(obs, rec, cfg)
+	return dx*dx+dy*dy+dz*dz > exit*exit
+}
+
+// deltas — int64-дельты пары с отсечкой дальних до возведения в квадрат
+// (|d|>Exit ⇒ дальняя: переполнение исключено, сравнение дешевле квадратов;
+// возвращаемые dx/dy/dz при дальней паре обрезаны до Exit+1 — сумма квадратов
+// гарантированно больше Enter²).
+func deltas(obs, rec *Record, cfg JoinConfig) (dx, dy, dz, limit int64) {
+	limit = int64(cfg.Exit)
+	dx = int64(obs.X) - int64(rec.X)
+	dy = int64(obs.Y) - int64(rec.Y)
+	dz = int64(obs.Z) - int64(rec.Z)
+	if dx > limit || dx < -limit || dy > limit || dy < -limit || dz > limit || dz < -limit {
+		return limit + 1, limit + 1, limit + 1, limit
+	}
+	return dx, dy, dz, limit
+}
+
+// emit — стадирует событие в единый буфер (возврат Step — этот же слайс;
+// запись события предшествует любой мутации view — инвариент применяемости).
+func (j *Join) emit(ev Event) {
+	j.staging = append(j.staging, ev)
+}
+
+// reconcile — примирительный полный проход (детект BaseGen ≠ appliedGen):
+// полный эмит всем наблюдателям (дубли канон-толерантны), дроп view умерших.
+func (j *Join) reconcile(obs []Observer, blob *Blob) {
+	alive := make(map[transport.EntityID]struct{}, len(obs))
+	for _, o := range obs {
+		alive[o.Entity] = struct{}{}
+	}
+	for ent := range j.views {
+		if _, live := alive[ent]; live {
+			continue
+		}
+		if _, inBlob := blob.slots[ent]; !inBlob {
+			delete(j.views, ent)
+		}
+	}
+	refs := resolveObs(j, obs, blob)
+	for i := range refs {
+		if refs[i].slot < 0 {
+			continue
+		}
+		j.fullPass(refs[i], blob, true)
 	}
 }

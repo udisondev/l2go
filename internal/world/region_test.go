@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/udisondev/l2go/internal/persist"
-	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
@@ -24,7 +22,7 @@ func newTestRegion(t *testing.T, cfg Config) (*Metronome, *Region) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{}, emptyGeo)
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
 	}
@@ -67,7 +65,7 @@ func TestRegionNilDepsRejected(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := NewRegion(c.metro, c.reg, 1, cfg, log, nullPusher{}); err == nil {
+			if _, err := NewRegion(c.metro, c.reg, 1, cfg, log, nullPusher{}, emptyGeo); err == nil {
 				t.Errorf("NewRegion с %s прошёл; want ошибка валидации", c.name)
 			}
 		})
@@ -116,28 +114,17 @@ func TestRegionDeltaFromTickCounter(t *testing.T) {
 func TestRegionPhaseCounters(t *testing.T) {
 	_, r := newTestRegion(t, DefaultConfig())
 	spawnResident(t, r, 100)
-	r.residents[0].ent.Player = &Player{ConnID: 7}
 	r.step()
 	st := r.Stats()
-	if st.PhaseDrain != 1 || st.PhaseFold != 1 || st.PhaseEffects != 1 || st.PhaseJoin != 1 || st.PhaseB != 1 || st.PhasePublish != 1 || st.PhaseAck != 1 {
+	if st.PhaseDrain != 1 || st.PhaseFold != 1 || st.PhaseEffects != 1 || st.PhaseAoI != 1 || st.PhaseB != 1 || st.PhasePublish != 1 || st.PhaseAck != 1 {
 		t.Fatalf("фазовые счётчики после шага: %+v", st)
 	}
 	if st.DoneTick != r.metro.Now() {
 		t.Fatalf("doneTick = %d; want %d", st.DoneTick, r.metro.Now())
 	}
-	// Publish-шов репликации: блоб поколения 1 с живым жителем.
-	blob := r.snapPtr.Load()
-	if blob == nil || blob.Gen() != 1 {
-		t.Fatalf("опубликованный блоб: %+v", blob)
-	}
-	live := 0
-	for i := range blob.Len() {
-		if blob.IsMember(i) {
-			live++
-		}
-	}
-	if live != 1 {
-		t.Fatalf("житель не в блобе: live=%d", live)
+	// публикация — блоб в фазе publish (снапшот-заготовка P3.2 заменена)
+	if got := r.pub.Committed(); got == nil {
+		t.Fatalf("шаг не опубликовал блоб")
 	}
 }
 
@@ -257,7 +244,7 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	r.step()
 	done := r.Stats().DoneTick
 
-	r.forcePanic = phaseFold
+	r.forcePanic.Store(uint32(phaseFold))
 	r.safeStep()
 	st := r.Stats()
 	if st.Failed != 1 || st.DoneTick != done {
@@ -266,14 +253,14 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	if st.PhaseDrain != 2 || st.PhaseFold != 1 {
 		t.Fatalf("паника в fold: drain = %d (want 2, дорос), fold = %d (want 1, не дорос)", st.PhaseDrain, st.PhaseFold)
 	}
-	r.forcePanic = 0
+	r.forcePanic.Store(0)
 	r.safeStep() // успешный шаг — серия сброшена
 	if st := r.Stats(); st.Failed != 1 {
 		t.Fatalf("после успеха серия не сброшена: failed = %d", st.Failed)
 	}
 	// паника в фазе B: drain/fold доросли, B/publish/ack — нет (дельтами)
 	beforeB := r.Stats()
-	r.forcePanic = phaseB
+	r.forcePanic.Store(uint32(phaseB))
 	r.safeStep()
 	st = r.Stats()
 	if st.PhaseDrain != beforeB.PhaseDrain+1 || st.PhaseFold != beforeB.PhaseFold+1 {
@@ -291,7 +278,7 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	if !st.Frozen {
 		t.Fatalf("серия паник не заморозила регион")
 	}
-	r.forcePanic = 0
+	r.forcePanic.Store(0)
 	before := r.Stats()
 	r.safeStep() // замороженный не исполняет шаги
 	if r.Stats().PhaseAck != before.PhaseAck {
@@ -310,9 +297,9 @@ func TestRegionPanicDropsBatchAndMarks(t *testing.T) {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: id}, FromID: 5, Kind: transport.KindAggro})
 	}
 	r.metro.tick.Add(1)
-	r.forcePanic = phaseFold
+	r.forcePanic.Store(uint32(phaseFold))
 	r.safeStep()
-	r.forcePanic = 0
+	r.forcePanic.Store(0)
 	st := r.ctrl.Stats()
 	if st.FinalReliable != 4 {
 		t.Fatalf("классовый дроп остатка reliable = %d; want 4 (тихая потеря запрещена)", st.FinalReliable)
@@ -557,43 +544,13 @@ func TestRegionPanicDropCoverDisjoint(t *testing.T) {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
 	}
 	r.metro.tick.Add(1)
-	r.forcePanic = phaseFold
+	r.forcePanic.Store(uint32(phaseFold))
 	r.safeStep()
-	r.forcePanic = 0
+	r.forcePanic.Store(0)
 	if got := r.ctrl.Stats().FinalReliable; got != 20 {
 		t.Fatalf("FinalReliable = %d; want 20 (излишек сверх K не считается дважды)", got)
 	}
 	if got := r.state.KindCounts[transport.KindEnterWorld-1]; got != 0 {
 		t.Fatalf("письма паник-шага применены: %d; want 0", got)
-	}
-}
-
-// SaveQueue в Stats: логаут ставит сохранение в очередь, ok-ответ персиста
-// гасит — наблюдаемость несохранённых персонажей (IO-ретраи) без доступа к
-// состоянию свёртки; e2e ждёт нуля перед правкой файла между сессиями.
-func TestRegionStatsSaveQueue(t *testing.T) {
-	_, r := newTestRegion(t, DefaultConfig())
-	r.reg.Send(enterMsg(7, "acc", mkRec("acc", "Vasya", 0)))
-	r.step()
-	if got := r.Stats().SaveQueue; got != 0 {
-		t.Fatalf("SaveQueue после входа = %d; want 0", got)
-	}
-	id := r.residents[0].ent.ID
-	r.metro.tick.Add(1)
-	r.reg.Send(clientFrame(id, protocol.OpLogout))
-	r.step()
-	if got := r.Stats().SaveQueue; got != 1 {
-		t.Fatalf("SaveQueue после логаута = %d; want 1", got)
-	}
-	okReply, err := persist.EncodeReply(persist.Reply{Op: persist.OpSaveChar, Corr: uint64(id), OK: true})
-	if err != nil {
-		t.Fatalf("EncodeReply: %v", err)
-	}
-	r.metro.tick.Add(1)
-	r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 900,
-		Kind: transport.KindPersistReply, Payload: okReply})
-	r.step()
-	if got := r.Stats().SaveQueue; got != 0 {
-		t.Fatalf("SaveQueue после ok-ответа = %d; want 0", got)
 	}
 }

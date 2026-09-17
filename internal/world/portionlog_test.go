@@ -2,11 +2,14 @@ package world
 
 import (
 	"errors"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
@@ -350,70 +353,142 @@ func TestPortionLogPlayerRoundtrip(t *testing.T) {
 	}
 }
 
-// Advisory-вход несёт значение чтения (F1): позиция/эпоха/найденность едут
-// в лог — реплей D6 инъектирует значения, не адреса; Found=false пишется
-// нулями (детерминизм).
-func TestPortionLogAdvisoryValueRoundtrip(t *testing.T) {
+// v3: roundtrip отрезка движения и бакета (отрицательные значения включительно).
+func TestPortionLogMovementRoundtrip(t *testing.T) {
 	l := newTestLog(t, false, 1<<20)
-	steps := []StepInput{{
-		Tick: 10, Delta: 1,
-		Advisory: []AdvisoryIn{
-			{Cell: 3, Entity: 77, X: -100, Y: 200, Z: -300, Epoch: 9, Found: true},
-			{Cell: 4, Entity: 78, Found: false}, // miss: значения нулевые
-		},
-	}}
-	for _, s := range steps {
-		if err := l.LogStep(s); err != nil {
-			t.Fatalf("LogStep: %v", err)
-		}
+	ent := Entity{Owner: 7, Pos: Position{X: -71338, Y: 258271, Z: -3104},
+		Heading: 49152, Moving: true,
+		MoveFrom: Position{X: -72000, Y: 258000, Z: -3200},
+		MoveDist: 9007199, MoveDone: 1234567,
+		Player: &Player{Rec: mkRec("acc", "Vasya", 0), SpeedBudget: -58000}}
+	if err := l.LogStep(StepInput{Tick: 3, Births: []AppliedBirth{{ID: 77, Ent: &ent}}}); err != nil {
+		t.Fatalf("LogStep: %v", err)
 	}
-	if err := l.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	_, got, _, err := ReadPortionLogDir(l.dir, l.region)
+	_, steps, _, err := readAll(t, l)
 	if err != nil {
-		t.Fatalf("ReadPortionLogDir: %v", err)
+		t.Fatalf("read: %v", err)
 	}
-	if len(got) != 1 || len(got[0].Advisory) != 2 {
-		t.Fatalf("шагов %d advisory %d; want 1/2", len(got), len(got[0].Advisory))
+	got := steps[0].Births[0].Ent
+	if got.Heading != 49152 || !got.Moving ||
+		got.MoveFrom != (Position{X: -72000, Y: 258000, Z: -3200}) ||
+		got.MoveDist != 9007199 || got.MoveDone != 1234567 {
+		t.Fatalf("отрезок roundtrip: %+v", got)
 	}
-	a := got[0].Advisory[0]
-	if a.Cell != 3 || a.Entity != 77 || a.X != -100 || a.Y != 200 || a.Z != -300 || a.Epoch != 9 || !a.Found {
-		t.Fatalf("hit-чтение: %+v", a)
-	}
-	m := got[0].Advisory[1]
-	if m.Cell != 4 || m.Entity != 78 || m.X != 0 || m.Y != 0 || m.Z != 0 || m.Epoch != 0 || m.Found {
-		t.Fatalf("miss-чтение не нулевое: %+v", m)
+	if got.Player == nil || got.Player.SpeedBudget != -58000 {
+		t.Fatalf("бакет roundtrip: %+v", got.Player)
 	}
 }
 
-// Лог версии N−1 (без advisory-значений) отвергается явно — не тихий разбор
-// (P3.7-прецедент: смена формата без подъёма версии = молчаливый раскол
-// реплея).
-func TestPortionLogAdvisoryVersionBump(t *testing.T) {
-	l := newTestLog(t, false, 1<<20)
-	if err := l.LogStep(sampleStep(1, 1)[0]); err != nil {
-		t.Fatalf("LogStep: %v", err)
+// Реплей движения бит-в-бит: лог записанной сессии (входы письмами — рождения
+// логируются) прогоняется через тот же Fold (период — из заголовка) — дамп
+// равен живому; повтор — тоже; перестановка двух писем шага меняет дамп.
+func TestPortionLogReplayMovementDigest(t *testing.T) {
+	r, _ := moveRegion(t)
+	// входы письмами: рождения попадают в лог с присвоенными ID
+	r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.CtrlID()}, FromID: 901,
+		Kind:    transport.KindEnterWorld,
+		Payload: mustJSONEnter(1, mkRecAt("aca", "Hero", int(syncPos.X), int(syncPos.Y)))})
+	r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.CtrlID()}, FromID: 901,
+		Kind:    transport.KindEnterWorld,
+		Payload: mustJSONEnter(2, mkRecAt("bca", "Bobby", int(syncPos.X)+100, int(syncPos.Y)))})
+	stepN(r, 1)
+	a := r.residents[0].ent.ID
+	stepN(r, 1) // знакомство
+	b := make([]byte, 29)
+	writeMoveFrame(b, syncPos.X+230, syncPos.Y, syncPos.Z, syncPos.X, syncPos.Y, syncPos.Z)
+	sendToBox(r, a, b)
+	b2 := make([]byte, 29)
+	writeMoveFrame(b2, syncPos.X-300, syncPos.Y, syncPos.Z, syncPos.X, syncPos.Y, syncPos.Z)
+	sendToBox(r, a, b2) // ретаргет той же пачки: порядок писем определяет итог
+	v := make([]byte, 21)
+	v[0] = 0x48
+	lePut32(v[1:], int32(syncPos.X)+5) // близкий честный отчёт
+	lePut32(v[5:], int32(syncPos.Y))
+	lePut32(v[9:], syncPos.Z)
+	sendToBox(r, a, v)
+	stepN(r, 12) // старт, advance, прибытие
+
+	live := r.state.Dump(r.entsProj())
+	if err := r.log.w.Flush(); err != nil { // тест читает при живом писателе
+		t.Fatalf("flush: %v", err)
 	}
-	if err := l.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	entries, err := filepath.Glob(filepath.Join(l.dir, "portion-*.log"))
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("glob лога: %v %v", entries, err)
-	}
-	raw, err := os.ReadFile(entries[0])
+	hdr, steps, _, err := ReadPortionLogDir(r.log.dir, r.log.region)
 	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+		t.Fatalf("ReadPortionLogDir: %v", err)
 	}
-	if len(raw) < 8 {
-		t.Fatalf("короткий заголовок: %d байт", len(raw))
+	if len(steps) < 10 {
+		t.Fatalf("шагов в логе = %d; want ≥10", len(steps))
 	}
-	raw[len(portionMagic)] = byte(portionVersion - 1) // портим версию в заголовке (офсет 4)
-	if err := os.WriteFile(entries[0], raw, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if hdr.PeriodNS != uint64(r.metro.period) {
+		t.Fatalf("заголовок несёт период %d; want %d (метроном сессии)", hdr.PeriodNS, r.metro.period)
 	}
-	if _, _, _, err := ReadPortionLogDir(l.dir, l.region); err == nil {
-		t.Fatal("лог старой версии прочитан молча; want явная ошибка")
+
+	// replay — зеркалит шаг региона: fold писем, рождения применяются с ID из
+	// лога (сортированная вставка), удаления изымаются
+	replay := func(mutateSwap bool) []byte {
+		st := newState()
+		var ents []*Entity
+		rules := testRules()
+		rules.PeriodNS = int64(hdr.PeriodNS) // шов 1: реплей берёт период из заголовка лога
+		for si, s := range steps {
+			portions := make([]Portion, len(s.Portions))
+			for i, p := range s.Portions {
+				envs := p.Envs
+				if mutateSwap && si == 2 && len(envs) >= 2 {
+					envs[0], envs[1] = envs[1], envs[0]
+				}
+				portions[i] = Portion{Region: r.id, Tick: s.Tick, Envs: envs}
+			}
+			rng := rand.New(rand.NewPCG(uint64(r.id), uint64(s.Tick)))
+			Fold(s.Tick, s.Delta, rng, st, ents, portions, s.Advisory, rules, r.gm)
+			for _, br := range s.Births {
+				e := br.Ent
+				e.Owner = r.id // Spawn актора ставит владельца — зеркалим
+				idx := sort.Search(len(ents), func(i int) bool { return ents[i].ID >= br.ID })
+				ents = append(ents, nil)
+				copy(ents[idx+1:], ents[idx:])
+				ents[idx] = &e
+				if e.Player != nil { // материализация теней — зеркалит applyEffects актора
+					st.ResolveBirth(e.Player.Rec.Account, e.Player.ConnID, e.ID)
+				}
+			}
+			for _, rt := range s.Retires {
+				for i := range ents {
+					if ents[i].ID == rt.ID {
+						ents = append(ents[:i], ents[i+1:]...)
+						break
+					}
+				}
+			}
+		}
+		return st.Dump(ents)
 	}
+	d1, d2 := replay(false), replay(false)
+	if string(d1) != string(d2) {
+		t.Fatal("повторный реплей разошёлся")
+	}
+	if string(d1) != string(live) {
+		t.Fatalf("реплей ≠ живой дамп (первое расхождение ищется побайтово): len %d vs %d", len(d1), len(live))
+	}
+	if d3 := replay(true); string(d3) == string(d1) {
+		t.Fatal("перестановка двух писем шага не меняет дамп — детектор слеп")
+	}
+}
+
+// mustJSONEnter — письмо входа (коннект + запись) для ручных сценариев.
+func mustJSONEnter(conn uint64, rec persist.CharRecord) []byte {
+	env, err := transport.EncodeLetter(transport.EnterWorldMsg{
+		Conn: conn, Account: rec.Account, Char: mustJSONChar(rec)})
+	if err != nil {
+		panic("тест: кодирование EnterWorldMsg: " + err.Error())
+	}
+	return env
+}
+
+// lePut32 — LE int32 в буфер (тестовый писатель полей кадра).
+func lePut32(dst []byte, v int32) {
+	dst[0] = byte(v)
+	dst[1] = byte(v >> 8)
+	dst[2] = byte(v >> 16)
+	dst[3] = byte(v >> 24)
 }

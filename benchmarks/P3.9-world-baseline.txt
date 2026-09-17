@@ -1,0 +1,118 @@
+# P3.9 world-baseline — движение и анти-чит
+# машина: локальная разработческая, 16 ядер, go1.27.1, 2026-09-17
+# методика: benchtime 100ms × count 10 (послабление против perf.md §0 20×3с — осознанное: фаза 3 фиксирует порядок и аллокации, не микросекунды)
+# сопоставимость: только внутри этой машины (межмашинное сравнение запрещено, прецедент P3.2)
+
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	    7761	     13372 ns/op	   14889 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:47 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 9465	     13141 ns/op	   14886 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:47 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 9441	     12819 ns/op	   14886 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:47 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 7646	     13243 ns/op	   14888 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:47 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 9243	     13100 ns/op	   14886 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:47 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 8206	     13518 ns/op	   14887 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:47 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 10000	     12588 ns/op	   14885 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:48 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 9320	     13503 ns/op	   14886 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:48 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 8673	     13731 ns/op	   14886 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	2026/09/17 21:24:48 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 10000	     13126 ns/op	   14885 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	     817	    134451 ns/op	  173620 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:48 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 964	    139854 ns/op	  173540 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:48 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 789	    137823 ns/op	  173637 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:48 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 883	    135743 ns/op	  173581 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:48 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 876	    142365 ns/op	  173584 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 832	    142163 ns/op	  173610 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 885	    144681 ns/op	  173580 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 922	    134995 ns/op	  173561 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 861	    137800 ns/op	  173593 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	2026/09/17 21:24:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 769	    144810 ns/op	  173652 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	     152	    684074 ns/op	  803105 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 145	    715051 ns/op	  804096 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 175	    666514 ns/op	  800281 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 168	    693979 ns/op	  801048 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 177	    674643 ns/op	  800071 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 164	    669934 ns/op	  801517 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 172	    663348 ns/op	  800602 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 171	    662846 ns/op	  800713 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 160	    678888 ns/op	  802008 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	2026/09/17 21:24:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 184	    663099 ns/op	  799378 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	      62	   1682349 ns/op	 1921179 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 66	   1651668 ns/op	 1910970 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 67	   1708485 ns/op	 1908608 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 63	   1669186 ns/op	 1918505 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 70	   1676065 ns/op	 1902079 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 67	   1720407 ns/op	 1908687 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 67	   1608029 ns/op	 1908608 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 64	   1673997 ns/op	 1915998 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 67	   1649737 ns/op	 1908608 B/op	      76 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 63	   1708024 ns/op	 1918505 B/op	      76 allocs/op
+
+## Стрим-компоновка (k движущихся × M наблюдателей, кадры В метрике; отрезки реалистичные, прибытия перезапускаются пинг-понгом от исходной точки — дрейф из AoI-радиуса исключён, прецедент P3.8-F66)
+BenchmarkJoinStreamCompose/movers=100/observers=100-16         	     243	    493052 ns/op	  758819 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 236	    504297 ns/op	  758777 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 234	    514787 ns/op	  758748 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 240	    501614 ns/op	  758765 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 235	    504303 ns/op	  758751 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 243	    486429 ns/op	  758774 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 244	    496147 ns/op	  758776 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 226	    527950 ns/op	  758725 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 234	    507853 ns/op	  758748 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 236	    506443 ns/op	  758754 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	      25	   4567875 ns/op	 7395094 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 27	   4685095 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 30	   4623483 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 25	   4830934 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 22	   4803059 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 27	   4603236 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 30	   4384126 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 28	   4599934 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 25	   4596145 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 24	   4678215 ns/op	 7394456 B/op	  100024 allocs/op
+## Сверка с baseline P3.8 (рост Record на DestX/Y/Z): PublishBlob/FullPass/SteadyDirty
+BenchmarkJoinFullPass-16       	     319	    389224 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     316	    379765 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     315	    383927 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     309	    384950 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     302	    390022 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     307	    388459 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     285	    396732 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     307	    383608 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     316	    383238 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	     320	    376614 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinSteadyDirty-16    	     646	    168531 ns/op	  184346 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     699	    159637 ns/op	  184328 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     734	    164044 ns/op	  184328 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     692	    163325 ns/op	  184328 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     684	    165319 ns/op	  184328 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     710	    162256 ns/op	  184328 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     639	    163109 ns/op	  184328 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     672	    159680 ns/op	  184328 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     672	    157787 ns/op	  184329 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	     693	    163545 ns/op	  184328 B/op	      22 allocs/op
+BenchmarkPublishBlob/N100-16   	   12043	      9928 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   12384	      9613 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   12520	      9552 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   12040	      9859 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   12196	      9522 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   12207	      9819 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   12483	      9670 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   12123	     10029 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   10000	     10024 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   10000	     10255 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N1000-16  	     978	    111916 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    1156	    113898 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    1099	    106268 ns/op	  173089 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    1208	    107049 ns/op	  173089 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    1242	    109306 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	     976	    110580 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    1128	    110621 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    1118	    106118 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    1014	    108940 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    1212	    109455 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N10000-16 	     100	   1073236 ns/op	 1563266 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     111	   1076945 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     100	   1118207 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     111	   1049215 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     100	   1056153 ns/op	 1563265 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	      96	   1076217 ns/op	 1563268 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     111	   1102200 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     100	   1348492 ns/op	 1563269 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     100	   1110190 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     100	   1091505 ns/op	 1563265 B/op	      74 allocs/op

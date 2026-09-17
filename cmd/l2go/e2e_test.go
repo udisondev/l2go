@@ -16,7 +16,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -326,6 +328,25 @@ func (env *e2eEnv) charFile(user string) string {
 	return filepath.Join(env.persist, "chars", strings.ToLower(user)+".json")
 }
 
+// readCharsRaw — чтение файла персонажей; на Windows мгновенный rename-обмен
+// назначением даёт читателю sharing-violation (errno 32) — поллинг-циклы
+// waitFreshChars переживают её повтором, не ошибкой (тайминг-инвариант
+// с бюджетом, не синхронизация).
+func readCharsRaw(path string) ([]byte, error) {
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			return raw, nil
+		}
+		if errors.Is(err, syscall.Errno(32)) && time.Now().Before(deadline) {
+			time.Sleep(3 * time.Millisecond)
+			continue
+		}
+		return nil, err
+	}
+}
+
 // readChars — чтение файла персонажей: конверт persist {schema,data,sha256},
 // data — список записей.
 func readChars(t *testing.T, path string) []map[string]any {
@@ -420,20 +441,19 @@ func TestE2ELogoutRoundTripPosition(t *testing.T) {
 		t.Fatalf("Logout: %v", err)
 	}
 	waitForLeaveWorld(t, s, env)
+	// Сохранения сессии должны лечь до правки файла (см. waitPersistIdle).
+	waitPersistIdle(t, env.gs.actor)
 	// LeaveWorld — последний входящий кадр сессии (close-after-flush).
 	if tail := tailAfter(t, s.out, "LEAVE_WORLD"); len(tail) != 0 {
 		t.Errorf("кадры после LeaveWorld: %q", tail)
 	}
 
 	// Путь сохранения: файл отражает сессию. Персист пишет асинхронно —
-	// ждём свежего LastSeenUnix и погашенной очереди сохранений (F22:
-	// патч поверх невысохшего сохранения был бы перезаписан; свежий
-	// LastSeen ещё не значит «ответ персиста применён» — ретрай/финальный
-	// сохранитель переписали бы файл своим снимком).
+	// ждём свежего LastSeenUnix (F22: патч поверх невысохшего сохранения
+	// был бы перезаписан).
 	path := env.charFile("roundtrip")
 	start := time.Now().Unix()
 	recs := waitFreshChars(t, path, start)
-	waitForSaveQueue(t, env.gs, 0)
 	if len(recs) != 1 {
 		t.Fatalf("персонажей в файле %d; want 1", len(recs))
 	}
@@ -484,6 +504,37 @@ func tailAfter(t *testing.T, out *syncBuffer, sub string) string {
 		rest = ""
 	}
 	return strings.TrimSpace(rest)
+}
+
+// waitPersistIdle — сохранения сессии сошлись: очередь актора пуста и
+// незавершённых писем нет (письмо считается взятым до записи и отвеченным
+// после — запись видна как handled > replies). Все письма сессии отправлены
+// к моменту LeaveWorld, дальнейших пишущих нет: правка файла после схождения
+// не перезаписывается догоняющим сохранением. Второй замер через паузу
+// закрывает окно между письмами пачки (взятые подряд письма мгновенно
+// держат handled == replies между ответами).
+func waitPersistIdle(t *testing.T, act *persist.Actor) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if idle(act) {
+			time.Sleep(5 * time.Millisecond)
+			if idle(act) {
+				return
+			}
+		}
+		if !time.Now().Before(deadline) {
+			st := act.Stats()
+			t.Fatalf("персист не сошёлся за 3с: depth=%d handled=%d replies=%d",
+				st.Depth, st.Handled, st.Replies)
+		}
+		time.Sleep(3 * time.Millisecond) // темп поллинга, не синхронизация
+	}
+}
+
+func idle(act *persist.Actor) bool {
+	st := act.Stats()
+	return st.Depth == 0 && st.Handled == st.Replies
 }
 
 // waitFreshChars — поллинг файла персонажей до записи сессии (LastSeenUnix
@@ -599,20 +650,6 @@ func TestE2ELinkDeadGraceAndReenter(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("персонажей после второй сессии: %d; want 1", len(recs))
 	}
-}
-
-// waitForSaveQueue — поллинг очереди несохранённых персонажей региона до
-// want (SaveQueue — атомик: ретраи/финальный сохранитель исключены).
-func waitForSaveQueue(t *testing.T, srv *server, want int) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if srv.region.Stats().SaveQueue == want {
-			return
-		}
-		time.Sleep(3 * time.Millisecond)
-	}
-	t.Fatalf("SaveQueue = %d; want %d", srv.region.Stats().SaveQueue, want)
 }
 
 // waitForResidents — поллинг населения региона до want (бюджет, без снов-
@@ -763,80 +800,197 @@ func TestE2EGoroutineLeak(t *testing.T) {
 		before, before+5, runtime.NumGoroutine())
 }
 
-// Зона P3.8: взаимная видимость — второй клиент видит первого (CharInfo),
-// первый — второго; логаут первого — DeleteObject у оставшегося (база КТ-4).
-func TestE2EMutualVisibilityTwoClients(t *testing.T) {
+// TestE2EMutualVisibilityAndLogoutDelete — два клиента: взаимные CHAR_INFO
+// после второго входа, DELETE_OBJECT у оставшегося после логаута второго
+// (join AoI, P3.8). Молчун: у ушедшего после LEAVE_WORLD join-кадров нет.
+func TestE2EMutualVisibilityAndLogoutDelete(t *testing.T) {
 	env := startE2E(t, 50, 4)
-	s1 := enterWorld(t, env, "visio1")
-	waitForLine(t, s1.out, "USER_INFO", 3*time.Second)
-	s2 := enterWorld(t, env, "visio2")
-	waitForLine(t, s2.out, "USER_INFO", 3*time.Second)
+	alice := enterWorld(t, env, "alice")
+	waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	bob := enterWorld(t, env, "bob")
+	waitForLine(t, bob.out, "USER_INFO", 3*time.Second)
 
-	// Оба видят друг друга (входы на стартовой точке — дистанция 0).
-	l1 := waitForLine(t, s1.out, "CHAR_INFO", 3*time.Second)
-	if !charInfoHexHas(l1, charName("visio2")) {
-		t.Errorf("первый не видит второго: %s", l1)
+	lineA := waitForLine(t, alice.out, "CHAR_INFO name=\"Botbob\"", 3*time.Second)
+	obj := regexp.MustCompile(`objID=([0-9]+)`).FindStringSubmatch(lineA)
+	if obj == nil {
+		t.Fatalf("CHAR_INFO у Alice без objID: %s", lineA)
 	}
-	l2 := waitForLine(t, s2.out, "CHAR_INFO", 3*time.Second)
-	if !charInfoHexHas(l2, charName("visio1")) {
-		t.Errorf("второй не видит первого: %s", l2)
-	}
+	waitForLine(t, bob.out, "CHAR_INFO name=\"Botalice\"", 3*time.Second)
 
-	// Логаут первого → DeleteObject у второго.
-	if err := s1.gc.Logout(); err != nil {
-		t.Fatalf("Logout первого: %v", err)
+	if err := bob.gc.Logout(); err != nil {
+		t.Fatalf("Logout(Bob): %v", err)
 	}
-	waitForLine(t, s1.out, "LEAVE_WORLD", 3*time.Second)
-	waitForLine(t, s2.out, "DELETE_OBJECT", 3*time.Second)
-
-	// Перезаход первого — набор видимости идентичен (ввод заново).
-	// Счётчик вхождений ДО/ПОСЛЕ: waitForLine сканирует буфер с начала и
-	// вернул бы кадр первого входа — хвост обязан быть новым вхождением.
-	before2 := strings.Count(s2.out.String(), "CHAR_INFO")
-	s1b := enterWorld(t, env, "visio1")
-	l1b := waitForLine(t, s1b.out, "CHAR_INFO", 3*time.Second)
-	if !charInfoHexHas(l1b, charName("visio2")) {
-		t.Errorf("перезаход не видит второго: %s", l1b)
+	waitForLeaveWorld(t, bob, env)
+	lineD := waitForLine(t, alice.out, "DELETE_OBJECT", 3*time.Second)
+	if !strings.Contains(lineD, "objID="+obj[1]) {
+		t.Errorf("DELETE_OBJECT с чужим objID: %s (введён был %s)", lineD, obj[1])
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) &&
-		strings.Count(s2.out.String(), "CHAR_INFO") <= before2 {
-		time.Sleep(3 * time.Millisecond) // тайминг-инвариант доставки, не синхронизация
-	}
-	after2 := strings.Count(s2.out.String(), "CHAR_INFO")
-	if after2 != before2+1 {
-		t.Fatalf("оставшийся не получил новый CharInfo перезахода: %d → %d; want +1", before2, after2)
-	}
-	if !charInfoHexHas(s2.out.String(), charName("visio1")) {
-		t.Errorf("буфер второго не содержит имени перезахода")
+	if tail := tailAfter(t, bob.out, "LEAVE_WORLD"); len(tail) != 0 {
+		t.Errorf("кадры после LEAVE_WORLD ушедшего: %q", tail)
 	}
 }
 
-// charInfoHexHas — имя в UTF-16LE присутствует в hex-дампе кадра CharInfo
-// (трафик-лог печатает hex; имя — единственная строка в кадре).
-func charInfoHexHas(line, name string) bool {
-	var hexName []byte
-	for _, r := range name {
-		hexName = append(hexName, byte(r), byte(r>>8))
+// TestE2ESingleClientJoinSilence — одиночный клиент: join-кадров нет
+// (регресс P3.7; тайминг-инвариант «молчун», не синхронизация).
+func TestE2ESingleClientJoinSilence(t *testing.T) {
+	env := startE2E(t, 50, 4)
+	s := enterWorld(t, env, "lone")
+	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+	time.Sleep(150 * time.Millisecond) // ≥3 тиков 50 Гц без событий членства
+	if txt := s.out.String(); strings.Contains(txt, "CHAR_INFO") || strings.Contains(txt, "DELETE_OBJECT") {
+		t.Errorf("одиночный клиент получил join-кадры: лог содержит CHAR_INFO/DELETE_OBJECT")
 	}
-	return strings.Contains(line, fmt.Sprintf("%x", hexName))
 }
 
-// readCharsRaw — чтение файла персонажей; на Windows мгновенный rename-обмен
-// назначением даёт читателю sharing-violation (errno 32) — поллинг-циклы
-// waitFreshChars переживают её повтором, не ошибкой (тайминг-инвариант
-// с бюджетом, не синхронизация).
-func readCharsRaw(path string) ([]byte, error) {
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		raw, err := os.ReadFile(path)
-		if err == nil {
-			return raw, nil
+// parseCoord — числовое поле трафик-лога (x=..., y=...).
+func parseCoord(t *testing.T, line, key string) int {
+	t.Helper()
+	m := regexp.MustCompile(key + `=(-?[0-9]+)`).FindStringSubmatch(line)
+	if m == nil {
+		t.Fatalf("поле %s отсутствует: %s", key, line)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("поле %s: %v", key, err)
+	}
+	return n
+}
+
+// TestE2EMovementDeliveredToObserver — два клиента: движение Alice доведено
+// до Bob (CharMoveToLocation с авторитетной позицией), эхо себе, StopMove на
+// прибытие; перезаход на позиции прибытия (снимок с живым heading).
+func TestE2EMovementDeliveredToObserver(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	alice := enterWorld(t, env, "mova")
+	lineUI := waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
+	bob := enterWorld(t, env, "movb")
+	waitForLine(t, bob.out, "CHAR_INFO name=\"Botmova\"", 3*time.Second)
+
+	// движение на 100 юн восточнее (10 Гц: ~9 тиков)
+	if err := alice.gc.MoveToLocation(int32(ax+100), int32(ay), -3104, int32(ax), int32(ay), -3104, 1); err != nil {
+		t.Fatalf("MoveToLocation: %v", err)
+	}
+	echo := waitForLine(t, alice.out, "CHAR_MOVE_TO_LOCATION", 3*time.Second)
+	if got := parseCoord(t, echo, "dstX"); got != ax+100 {
+		t.Errorf("эхо dstX = %d; want %d (цель)", got, ax+100)
+	}
+	stream := waitForLine(t, bob.out, "CHAR_MOVE_TO_LOCATION", 3*time.Second)
+	curX := parseCoord(t, stream, "curX")
+	if curX < ax-50 || curX > ax+110 {
+		t.Errorf("наблюдатель получил curX = %d; want в пределах шага от %d", curX, ax)
+	}
+	stop := waitForLine(t, alice.out, "STOP_MOVE", 3*time.Second)
+	if got := parseCoord(t, stop, "x"); got != ax+100 {
+		t.Errorf("прибытие x = %d; want %d", got, ax+100)
+	}
+	waitForLine(t, bob.out, "STOP_MOVE", 3*time.Second)
+
+	// перезаход на позиции прибытия (снимок сохранения: позиция, не исходная)
+	if err := alice.gc.Logout(); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	waitForLeaveWorld(t, alice, env)
+	again := enterWorld(t, env, "mova")
+	line2 := waitForLine(t, again.out, "USER_INFO", 3*time.Second)
+	if got := parseCoord(t, line2, "x"); got != ax+100 {
+		t.Errorf("перезаход x = %d; want %d (позиция прибытия)", got, ax+100)
+	}
+}
+
+// TestE2EMovementObserverOutsideRadius — третий клиент вне радиуса: кадров
+// движения не получает (тайминг-инвариант молчуна, не синхронизация).
+// Позиция «далеко́го» — правкой файла персонажей + рестартом GS (charStore
+// живого актора держит записи в памяти — правка диска видима после релоада).
+func TestE2EMovementObserverOutsideRadius(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	// подготовка «далеко́го» персонажа: создание, сохранение, правка позиции,
+	// рестарт GS (charStore живого актора держит записи в памяти — правка диска
+	// видима после релоада; коннектов ещё нет).
+	far := enterWorld(t, env, "faraway")
+	lineF := waitForLine(t, far.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineF, "x"), parseCoord(t, lineF, "y")
+	if err := far.gc.Logout(); err != nil {
+		t.Fatalf("Logout(far): %v", err)
+	}
+	waitForLeaveWorld(t, far, env)
+	// Сохранения сессии должны лечь до правки файла (см. waitPersistIdle).
+	waitPersistIdle(t, env.gs.actor)
+	logoutUnix := time.Now().Unix() // после ухода: создание/вход уже не пишут
+	path := env.charFile("faraway")
+	// сохранение логаута асинхронно: ждём записи с last_seen ≥ логаута до правки
+	recs := waitFreshChars(t, path, logoutUnix)
+	recs[0]["x"] = ax + 10000
+	recs[0]["y"] = ay
+	writeChars(t, path, recs)
+	env.restartGS(t)
+
+	alice := enterWorld(t, env, "neara")
+	waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	far2 := enterWorld(t, env, "faraway")
+	lineFar := waitForLine(t, far2.out, "USER_INFO", 3*time.Second)
+	if got := parseCoord(t, lineFar, "x"); got != ax+10000 {
+		t.Fatalf("далёкий клиент вошёл на x=%d; want %d (правка файла не видна)", got, ax+10000)
+	}
+	if err := alice.gc.MoveToLocation(int32(ax+100), int32(ay), -3104, int32(ax), int32(ay), -3104, 1); err != nil {
+		t.Fatalf("MoveToLocation: %v", err)
+	}
+	waitForLine(t, alice.out, "STOP_MOVE", 3*time.Second)
+	time.Sleep(300 * time.Millisecond) // ≥3 тика 10 Гц: молчание далеко́го устойчиво
+	if txt := far2.out.String(); strings.Contains(txt, "CHAR_MOVE_TO_LOCATION") ||
+		strings.Contains(txt, "STOP_MOVE") || strings.Contains(txt, "CHAR_INFO") {
+		t.Errorf("клиент вне радиуса получил кадры движения/ввода; лог:\n%s", txt)
+	}
+}
+
+// TestE2ESpeedhackHeadlessSnapBack — headless-клиент шлёт ValidatePosition со
+// скачком ×3: snap-back (VALIDATE_LOCATION) доставлен, серверная позиция
+// авторитетна (перезаход на серверной позиции).
+func TestE2ESpeedhackHeadlessSnapBack(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	s := enterWorld(t, env, "cheat")
+	lineUI := waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+	startX, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
+	for range 5 { // серия отчётов с нарастающим скачком ×3 (движения не было)
+		if err := s.gc.ValidatePosition(int32(startX+900), int32(ay), -3104, 0); err != nil {
+			t.Fatalf("ValidatePosition: %v", err)
 		}
-		if errors.Is(err, syscall.Errno(32)) && time.Now().Before(deadline) {
-			time.Sleep(3 * time.Millisecond)
-			continue
+		time.Sleep(120 * time.Millisecond) // темп серии (нагрузка, не синхронизация)
+	}
+	line := waitForLine(t, s.out, "VALIDATE_LOCATION", 3*time.Second)
+	if got := parseCoord(t, line, "x"); got != startX {
+		t.Errorf("snap-back x = %d; want серверную %d (сущность не двигалась)", got, startX)
+	}
+	if err := s.gc.Logout(); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	waitForLeaveWorld(t, s, env)
+	again := enterWorld(t, env, "cheat")
+	line2 := waitForLine(t, again.out, "USER_INFO", 3*time.Second)
+	if got := parseCoord(t, line2, "x"); got != startX {
+		t.Errorf("перезаход после спидхака x = %d; want серверную %d (позиция не мутирована отчётами)",
+			got, startX)
+	}
+}
+
+// TestE2EMovementCoalescingOneFramePerStep — серия быстрых кликов в окне шага:
+// стрим наблюдателя не превосходит кадровой частоты (одна позиция на кадр).
+func TestE2EMovementCoalescingOneFramePerStep(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	alice := enterWorld(t, env, "coala")
+	lineUI := waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
+	bob := enterWorld(t, env, "coalb")
+	waitForLine(t, bob.out, "CHAR_INFO name=\"Botcoala\"", 3*time.Second)
+
+	for i := range 5 { // быстрые клики: шлюз коалесит до 1 письма/конн/шаг
+		if err := alice.gc.MoveToLocation(int32(ax+300+i), int32(ay), -3104, int32(ax), int32(ay), -3104, 1); err != nil {
+			t.Fatalf("MoveToLocation: %v", err)
 		}
-		return nil, err
+	}
+	time.Sleep(400 * time.Millisecond) // 4 тика 10 Гц — окно подсчёта (тайминг-инвариант)
+	n := strings.Count(bob.out.String(), "CHAR_MOVE_TO_LOCATION")
+	if n > 12 { // окно + калибровка + запас: runaway-дубли ловятся, честный стрим ~4-6
+		t.Errorf("кадров движения наблюдателю = %d за окно; want ≤12 (одна позиция на кадр)", n)
 	}
 }

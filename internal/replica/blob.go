@@ -1,312 +1,241 @@
-// Блоб ячейки (ось 3 ADR-0004): per-owner SoA-публикация с полными
-// пейлоадами, dirty-манифестом и стабильными плотными слотами. Издатель —
-// горутина региона-владельца; после сборки блоб иммутабелен (Build всегда
-// копирует).
-
 package replica
 
 import (
-	"fmt"
-	"math/bits"
 	"sort"
+	"sync/atomic"
 
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// RecordType — дискриминатор записи блоба.
-type RecordType uint8
+// RecordKind — тип AoI-записи.
+type RecordKind uint8
 
-// Типы записей: игрок (CharInfo/UserInfo) и NPC (NpcInfo).
+// Записи фазы 3: игроки (NPC-население публикует P3.10).
 const (
-	RecordPlayer RecordType = iota
-	RecordNPC
+	RecordKindPlayer RecordKind = iota
+	RecordKindNPC
 )
 
-// Record — полный пейлоад записи: поля по потребителю CharInfo/NpcInfo/UserInfo.
-// Per-template константы (скорости/коллизии) в блоб не входят — их источник
-// при compose. Flags — входы предиката видимости (инвиз/GM; фаза 3 не
-// ставится). Epoch — метка записи: источник инкремента появляется с
-// хэндоффами фазы 4, потребитель — Snapshot advisory и max-epoch-дедуп.
+// Record — полный пейлоад AoI-записи (значение): вечный ID, ячейка позиции,
+// кинематика (включая клампнутую цель движения — кадры P3.9 самодостаточны
+// пейлоадом события) и поля потребителя CharInfo. Поля по потребителю;
+// NpcInfo-поля дополнит P3.10.
 type Record struct {
-	Entity     transport.EntityID
-	X, Y, Z    int32
-	Heading    int32
-	Moving     bool
-	Type       RecordType
-	Name       string
-	ClassID    int32
-	Race       int32
-	Female     bool
-	HairStyle  int32
-	HairColor  int32
-	Face       int32
-	TemplateID int32 // npc: displayId шаблона
-	Flags      uint32
-	Epoch      uint64
+	Entity    transport.EntityID
+	Cell      CellID
+	X, Y      int32
+	Z         int32
+	DestX     int32
+	DestY     int32
+	DestZ     int32
+	Heading   int32
+	Moving    bool
+	Kind      RecordKind
+	Flags     Flags
+	Name      string
+	Race      int32
+	Female    bool
+	BaseClass int32
+	ClassID   int32
+	HairStyle int32
+	HairColor int32
+	Face      int32
 }
 
-// Числовые колонки блоба (фиксированный порядок в бэкинге; строки —
-// параллельный строковый массив).
-const (
-	colID = iota
-	colX
-	colY
-	colZ
-	colHeading
-	colMoving
-	colType
-	colClassID
-	colRace
-	colFemale
-	colHairStyle
-	colHairColor
-	colFace
-	colTemplateID
-	colFlags
-	colEpoch
-	numCols
-)
+// segment — SoA-сегмент одной ячейки: записи по плотным слотам (слот = индекс,
+// дырка — нулевой Entity), членство и dirty-манифест — битмапами по слотам.
+type segment struct {
+	cell    CellID
+	records []Record
+	member  []uint64
+	born    []uint64
+	changed []uint64
+	gone    []uint64
+}
 
-// Blob — иммутабельное поколение ячейки. Один числовой бэкинг несёт
-// битмапы Members/Dirty и все числовые колонки (stride = число слотов),
-// строки — второй бэкинг: ≤3 аллокации на поколение. Слоты стабильны,
-// пока житель жив; реюз слота детектируется вечным id записи.
+func bitMark(bitmap []uint64, slot int) { bitmap[slot/64] |= 1 << (uint(slot) % 64) }
+
+func bitHas(bitmap []uint64, slot int) bool {
+	return bitmap[slot/64]&(1<<(uint(slot)%64)) != 0
+}
+
+// Blob — иммутабельное после Commit поколение. Поля неотэкспортированы:
+// внешний читатель идёт через Publisher.Read/Committed (механика D4), Join и
+// пакетные тесты читают напрямую. Build-результат владеет собственными
+// структурами (копия значений записей) — входной слайс мира переиспользуется
+// без алиасинга опубликованного поколения.
 type Blob struct {
-	gen     uint64
-	n       int
-	members []uint64
-	dirty   []uint64
-	nums    []uint64
-	strs    []string
+	gen    uint64 // Generation: номер поколения
+	base   uint64 // BaseGen: поколение-база dirty-манифеста (норма gen-1)
+	seg    segment
+	header MembershipHeader // маркеры переезда — фаза 3 всегда пусто
+
+	// Построенные структуры издателя (продвигаются в его состояние Commit-ом):
+	slots map[transport.EntityID]int
+	free  []int
 }
 
-// Gen — поколение сборки (инкремент join-стадии, публикация может лечь
-// позже: пропуски после паник-шагов безвредны — метрика пейсинга, ось 3).
-func (b *Blob) Gen() uint64 { return b.gen }
-
-// Len — число слотов поколения (включая мёртвые; живые — битмапом Members).
-func (b *Blob) Len() int { return b.n }
-
-func bitGet(w []uint64, i int) bool { return w[i>>6]&(1<<(uint(i)&63)) != 0 }
-
-// IsMember — живость слота (битмап).
-func (b *Blob) IsMember(i int) bool { return bitGet(b.members, i) }
-
-// cols — база числовых колонок в бэкинге.
-func (b *Blob) cols() int { return 4 * ((b.n + 63) / 64) }
-
-// Колонки-читатели (пейлоады; inline-дешёвые).
-func (b *Blob) ID(i int) transport.EntityID { return transport.EntityID(b.nums[b.cols()+colID*b.n+i]) }
-func (b *Blob) X(i int) int32               { return int32(b.nums[b.cols()+colX*b.n+i]) }
-func (b *Blob) Y(i int) int32               { return int32(b.nums[b.cols()+colY*b.n+i]) }
-func (b *Blob) Z(i int) int32               { return int32(b.nums[b.cols()+colZ*b.n+i]) }
-func (b *Blob) Heading(i int) int32         { return int32(b.nums[b.cols()+colHeading*b.n+i]) }
-func (b *Blob) Moving(i int) bool           { return b.nums[b.cols()+colMoving*b.n+i] != 0 }
-func (b *Blob) Type(i int) RecordType       { return RecordType(b.nums[b.cols()+colType*b.n+i]) }
-func (b *Blob) ClassID(i int) int32         { return int32(b.nums[b.cols()+colClassID*b.n+i]) }
-func (b *Blob) Race(i int) int32            { return int32(b.nums[b.cols()+colRace*b.n+i]) }
-func (b *Blob) Female(i int) bool           { return b.nums[b.cols()+colFemale*b.n+i] != 0 }
-func (b *Blob) HairStyle(i int) int32       { return int32(b.nums[b.cols()+colHairStyle*b.n+i]) }
-func (b *Blob) HairColor(i int) int32       { return int32(b.nums[b.cols()+colHairColor*b.n+i]) }
-func (b *Blob) Face(i int) int32            { return int32(b.nums[b.cols()+colFace*b.n+i]) }
-func (b *Blob) TemplateID(i int) int32      { return int32(b.nums[b.cols()+colTemplateID*b.n+i]) }
-func (b *Blob) Flags(i int) uint32          { return uint32(b.nums[b.cols()+colFlags*b.n+i]) }
-func (b *Blob) Epoch(i int) uint64          { return uint64(b.nums[b.cols()+colEpoch*b.n+i]) }
-func (b *Blob) Name(i int) string           { return b.strs[i] }
-
-// Diff — дифф поколения против последней публикации: spawned/removed —
-// членство, dirty — изменившиеся живые записи (ввод — всегда dirty).
-type Diff struct {
-	spawned []uint64
-	removed []uint64
-	dirty   []uint64
+// Publisher — строитель блоба у владельца: стабильные плотные слоты (слот
+// присваивается при первом входе записи, освобождается при уходе, реюз —
+// младший свободный; реюз детектируется вечным id в слоте). Build не мутирует
+// издателя вовсе; Commit пиннует порядок «сначала prev, потом свап» (паника
+// между ними оставляет согласованную пару view/prev — опубликованное может
+// отстать на поколение, безвредно).
+type Publisher struct {
+	gen       uint64 // поколение последнего Commit
+	slots     map[transport.EntityID]int
+	free      []int
+	prev      *segment // база dirty-сравнения (последний Commit)
+	committed atomic.Pointer[Blob]
 }
 
-func bitsCount(w []uint64) int {
-	n := 0
-	for _, v := range w {
-		n += bits.OnesCount64(v)
+// NewPublisher создаёт издателя (нулевое значение тоже работоспособно).
+func NewPublisher() *Publisher {
+	return &Publisher{slots: make(map[transport.EntityID]int)}
+}
+
+// Build строит следующее поколение: размещает записи по стабильным слотам
+// (прошлые — на своих местах, новые — младшим свободным либо расширением),
+// освобождает слоты ушедших, выводит dirty-манифест сравнением полных
+// пейлоадов с prev (честный dirty — ловит и смену Flags). Возвращает блоб, НЕ
+// публикуя: публикация — Commit в фазе publish шага.
+func (p *Publisher) Build(recs []Record) *Blob {
+	slots := make(map[transport.EntityID]int, len(p.slots))
+	for k, v := range p.slots {
+		slots[k] = v
 	}
-	return n
-}
-func bitsAny(w []uint64) bool {
-	for _, v := range w {
-		if v != 0 {
-			return true
+	free := make([]int, len(p.free))
+	copy(free, p.free)
+
+	// ушедшие записи: слот освобождается, карта — под новое население;
+	// сбор свободных слотов — по отсортированным ключам (детерминизм
+	// наполнения free-list: map-итерация рандомизирована)
+	present := make(map[transport.EntityID]struct{}, len(recs))
+	for i := range recs {
+		present[recs[i].Entity] = struct{}{}
+	}
+	var departed []int
+	for ent, slot := range slots {
+		if _, ok := present[ent]; !ok {
+			delete(slots, ent)
+			departed = append(departed, slot)
 		}
 	}
-	return false
-}
+	sort.Ints(departed)
+	free = append(free, departed...)
 
-// SpawnedCount — число введённых слотов.
-func (d *Diff) SpawnedCount() int { return bitsCount(d.spawned) }
-
-// RemovedCount — число исчезнувших слотов.
-func (d *Diff) RemovedCount() int { return bitsCount(d.removed) }
-
-// DirtyCount — число изменившихся живых слотов.
-func (d *Diff) DirtyCount() int { return bitsCount(d.dirty) }
-
-// Any — есть ли хоть одно событие поколения.
-func (d *Diff) Any() bool {
-	return bitsAny(d.spawned) || bitsAny(d.removed) || bitsAny(d.dirty)
-}
-
-type idSlot struct {
-	id   transport.EntityID
-	slot int
-}
-
-// Builder — издательская сторона ячейки: собственность горутины региона,
-// мутабелен между публикациями. Слоты стабильны (первый свободный индекс);
-// бухгалтерия id→slot — инкрементально-отсортированный слайс (binary search
-// вставка/удаление, прецедент residents). Build вычисляет дифф против vs —
-// последнего опубликованного блоба: неопубликованное поколение не существует
-// для диффа, паника до publish доигрывается повторным вычислением.
-type Builder struct {
-	recs []Record
-	ids  []idSlot
-	free []int
-}
-
-// NewBuilder — пустой строитель.
-func NewBuilder() *Builder { return &Builder{} }
-
-// Update — upsert записи: существующий житель обновляет свой слот, новый
-// занимает первый свободный (или хвост).
-func (b *Builder) Update(r Record) error {
-	if r.Entity == 0 {
-		return fmt.Errorf("replica: Record.Entity 0 — невалидный вечный id")
+	b := &Blob{gen: p.gen + 1, base: p.gen}
+	maxSlot := -1
+	for _, slot := range slots {
+		if slot > maxSlot {
+			maxSlot = slot
+		}
 	}
-	i := sort.Search(len(b.ids), func(i int) bool { return b.ids[i].id >= r.Entity })
-	if i < len(b.ids) && b.ids[i].id == r.Entity {
-		b.recs[b.ids[i].slot] = r
-		return nil
+	startLen := maxSlot + 1
+	// gone-битмап покрывает и слоты, жившие только в prev (хвостовые дырки) —
+	// иначе усохший сегмент не итерирует ушедшие слоты
+	if p.prev != nil && len(p.prev.records) > startLen {
+		startLen = len(p.prev.records)
 	}
-	slot := len(b.recs)
-	if n := len(b.free); n > 0 {
-		slot = b.free[n-1]
-		b.free = b.free[:n-1]
-		b.recs[slot] = r
-	} else {
-		b.recs = append(b.recs, r)
+	b.seg.records = make([]Record, startLen)
+	for i := range recs {
+		rec := recs[i]
+		b.seg.cell = rec.Cell
+		slot, ok := slots[rec.Entity]
+		if !ok {
+			if len(free) > 0 {
+				slot = free[0] // младший свободный (free отсортирован)
+				free = free[1:]
+			} else {
+				slot = len(b.seg.records)
+			}
+			slots[rec.Entity] = slot
+		}
+		for slot >= len(b.seg.records) {
+			b.seg.records = append(b.seg.records, Record{})
+		}
+		b.seg.records[slot] = rec
 	}
-	b.ids = append(b.ids, idSlot{})
-	copy(b.ids[i+1:], b.ids[i:])
-	b.ids[i] = idSlot{id: r.Entity, slot: slot}
-	return nil
-}
-
-// Remove — деспавн: слот освобождается (Entity слота — 0), реюз — первым
-// свободным индексом.
-func (b *Builder) Remove(id transport.EntityID) error {
-	i := sort.Search(len(b.ids), func(i int) bool { return b.ids[i].id >= id })
-	if i >= len(b.ids) || b.ids[i].id != id {
-		return fmt.Errorf("replica: Remove(%d) — записи нет", id)
-	}
-	slot := b.ids[i].slot
-	b.recs[slot] = Record{}
-	b.free = append(b.free, slot)
-	b.ids = append(b.ids[:i], b.ids[i+1:]...)
-	return nil
-}
-
-// Build — собирает иммутабельное поколение (всегда копирует) и дифф против
-// vs (nil — холодный старт: всё введено и dirty). Один числовой бэкинг
-// несёт битмапы Members/Dirty/Spawned/Removed и колонки; строки — второй:
-// блоб+дифф ≈ 4 аллокации на поколение. Дифф-битмапы размечены по максимуму
-// слотов поколений: усадка (n < vs.n) флагует хвост vs в removed.
-func (b *Builder) Build(gen uint64, vs *Blob) (*Blob, *Diff) {
-	n := len(b.recs)
-	words := (n + 63) / 64
-	dw := words
-	if vs != nil {
-		dw = max(dw, (vs.n+63)/64)
-	}
-	total := words + 3*dw + numCols*n
-	nums := make([]uint64, total)
-	members := nums[:words]
-	dirty := nums[words : words+dw]
-	spawned := nums[words+dw : words+2*dw]
-	removed := nums[words+2*dw : words+3*dw]
-	cols := nums[words+3*dw:]
-	strs := make([]string, n)
-
-	blob := &Blob{gen: gen, n: n, members: members, dirty: dirty, nums: nums, strs: strs}
-	for slot, r := range b.recs {
-		if r.Entity == 0 {
+	words := (len(b.seg.records) + 63) / 64
+	b.seg.member = make([]uint64, words)
+	b.seg.born = make([]uint64, words)
+	b.seg.changed = make([]uint64, words)
+	b.seg.gone = make([]uint64, words)
+	for slot := range b.seg.records {
+		rec := b.seg.records[slot]
+		if rec.Entity == 0 {
 			continue
 		}
-		members[slot>>6] |= 1 << (uint(slot) & 63)
-		strs[slot] = r.Name
-		cols[colID*n+slot] = uint64(r.Entity)
-		cols[colX*n+slot] = i32u(r.X)
-		cols[colY*n+slot] = i32u(r.Y)
-		cols[colZ*n+slot] = i32u(r.Z)
-		cols[colHeading*n+slot] = i32u(r.Heading)
-		cols[colMoving*n+slot] = b2u(r.Moving)
-		cols[colType*n+slot] = uint64(r.Type)
-		cols[colClassID*n+slot] = i32u(r.ClassID)
-		cols[colRace*n+slot] = i32u(r.Race)
-		cols[colFemale*n+slot] = b2u(r.Female)
-		cols[colHairStyle*n+slot] = i32u(r.HairStyle)
-		cols[colHairColor*n+slot] = i32u(r.HairColor)
-		cols[colFace*n+slot] = i32u(r.Face)
-		cols[colTemplateID*n+slot] = i32u(r.TemplateID)
-		cols[colFlags*n+slot] = uint64(r.Flags)
-		cols[colEpoch*n+slot] = r.Epoch
-	}
-
-	// Dirty-манифест диффа — сам битмап блоба (одно поколение — один кусок).
-	d := &Diff{spawned: spawned, removed: removed, dirty: dirty}
-	if vs == nil {
-		copy(spawned, members)
-		copy(dirty, members)
-		return blob, d
-	}
-	vWords := (vs.n + 63) / 64
-	// Дифф-слова — по максимуму поколений: усадка слотов нового блоба
-	// (n < vs.n) обязана флаговаться в removed (слоты хвоста vs исчезли).
-	for w := range dw {
-		var cur, old uint64
-		if w < words {
-			cur = members[w]
-		}
-		if w < vWords {
-			old = vs.members[w]
-		}
-		spawned[w] = cur &^ old
-		removed[w] = old &^ cur
-		dirty[w] = spawned[w] // ввод — всегда dirty
-	}
-	for slot := range n {
-		if !bitGet(members, slot) || bitGet(spawned, slot) || slot >= vs.n || !vs.IsMember(slot) {
-			continue
-		}
-		if recChanged(blob, vs, slot) {
-			dirty[slot>>6] |= 1 << (uint(slot) & 63)
+		bitMark(b.seg.member, slot)
+		prevRec, was := p.prevRecord(slot)
+		switch {
+		case !was || prevRec.Entity != rec.Entity:
+			bitMark(b.seg.born, slot) // новый жилец (включая реюз слота)
+		case prevRec != rec:
+			bitMark(b.seg.changed, slot)
 		}
 	}
-	return blob, d
+	// gone: слот занят в prev, но пуст или передан другому в новом поколении
+	if p.prev != nil {
+		for slot := range p.prev.records {
+			prevRec := p.prev.records[slot]
+			if prevRec.Entity == 0 {
+				continue
+			}
+			if slot >= len(b.seg.records) || b.seg.records[slot].Entity != prevRec.Entity {
+				bitMark(b.seg.gone, slot)
+			}
+		}
+	}
+	b.slots = slots
+	b.free = free
+	b.header = MembershipHeader{Generation: b.gen}
+	return b
 }
 
-// recChanged — изменилась ли живая запись против поколения vs (все колонки
-// и имя; сравнение по бэкинговым индексам без доступа через методы).
-func recChanged(b, vs *Blob, slot int) bool {
-	bb, vb := b.cols(), vs.cols()
-	for c := 0; c < numCols; c++ {
-		if b.nums[bb+c*b.n+slot] != vs.nums[vb+c*vs.n+slot] {
-			return true
-		}
+// prevRecord — запись prev-поколения по слоту (nil-сегмент — первый Build).
+func (p *Publisher) prevRecord(slot int) (Record, bool) {
+	if p.prev == nil || slot >= len(p.prev.records) {
+		return Record{}, false
 	}
-	return b.strs[slot] != vs.strs[slot]
+	rec := p.prev.records[slot]
+	if rec.Entity == 0 {
+		return Record{}, false
+	}
+	return rec, true
 }
 
-func i32u(v int32) uint64 { return uint64(uint32(v)) }
+// Commit публикует построенное поколение: сначала продвигает prev (базу
+// будущего манифеста — детект рассинхрона поколений у Join остаётся
+// согласованным при панике между шагами), затем свапает закоммиченное.
+func (p *Publisher) Commit(b *Blob) {
+	seg := b.seg
+	p.prev = &seg
+	p.slots = b.slots
+	p.free = b.free
+	p.gen = b.gen
+	p.committed.Store(b)
+}
 
-func b2u(v bool) uint64 {
-	if v {
-		return 1
+// Committed возвращает текущее закоммиченное поколение (nil до первого Commit).
+func (p *Publisher) Committed() *Blob { return p.committed.Load() }
+
+// Read — advisory-точечное чтение по закоммиченному поколению: линейный
+// поиск по сегменту (точечные чтения per-candidate редки; aux-индекс — по
+// измерениям, база — BenchmarkAdvisoryRead).
+func (p *Publisher) Read(cell CellID, id transport.EntityID) (Snapshot, bool) {
+	b := p.committed.Load()
+	if b == nil {
+		return Snapshot{}, false
 	}
-	return 0
+	for slot := range b.seg.records {
+		rec := b.seg.records[slot]
+		if rec.Entity == id {
+			if rec.Cell != cell {
+				return Snapshot{}, false
+			}
+			return Snapshot{entity: rec.Entity, x: rec.X, y: rec.Y, z: rec.Z, kind: rec.Kind, flags: rec.Flags}, true
+		}
+	}
+	return Snapshot{}, false
 }
