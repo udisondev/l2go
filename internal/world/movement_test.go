@@ -22,6 +22,7 @@ const (
 	opCharMoveToLocation = 0x01
 	opStopMove           = 0x47
 	opValidateLocation   = 0x61
+	opActionFailed       = 0x25
 )
 
 // moveLetter — клиентский кадр MoveToLocation в конверте ящика сущности.
@@ -307,6 +308,9 @@ func TestFoldMoveZeroAndNearZeroDistance(t *testing.T) {
 			if !tc.want {
 				if _, ok := findPush(res, 7, opStopMove); !ok {
 					t.Errorf("немедленный StopMove отсутствует (кламп ≈ текущей)")
+				}
+				if _, ok := findPush(res, 7, opActionFailed); !ok {
+					t.Errorf("ActionFailed отсутствует (канон отвечает на отказ — молчание клинит инпут клиента, KT4-4)")
 				}
 			}
 		})
@@ -644,6 +648,11 @@ func TestFoldMoveToLocationCapDropsBeyondK(t *testing.T) {
 	}
 	if st.DroppedFrames != 6 { // 65-е валидное + 5 обрезанных
 		t.Errorf("DroppedFrames = %d; want 6", st.DroppedFrames)
+	}
+	// отказ сверх капа отвечает ActionFailed (KT4-4: молчание клинит инпут)
+	res := foldM(10, 0, st, ents, emptyGeo, envs...)
+	if _, ok := findPush(res, uint64(ents[64].Player.ConnID), opActionFailed); !ok {
+		t.Errorf("ActionFailed сверх капа не отправлен")
 	}
 }
 

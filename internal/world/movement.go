@@ -69,6 +69,7 @@ func foldMoveToLocation(st *State, ent *Entity, env *transport.Envelope, mov *mo
 	if mov.budget <= 0 {
 		// кап считают только валидные к обработке письма (F23)
 		st.DroppedFrames++
+		pushActionFailed(res, ent)
 		return
 	}
 	mov.budget--
@@ -80,9 +81,11 @@ func foldMoveToLocation(st *State, ent *Entity, env *transport.Envelope, mov *mo
 	target := Position{X: int32(dest.X), Y: int32(dest.Y), Z: int32(dest.Z)}
 	if distMilli(ent.Pos, target) < cellMilli {
 		// кламп вернул текущую точку: остановка без старта, только себе —
-		// наблюдатели о движении не знали (F29)
+		// наблюдатели о движении не знали (F29); ActionFailed — разблокировка
+		// инпута клиента (канон MoveToLocation.java отвечает на каждый отказ)
 		stopSegment(ent)
 		pushStopMove(res, ent)
+		pushActionFailed(res, ent)
 		return
 	}
 	ent.Moving = true
@@ -273,4 +276,11 @@ func pushValidateLocation(res *StepResult, ent *Entity) {
 	pushFrame(res, ent.Player.ConnID, protocol.ValidateLocationSize, func(dst []byte) int {
 		return protocol.WriteValidateLocation(dst, objID, ent.Pos.X, ent.Pos.Y, ent.Pos.Z, ent.Heading)
 	})
+}
+
+// pushActionFailed — разблокировка инпута: канон отвечает ActionFailed на
+// каждый отказ движения (MoveToLocation.java, все ветки), молчание клинит
+// контроллер живого клиента — клики перестают срабатывать (KT4-4).
+func pushActionFailed(res *StepResult, ent *Entity) {
+	pushFrame(res, ent.Player.ConnID, protocol.ActionFailedSize, protocol.WriteActionFailed)
 }
