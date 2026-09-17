@@ -31,6 +31,7 @@ func TestReplicaExportedAPISurface(t *testing.T) {
 		// поля экспортированных типов-значений (Record/Event/Observer/
 		// JoinConfig/MembershipHeader/GroundItem/Flags — «как значения»)
 		"Cell": true, "X": true, "Y": true, "Z": true, "Heading": true,
+		"DestX": true, "DestY": true, "DestZ": true,
 		"Moving": true, "Name": true, "Race": true, "Female": true,
 		"BaseClass": true, "ClassID": true, "HairStyle": true, "HairColor": true,
 		"Face": true, "Enter": true, "Exit": true, "Obs": true, "Target": true,

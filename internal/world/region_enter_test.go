@@ -99,7 +99,7 @@ func newEnterHarnessPusher(t *testing.T, cfg Config, pc FramePusher) *enterHarne
 	if pc != nil {
 		pusher = pc
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log, pusher)
+	r, err := NewRegion(m, reg, 1, cfg, log, pusher, emptyGeo)
 	if err != nil {
 		t.Fatalf("регион: %v", err)
 	}

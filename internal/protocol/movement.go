@@ -20,8 +20,14 @@ const (
 	deleteObject       = 0x12
 )
 
-// OpDeleteObject — опкод кадра DeleteObject (GS→C).
-const OpDeleteObject = deleteObject
+// Опкоды GS→C-кадров движения — потребители компоновки и клиентского харнесса.
+const (
+	OpDeleteObject       = deleteObject
+	OpCharMoveToLocation = charMoveToLocation
+	OpStopMove           = stopMove
+	OpValidateLocation   = validateLocation
+	OpTeleportToLocation = teleportToLocation
+)
 
 // Размеры кадров с опкодом (конвенция AttackSize).
 const (

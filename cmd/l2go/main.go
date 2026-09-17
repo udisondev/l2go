@@ -118,7 +118,7 @@ func bootstrap(cfg config) (*server, error) {
 	}
 
 	// Статика — только артефактом: XML-исходников на рантайм-пути нет.
-	_, _, meta, _, err := artifact.LoadFile(cfg.ArtifactPath)
+	_, gm, meta, _, err := artifact.LoadFile(cfg.ArtifactPath)
 	if err != nil {
 		return nil, fmt.Errorf("l2go: артефакт %s: %w", cfg.ArtifactPath, err)
 	}
@@ -155,7 +155,7 @@ func bootstrap(cfg config) (*server, error) {
 		un1()
 		return nil, fmt.Errorf("l2go: стейдж: %w", err)
 	}
-	region, err := world.NewRegion(metro, reg, regionID, wcfg, plog, stage)
+	region, err := world.NewRegion(metro, reg, regionID, wcfg, plog, stage, gm)
 	if err != nil {
 		un1()
 		return nil, fmt.Errorf("l2go: регион: %w", err)

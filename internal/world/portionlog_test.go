@@ -2,11 +2,14 @@ package world
 
 import (
 	"errors"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
@@ -348,4 +351,141 @@ func TestPortionLogPlayerRoundtrip(t *testing.T) {
 		g.ConnID != 12345 || !g.PendingTeleport || g.EnterLeaving {
 		t.Fatalf("Player roundtrip: %+v", g.Rec)
 	}
+}
+
+// v3: roundtrip отрезка движения и бакета (отрицательные значения включительно).
+func TestPortionLogMovementRoundtrip(t *testing.T) {
+	l := newTestLog(t, false, 1<<20)
+	ent := Entity{Owner: 7, Pos: Position{X: -71338, Y: 258271, Z: -3104},
+		Heading: 49152, Moving: true,
+		MoveFrom: Position{X: -72000, Y: 258000, Z: -3200},
+		MoveDist: 9007199, MoveDone: 1234567,
+		Player: &Player{Rec: mkRec("acc", "Vasya", 0), SpeedBudget: -58000}}
+	if err := l.LogStep(StepInput{Tick: 3, Births: []AppliedBirth{{ID: 77, Ent: &ent}}}); err != nil {
+		t.Fatalf("LogStep: %v", err)
+	}
+	_, steps, _, err := readAll(t, l)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := steps[0].Births[0].Ent
+	if got.Heading != 49152 || !got.Moving ||
+		got.MoveFrom != (Position{X: -72000, Y: 258000, Z: -3200}) ||
+		got.MoveDist != 9007199 || got.MoveDone != 1234567 {
+		t.Fatalf("отрезок roundtrip: %+v", got)
+	}
+	if got.Player == nil || got.Player.SpeedBudget != -58000 {
+		t.Fatalf("бакет roundtrip: %+v", got.Player)
+	}
+}
+
+// Реплей движения бит-в-бит: лог записанной сессии (входы письмами — рождения
+// логируются) прогоняется через тот же Fold (период — из заголовка) — дамп
+// равен живому; повтор — тоже; перестановка двух писем шага меняет дамп.
+func TestPortionLogReplayMovementDigest(t *testing.T) {
+	r, _ := moveRegion(t)
+	// входы письмами: рождения попадают в лог с присвоенными ID
+	r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.CtrlID()}, FromID: 901,
+		Kind:    transport.KindEnterWorld,
+		Payload: mustJSONEnter(1, mkRecAt("aca", "Hero", int(syncPos.X), int(syncPos.Y)))})
+	r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.CtrlID()}, FromID: 901,
+		Kind:    transport.KindEnterWorld,
+		Payload: mustJSONEnter(2, mkRecAt("bca", "Bobby", int(syncPos.X)+100, int(syncPos.Y)))})
+	stepN(r, 1)
+	a := r.residents[0].ent.ID
+	stepN(r, 1) // знакомство
+	b := make([]byte, 29)
+	writeMoveFrame(b, syncPos.X+230, syncPos.Y, syncPos.Z, syncPos.X, syncPos.Y, syncPos.Z)
+	sendToBox(r, a, b)
+	b2 := make([]byte, 29)
+	writeMoveFrame(b2, syncPos.X-300, syncPos.Y, syncPos.Z, syncPos.X, syncPos.Y, syncPos.Z)
+	sendToBox(r, a, b2) // ретаргет той же пачки: порядок писем определяет итог
+	v := make([]byte, 21)
+	v[0] = 0x48
+	lePut32(v[1:], int32(syncPos.X)+5) // близкий честный отчёт
+	lePut32(v[5:], int32(syncPos.Y))
+	lePut32(v[9:], syncPos.Z)
+	sendToBox(r, a, v)
+	stepN(r, 12) // старт, advance, прибытие
+
+	live := r.state.Dump(r.entsProj())
+	if err := r.log.w.Flush(); err != nil { // тест читает при живом писателе
+		t.Fatalf("flush: %v", err)
+	}
+	_, steps, _, err := ReadPortionLogDir(r.log.dir, r.log.region)
+	if err != nil {
+		t.Fatalf("ReadPortionLogDir: %v", err)
+	}
+	if len(steps) < 10 {
+		t.Fatalf("шагов в логе = %d; want ≥10", len(steps))
+	}
+
+	// replay — зеркалит шаг региона: fold писем, рождения применяются с ID из
+	// лога (сортированная вставка), удаления изымаются
+	replay := func(mutateSwap bool) []byte {
+		st := newState()
+		var ents []*Entity
+		rules := testRules()
+		rules.PeriodNS = int64(r.metro.period)
+		for si, s := range steps {
+			portions := make([]Portion, len(s.Portions))
+			for i, p := range s.Portions {
+				envs := p.Envs
+				if mutateSwap && si == 2 && len(envs) >= 2 {
+					envs[0], envs[1] = envs[1], envs[0]
+				}
+				portions[i] = Portion{Region: r.id, Tick: s.Tick, Envs: envs}
+			}
+			rng := rand.New(rand.NewPCG(uint64(r.id), uint64(s.Tick)))
+			Fold(s.Tick, s.Delta, rng, st, ents, portions, s.Advisory, rules, r.gm)
+			for _, br := range s.Births {
+				e := br.Ent
+				e.Owner = r.id // Spawn актора ставит владельца — зеркалим
+				idx := sort.Search(len(ents), func(i int) bool { return ents[i].ID >= br.ID })
+				ents = append(ents, nil)
+				copy(ents[idx+1:], ents[idx:])
+				ents[idx] = &e
+				if e.Player != nil { // материализация теней — зеркалит applyEffects актора
+					st.ResolveBirth(e.Player.Rec.Account, e.Player.ConnID, e.ID)
+				}
+			}
+			for _, rt := range s.Retires {
+				for i := range ents {
+					if ents[i].ID == rt.ID {
+						ents = append(ents[:i], ents[i+1:]...)
+						break
+					}
+				}
+			}
+		}
+		return st.Dump(ents)
+	}
+	d1, d2 := replay(false), replay(false)
+	if string(d1) != string(d2) {
+		t.Fatal("повторный реплей разошёлся")
+	}
+	if string(d1) != string(live) {
+		t.Fatalf("реплей ≠ живой дамп (первое расхождение ищется побайтово): len %d vs %d", len(d1), len(live))
+	}
+	if d3 := replay(true); string(d3) == string(d1) {
+		t.Fatal("перестановка двух писем шага не меняет дамп — детектор слеп")
+	}
+}
+
+// mustJSONEnter — письмо входа (коннект + запись) для ручных сценариев.
+func mustJSONEnter(conn uint64, rec persist.CharRecord) []byte {
+	env, err := transport.EncodeLetter(transport.EnterWorldMsg{
+		Conn: conn, Account: rec.Account, Char: mustJSONChar(rec)})
+	if err != nil {
+		panic("тест: кодирование EnterWorldMsg: " + err.Error())
+	}
+	return env
+}
+
+// lePut32 — LE int32 в буфер (тестовый писатель полей кадра).
+func lePut32(dst []byte, v int32) {
+	dst[0] = byte(v)
+	dst[1] = byte(v >> 8)
+	dst[2] = byte(v >> 16)
+	dst[3] = byte(v >> 24)
 }

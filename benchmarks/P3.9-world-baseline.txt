@@ -1,0 +1,44 @@
+# P3.9 world-baseline — движение и анти-чит
+# машина: локальная, go1.27.1, 2026-09-17; ворота: benchtime 100ms, count 10
+
+## Фаза A (advance; регион-шаг целиком, население/движущиеся)
+BenchmarkRegionPhaseA/pop=100/movers=100-16         	    9234	     13205 ns/op	   14888 B/op	      15 allocs/op
+BenchmarkRegionPhaseA/pop=1000/movers=1000-16       	     868	    137074 ns/op	  173589 B/op	      19 allocs/op
+BenchmarkRegionPhaseA/pop=5000/movers=5000-16       	     159	    669801 ns/op	  802170 B/op	      43 allocs/op
+BenchmarkRegionPhaseA/pop=12000/movers=100-16       	      69	   1605961 ns/op	 1904166 B/op	      76 allocs/op
+
+## Стрим-компоновка (k движущихся × M наблюдателей, кадры в метрике)
+BenchmarkJoinStreamCompose/movers=100/observers=100-16         	    2352	     52026 ns/op	   38024 B/op	      19 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	     456	    248411 ns/op	  188591 B/op	      23 allocs/op
+
+## Сверка с baseline P3.8: SteadyDirty/FullPass/PublishBlob (рост Record на DestX/Y/Z — плата пейлоада)
+BenchmarkPublishBlob/N100-16         	   12085	      9928 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   12270	     10012 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   12307	      9780 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   10000	     10065 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   12170	      9899 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   12121	      9953 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   10000	     10149 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   12567	      9739 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   11853	     10129 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16         	   10000	     10071 ns/op	   14864 B/op	      14 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1075	    104995 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1142	    111002 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1030	    110875 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1233	    108850 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1046	    108685 ns/op	  173095 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1158	    110815 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1267	    106944 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1167	    103117 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	    1111	    106499 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16        	     980	    107333 ns/op	  173088 B/op	      18 allocs/op
+BenchmarkPublishBlob/N10000-16       	     105	   1085971 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     100	   1063968 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     106	   1116069 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     100	   1117185 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     100	   1122822 ns/op	 1563265 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     100	   1086490 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     100	   1070351 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     111	   1101671 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     100	   1040622 ns/op	 1563264 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16       	     100	   1039008 ns/op	 1563264 B/op	      74 allocs/op

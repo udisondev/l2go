@@ -343,7 +343,7 @@ func TestAdvisorySeamPanicsAfterLogStep(t *testing.T) {
 }
 
 // Компоновка событий: игроку CharInfo (Crypt, objID=Base+Entity), NPC — счётчик
-// без кадров, Remove → DeleteObject, Update — без кадров.
+// без кадров, Remove → DeleteObject, Update стоячей записи → StopMove (P3.9).
 func TestComposeJoinEventKinds(t *testing.T) {
 	r := &Region{}
 	longName := strings.Repeat("Щ", 4096) // корнер: максимальное имя — размер кадра растёт, не паникует
@@ -355,14 +355,17 @@ func TestComposeJoinEventKinds(t *testing.T) {
 		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventRemove},
 		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventUpdate},
 	})
-	if len(pushes) != 2 {
-		t.Fatalf("кадров = %d; want 2 (CharInfo + DeleteObject)", len(pushes))
+	if len(pushes) != 3 {
+		t.Fatalf("кадров = %d; want 3 (CharInfo + DeleteObject + StopMove)", len(pushes))
 	}
 	if pushes[0].Frame[0] != 0x03 || !pushes[0].Crypt || pushes[0].Client != 9 {
 		t.Fatalf("CharInfo-кадр: %+v", pushes[0])
 	}
 	if pushes[1].Frame[0] != 0x12 || !pushes[1].Crypt {
 		t.Fatalf("DeleteObject-кадр: %+v", pushes[1])
+	}
+	if pushes[2].Frame[0] != 0x47 || pushes[2].Client != 9 || !pushes[2].Crypt {
+		t.Fatalf("StopMove-кадр стоячего апдейта: %+v", pushes[2])
 	}
 	if r.npcIntroduceSkipped.Load() != 1 {
 		t.Fatalf("NPC-ввод не посчитан")

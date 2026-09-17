@@ -20,7 +20,7 @@ import (
 
 const (
 	portionMagic   = "PL32"
-	portionVersion = 2 // v2: сущность несёт блок игрока (P3.7)
+	portionVersion = 3 // v3: сущность несёт отрезок движения и бакет игрока (P3.9)
 	flagPayloads   = 1
 
 	recStep  = 1
@@ -675,6 +675,12 @@ func parseEntity(c *parseCursor) (Entity, error) {
 	e.Dest.X = int32(int64(c.uvarint()))
 	e.Dest.Y = int32(int64(c.uvarint()))
 	e.Dest.Z = int32(int64(c.uvarint()))
+	e.Heading = int32(int64(c.uvarint()))
+	e.MoveFrom.X = int32(int64(c.uvarint()))
+	e.MoveFrom.Y = int32(int64(c.uvarint()))
+	e.MoveFrom.Z = int32(int64(c.uvarint()))
+	e.MoveDist = int64(c.uvarint())
+	e.MoveDone = int64(c.uvarint())
 	e.Moving = c.byte() != 0
 	e.Dead = c.byte() != 0
 	e.HP = int32(int64(c.uvarint()))
@@ -738,6 +744,7 @@ func parsePlayer(c *parseCursor) (*Player, error) {
 	r.CreatedUnix = c.varint()
 	r.LastSeenUnix = c.varint()
 	p.ConnID = c.uvarint()
+	p.SpeedBudget = c.varint()
 	p.PendingTeleport = c.byte() == 1
 	p.EnterLeaving = c.byte() == 1
 	return p, c.err

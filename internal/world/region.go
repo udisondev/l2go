@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/udisondev/l2go/internal/encode"
+	"github.com/udisondev/l2go/internal/geo"
 	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/replica"
@@ -59,6 +60,7 @@ type Region struct {
 	reg     *transport.Registry
 	log     *PortionLog
 	pusher  FramePusher
+	gm      *geo.Map // гео мира: read-only статики, аргумент свёртки
 	rules   Rules
 	started atomic.Bool
 
@@ -136,10 +138,15 @@ type Region struct {
 
 // NewRegion создаёт регион: контрольный ящик регистрируется в реестре и
 // клеймится (токен = uint64(ctrlID), ID монотонные с 1). Регион рождается
-// спящим: первый шаг — delta=0.
-func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Config, log *PortionLog, pusher FramePusher) (*Region, error) {
+// спящим: первый шаг — delta=0. Карта гео обязательна: движение без геодаты
+// не живёт (пустая карта — легальная деградация «мир без стен»
+// NullRegion-семантикой канона, с логом на старте).
+func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Config, log *PortionLog, pusher FramePusher, gm *geo.Map) (*Region, error) {
 	if metro == nil || reg == nil || log == nil || pusher == nil {
 		return nil, fmt.Errorf("world: NewRegion(%d): метроном, реестр, лог и пушер кадров обязательны", id)
+	}
+	if gm == nil {
+		return nil, fmt.Errorf("world: NewRegion(%d): карта гео обязательна", id)
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("world: NewRegion(%d): %w", id, err)
@@ -151,10 +158,15 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 		reg:    reg,
 		log:    log,
 		pusher: pusher,
+		gm:     gm,
 		state:  newState(),
 		slept:  true,
 		pub:    replica.NewPublisher(),
 		join:   replica.NewJoin(replica.CanonJoinConfig()),
+	}
+	if empty := geoRegionCount(gm); empty == 0 {
+		slog.Warn("world: артефакт без гео-регионов — движение без стен (NullRegion)",
+			"region", id)
 	}
 	r.adv = &logAdviser{src: r.pub, r: r}
 	r.ringCh = make(chan struct{}, 1)
@@ -171,8 +183,9 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 // CtrlID — адрес контрольного ящика региона (получатели контрольных писем).
 func (r *Region) CtrlID() transport.EntityID { return r.ctrlID }
 
-// Wire — адресаты контрольных писем свёртки (шлюз, персист). Вызов обязателен
-// до старта Run: регион рождается раньше шлюза, адрес при New неизвестен.
+// Wire — адресаты контрольных писем свёртки (шлюз, персист) и период
+// метронома (движение переводит тики во время). Вызов обязателен до старта
+// Run: регион рождается раньше шлюза, адрес при New неизвестен.
 func (r *Region) Wire(gateway, pers transport.EntityID) error {
 	if r.started.Load() {
 		return fmt.Errorf("world: Wire после старта Run")
@@ -180,11 +193,23 @@ func (r *Region) Wire(gateway, pers transport.EntityID) error {
 	r.rules = Rules{
 		GraceTicks:     r.cfg.GraceTicks,
 		SaveRetryTicks: r.cfg.SaveRetryTicks,
+		PeriodNS:       int64(r.cfg.Period()),
 		Persist:        pers,
 		Gateway:        gateway,
 		From:           r.ctrlID,
 	}
 	return nil
+}
+
+// geoRegionCount — число установленных гео-регионов карты (детектор
+// вырожденного артефакта).
+func geoRegionCount(gm *geo.Map) int {
+	n := 0
+	gm.EachRegion(func(_, _ int, _ []byte) bool {
+		n++
+		return true
+	})
+	return n
 }
 
 // Stats — снимок метрик региона (атомики; состояние свёртки не входит — оно
@@ -330,9 +355,7 @@ func (r *Region) finalSave() {
 		if res.ent.Player == nil {
 			continue
 		}
-		rec := res.ent.Player.Rec
-		rec.X, rec.Y, rec.Z = int(res.ent.Pos.X), int(res.ent.Pos.Y), int(res.ent.Pos.Z)
-		r.sendSave(rec, res.ent.ID)
+		r.sendSave(saveSnapshot(res.ent.Player.Rec, res.ent), res.ent.ID)
 		saved++
 	}
 	for _, acc := range sortedSaveKeys(r.state) {
@@ -504,7 +527,7 @@ func (r *Region) step() {
 	r.curPhase = phaseFold
 	r.injectPanic(phaseFold)
 	rng := rand.New(rand.NewPCG(uint64(r.id), uint64(n)))
-	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf, r.rules)
+	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf, r.rules, r.gm)
 	r.pendingPushes = append(r.pendingPushes, res.Pushes...)
 	// письма свёртки — в outbox сразу после Fold: переживают панику любой
 	// позднейшей фазы (надёжный класс, доставляются phaseB/backlog-ом)

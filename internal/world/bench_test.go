@@ -23,7 +23,7 @@ func newBenchRegion(b *testing.B, cfg Config, population int) *Region {
 	if err != nil {
 		b.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{}, emptyGeo)
 	if err != nil {
 		b.Fatalf("NewRegion: %v", err)
 	}
@@ -128,7 +128,7 @@ func ExampleFold() {
 	ents := []*Entity{{ID: 1, Owner: 1}}
 	rng := rand.New(rand.NewPCG(1, 100))
 	res := Fold(100, 2, rng, st, ents,
-		[]Portion{{Region: 1, Tick: 100, Envs: []transport.Envelope{{Kind: transport.KindXP}}}}, nil, testRules())
+		[]Portion{{Region: 1, Tick: 100, Envs: []transport.Envelope{{Kind: transport.KindXP}}}}, nil, testRules(), emptyGeo)
 	fmt.Println(len(res.Out), st.Steps, st.Letters, st.LastDelta, ents[0].Beat)
 	// Output: 0 1 1 2 100
 }
@@ -148,7 +148,7 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{}, emptyGeo)
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
 	}
@@ -176,5 +176,127 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 	// с записью в реестр задачи.
 	if allocs != 15 {
 		t.Fatalf("аллокаций на Idle-шаг = %.0f; want 15 (PCG=1 + Build=7 + join=5 + compose=2)", allocs)
+	}
+}
+
+// spawnMover — житель в движении (отрезок заведён напрямую; прибытие исключено
+// огромной дистанцией — бенч мерит стационарный advance, а не arrivals).
+func spawnMover(r *Region, x, y int32) {
+	if _, err := r.Spawn(Entity{Owner: r.id, HP: 100,
+		Pos: Position{X: x, Y: y}, Moving: true,
+		Dest:     Position{X: x + 100000, Y: y},
+		MoveFrom: Position{X: x, Y: y}, MoveDist: 1 << 50}); err != nil {
+		panic("bench: Spawn движущегося: " + err.Error())
+	}
+}
+
+// BenchmarkRegionPhaseA — фаза A advance: население == движущиеся
+// (100/1000/5000) + точка «население 12k, движущихся ~100» (сценарий NPC
+// P3.10 — фальсификация решения о фильтре по массиву). Реестр «Тик региона».
+func BenchmarkRegionPhaseA(b *testing.B) {
+	base := DefaultConfig()
+	for _, tc := range []struct {
+		population int
+		movers     int
+	}{
+		{100, 100},
+		{1000, 1000},
+		{5000, 5000},
+		{12000, 100},
+	} {
+		name := fmt.Sprintf("pop=%d/movers=%d", tc.population, tc.movers)
+		b.Run(name, func(b *testing.B) {
+			r := newBenchRegion(b, base, 0)
+			for i := range tc.movers {
+				spawnMover(r, int32(i%100)*100, int32(i/100)*100)
+			}
+			for i := tc.movers; i < tc.population; i++ {
+				if _, err := r.Spawn(Entity{Owner: 1, HP: 100}); err != nil {
+					b.Fatalf("Spawn: %v", err)
+				}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				r.metro.tick.Add(1)
+				r.step()
+			}
+		})
+	}
+}
+
+// BenchmarkJoinStreamCompose — стрим движения: k движущихся × M
+// наблюдателей-игроков, компоновка CharMoveToLocation В метрике (новый
+// горячий путь P3.9; прецедент P3.8-F4 «путь реестра без бенча = мажор»).
+func BenchmarkJoinStreamCompose(b *testing.B) {
+	base := DefaultConfig()
+	for _, tc := range []struct{ movers, observers int }{
+		{100, 100},
+		{1000, 100},
+	} {
+		name := fmt.Sprintf("movers=%d/observers=%d", tc.movers, tc.observers)
+		b.Run(name, func(b *testing.B) {
+			r := newBenchRegion(b, base, 0)
+			for i := range tc.observers { // наблюдатели — живые игроки
+				ent := Entity{Owner: 1, HP: 100,
+					Pos:    Position{X: int32(i%50) * 10, Y: int32(i/50) * 10},
+					Player: &Player{ConnID: uint64(i + 1), SpeedBudget: speedCAP}}
+				if _, err := r.Spawn(ent); err != nil {
+					b.Fatalf("Spawn: %v", err)
+				}
+			}
+			for i := range tc.movers {
+				spawnMover(r, int32(i%50)*10+5, int32(i/50)*10+5)
+			}
+			for range 3 { // прогрев: вводы в известность, старт dirty-потока
+				r.metro.tick.Add(1)
+				r.step()
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				r.metro.tick.Add(1)
+				r.step()
+			}
+		})
+	}
+}
+
+// Аллокационный бюджет шага с движущимися (без наблюдателей): advance и
+// dirty-манифест движущихся — 0 аллокаций сверх Idle-бюджета (кадры стрима
+// аллоцируются на пару — домен бенча JoinStreamCompose, не бюджета).
+func TestRegionStepMovingAllocBudget(t *testing.T) {
+	cfg := DefaultConfig()
+	m, err := NewMetronome(cfg)
+	if err != nil {
+		t.Fatalf("NewMetronome: %v", err)
+	}
+	reg := transport.NewRegistry(0)
+	log, err := NewPortionLog(t.TempDir(), 1, m.period, false, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{}, emptyGeo)
+	if err != nil {
+		t.Fatalf("NewRegion: %v", err)
+	}
+	defer log.Close() // осознанный игнор: файл после теста не читается
+	for i := range 100 {
+		spawnMover(r, int32(i)*100, 0)
+	}
+	for range 10 { // прогрев ёмкостей
+		m.tick.Add(1)
+		r.step()
+	}
+	allocs := testing.AllocsPerRun(200, func() {
+		m.tick.Add(1)
+		r.step()
+	})
+	t.Logf("шаг со 100 движущимися: %.0f аллокаций", allocs)
+	// раскладка та же, что Idle (advance — чистая арифметика, dirty движущихся
+	// ложится в существующие битмапы Build); изменение числа — regress или
+	// осознанная правка бюджета с записью в реестр задачи.
+	if allocs != 15 {
+		t.Fatalf("аллокаций на шаг со 100 движущимися = %.0f; want 15", allocs)
 	}
 }

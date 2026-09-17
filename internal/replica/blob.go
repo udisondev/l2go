@@ -17,13 +17,17 @@ const (
 )
 
 // Record — полный пейлоад AoI-записи (значение): вечный ID, ячейка позиции,
-// кинематика и поля потребителя CharInfo. Поля по потребителю; NpcInfo-поля
-// дополнит P3.10.
+// кинематика (включая клампнутую цель движения — кадры P3.9 самодостаточны
+// пейлоадом события) и поля потребителя CharInfo. Поля по потребителю;
+// NpcInfo-поля дополнит P3.10.
 type Record struct {
 	Entity    transport.EntityID
 	Cell      CellID
 	X, Y      int32
 	Z         int32
+	DestX     int32
+	DestY     int32
+	DestZ     int32
 	Heading   int32
 	Moving    bool
 	Kind      RecordKind

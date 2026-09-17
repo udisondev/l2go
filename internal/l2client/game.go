@@ -288,6 +288,14 @@ func (gc *GameClient) MoveToLocation(targetX, targetY, targetZ, originX, originY
 		Field{K: "target", V: num32(targetX)})
 }
 
+// ValidatePosition отправляет периодическую синхронизацию позиции (~1/с канона).
+func (gc *GameClient) ValidatePosition(x, y, z, heading int32) error {
+	var wire [protocol.ValidatePositionSize]byte
+	protocol.WriteValidatePosition(wire[:], x, y, z, heading, 0)
+	return gc.command(wire[:], "VALIDATE_POSITION",
+		Field{K: "x", V: num32(x)}, Field{K: "y", V: num32(y)})
+}
+
 // command — отправка команды стационарной фазы (отправляет только Run).
 func (gc *GameClient) command(wire []byte, name string, fields ...Field) error {
 	select {
@@ -493,6 +501,40 @@ func (gc *GameClient) handleFrame(f []byte) {
 		if v, ok := protocol.NewDeleteObjectView(f); ok {
 			name, typed = "DELETE_OBJECT", true
 			fields = []Field{{K: "objID", V: num32(v.ObjID())}}
+		}
+	case protocol.OpCharMoveToLocation:
+		// CharMoveToLocation — авторитетный стрим движения (P3.9).
+		if v, ok := protocol.NewCharMoveToLocationView(f); ok {
+			name, typed = "CHAR_MOVE_TO_LOCATION", true
+			fields = []Field{
+				{K: "objID", V: num32(v.ObjID())},
+				{K: "dstX", V: num32(v.DstX())},
+				{K: "dstY", V: num32(v.DstY())},
+				{K: "curX", V: num32(v.X())},
+				{K: "curY", V: num32(v.Y())},
+			}
+		}
+	case protocol.OpStopMove:
+		// StopMove — авторитетная остановка (P3.9).
+		if v, ok := protocol.NewStopMoveView(f); ok {
+			name, typed = "STOP_MOVE", true
+			fields = []Field{
+				{K: "objID", V: num32(v.ObjID())},
+				{K: "x", V: num32(v.X())},
+				{K: "y", V: num32(v.Y())},
+				{K: "heading", V: num32(v.Heading())},
+			}
+		}
+	case protocol.OpValidateLocation:
+		// ValidateLocation — snap-back коррекция себе (P3.9).
+		if v, ok := protocol.NewValidateLocationView(f); ok {
+			name, typed = "VALIDATE_LOCATION", true
+			fields = []Field{
+				{K: "objID", V: num32(v.ObjID())},
+				{K: "x", V: num32(v.X())},
+				{K: "y", V: num32(v.Y())},
+				{K: "heading", V: num32(v.Heading())},
+			}
 		}
 	}
 	if typed {

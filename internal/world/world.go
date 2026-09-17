@@ -55,6 +55,9 @@ type Player struct {
 	Rec             persist.CharRecord
 	ConnID          uint64
 	PendingTeleport bool
+	// SpeedBudget — токен-бакет скорости в милли-юнитах (r1: списывает
+	// расхождение отчёта с authPos; при рождении = CAP).
+	SpeedBudget int64
 	// EnterLeaving — «вошёл и оборвался тем же шагом»: актор не шлёт
 	// слиток/бинд, сущность сразу в grace.
 	EnterLeaving bool
@@ -67,14 +70,22 @@ type Player struct {
 // передаётся только в чемодане единственным указателем. Здесь ядро владения
 // и движения; боевые и предметные поля растут вместе с фазами реализации.
 type Entity struct {
-	ID        transport.EntityID
-	Owner     RegionID
-	Pos       Position // авторитетная позиция
-	Dest      Position // цель движения; бюджет скорости списывается в тике
-	Moving    bool     // интент смены владельца («еду»): флаг-состояние, не лок
-	Dead      bool     // смерть — маркер; деспавн — не смерть
-	HP        int32
-	Beat      Tick // heartbeat: тик последнего шага симуляции
+	ID      transport.EntityID
+	Owner   RegionID
+	Pos     Position // авторитетная позиция
+	Dest    Position // клампнутая цель движения (путь провалидирован гео)
+	Heading int32    // живой heading, домен [0,65536); персист-слепок — Rec.Heading
+	Moving  bool     // локомоция: отрезок MoveFrom→Dest активен (интент миграции региона — отдельное поле чемодана фазы 4)
+	Dead    bool     // смерть — маркер; деспавн — не смерть
+	HP      int32
+	Beat    Tick // heartbeat: тик последнего шага симуляции
+	// Отрезок движения: позиция пересчитывается от MoveFrom по доле
+	// MoveDone/MoveDist — без накопления ошибки округления; прибытие ставит
+	// Pos = Dest точно. Дистанция отрезка — 2D (скорость канона
+	// горизонтальна, Z — следствие рельефа).
+	MoveFrom  Position
+	MoveDist  int64
+	MoveDone  int64
 	Servants  [4]ServantSlot
 	Transfers []TransferRecord
 	Player    *Player

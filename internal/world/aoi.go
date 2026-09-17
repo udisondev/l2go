@@ -19,16 +19,21 @@ type AdvisoryIn = replica.AdvisoryInput
 // aoiCell — вырожденная сетка фазы 3: одна ячейка на регион.
 const aoiCell replica.CellID = 0
 
-// recordOf — сущность → AoI-запись (поля по потребителю CharInfo; NpcInfo-поля
+// recordOf — сущность → AoI-запись (поля по потребителю CharInfo; живой
+// Heading и клампнутая Dest — источники кадров движения P3.9; NpcInfo-поля
 // дополнит P3.10; Flags фаза 3 не порождает — синтетика тестов).
 func recordOf(ent *Entity) replica.Record {
 	rec := replica.Record{
-		Entity: ent.ID,
-		Cell:   aoiCell,
-		X:      ent.Pos.X,
-		Y:      ent.Pos.Y,
-		Z:      ent.Pos.Z,
-		Moving: ent.Moving,
+		Entity:  ent.ID,
+		Cell:    aoiCell,
+		X:       ent.Pos.X,
+		Y:       ent.Pos.Y,
+		Z:       ent.Pos.Z,
+		DestX:   ent.Dest.X,
+		DestY:   ent.Dest.Y,
+		DestZ:   ent.Dest.Z,
+		Heading: ent.Heading,
+		Moving:  ent.Moving,
 	}
 	if ent.Player == nil {
 		rec.Kind = replica.RecordKindNPC
@@ -36,7 +41,6 @@ func recordOf(ent *Entity) replica.Record {
 	}
 	rec.Kind = replica.RecordKindPlayer
 	p := &ent.Player.Rec
-	rec.Heading = int32(p.Heading)
 	rec.Name = p.Name
 	rec.Race = int32(p.Race)
 	rec.Female = p.Sex == 1
@@ -51,6 +55,8 @@ func recordOf(ent *Entity) replica.Record {
 // charInfoOf — AoI-запись игрока → CharInfo (шаблонные константы HumanFighter
 // как у UserInfo P3.7; скорости/коллизии — константы golden-прецедента P3.5;
 // MaxCp/CurCp=0 до формул статов — запись-отклонение О-6 реестра P3.8).
+// Standing = факт позы (запись стоит); Running — режим run/walk канона, фаза 3
+// пиннит run (walk-режим — фаза 4).
 func charInfoOf(rec replica.Record) protocol.CharInfoData {
 	return protocol.CharInfoData{
 		X: rec.X, Y: rec.Y, Z: rec.Z,
@@ -71,19 +77,36 @@ func charInfoOf(rec replica.Record) protocol.CharInfoData {
 		HairStyle:             rec.HairStyle,
 		HairColor:             rec.HairColor,
 		Face:                  rec.Face,
-		// Standing/Running — независимые байты канона (golden P3.5 пиннит
-		// true/true для новичка: стоящий в run-режиме); Entity.Moving — флаг
-		// интента МИГРАЦИИ региона (world.go), не локомоции; движению — P3.9
-		Standing: true,
-		Running:  true,
-		ClassID:  rec.ClassID,
-		Heading:  rec.Heading,
+		Standing:              !rec.Moving,
+		Running:               true,
+		ClassID:               rec.ClassID,
+		Heading:               rec.Heading,
 	}
 }
 
+// composeMoveFrame — CharMoveToLocation из записи: сервер-авторитетный стрим,
+// одна позиция на кадр (расхождение с каноном L2J «один кадр на интент»
+// осознанное: r1 «сервер бродкастит свою позицию»; полоса 29 Б × 10 Гц × пары,
+// пересмотр — фаза 4 по нагрузке).
+func composeMoveFrame(rec replica.Record) []byte {
+	dst := make([]byte, protocol.CharMoveToLocationSize)
+	protocol.WriteCharMoveToLocation(dst, int32(encode.ObjectIDBase+uint64(rec.Entity)),
+		rec.DestX, rec.DestY, rec.DestZ, rec.X, rec.Y, rec.Z)
+	return dst
+}
+
+// composeStopFrame — StopMove из записи (прибытие/остановка/коррекция).
+func composeStopFrame(rec replica.Record) []byte {
+	dst := make([]byte, protocol.StopMoveSize)
+	protocol.WriteStopMove(dst, int32(encode.ObjectIDBase+uint64(rec.Entity)),
+		rec.X, rec.Y, rec.Z, rec.Heading)
+	return dst
+}
+
 // composeJoin — события join → кадры (пушится регионом в pendingPushes ПОСЛЕ
-// Apply — слив только применённого стадинга). Update — каркас P3.9 (кадры
-// наполнит движение); NPC-ввод — счётчик-метрика до P3.10.
+// Apply — слив только применённого стадинга). Ввод движущегося — CharInfo +
+// CharMoveToLocation (describeState канона); апдейт — стрим/стоп; NPC-ввод —
+// счётчик-метрика до P3.10.
 func (r *Region) composeJoin(events []replica.Event) []FramePush {
 	pushes := make([]FramePush, 0, len(events))
 	for _, ev := range events {
@@ -97,12 +120,19 @@ func (r *Region) composeJoin(events []replica.Event) []FramePush {
 			dst := make([]byte, protocol.CharInfoSize(d))
 			protocol.WriteCharInfo(dst, d)
 			pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: dst, Crypt: true})
+			if ev.Target.Moving {
+				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeMoveFrame(ev.Target), Crypt: true})
+			}
 		case replica.EventRemove:
 			dst := make([]byte, protocol.DeleteObjectSize)
 			protocol.WriteDeleteObject(dst, int32(encode.ObjectIDBase+uint64(ev.Target.Entity)))
 			pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: dst, Crypt: true})
 		case replica.EventUpdate:
-			// Позиционные кадры — P3.9; событие фиксируется юнит-тестом replica
+			if ev.Target.Moving {
+				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeMoveFrame(ev.Target), Crypt: true})
+			} else {
+				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeStopFrame(ev.Target), Crypt: true})
+			}
 		}
 	}
 	return pushes

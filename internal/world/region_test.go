@@ -22,7 +22,7 @@ func newTestRegion(t *testing.T, cfg Config) (*Metronome, *Region) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{})
+	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{}, emptyGeo)
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestRegionNilDepsRejected(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := NewRegion(c.metro, c.reg, 1, cfg, log, nullPusher{}); err == nil {
+			if _, err := NewRegion(c.metro, c.reg, 1, cfg, log, nullPusher{}, emptyGeo); err == nil {
 				t.Errorf("NewRegion с %s прошёл; want ошибка валидации", c.name)
 			}
 		})

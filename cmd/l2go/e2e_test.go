@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -785,4 +786,180 @@ func TestE2ESingleClientJoinSilence(t *testing.T) {
 	if txt := s.out.String(); strings.Contains(txt, "CHAR_INFO") || strings.Contains(txt, "DELETE_OBJECT") {
 		t.Errorf("одиночный клиент получил join-кадры: лог содержит CHAR_INFO/DELETE_OBJECT")
 	}
+}
+
+// parseCoord — числовое поле трафик-лога (x=..., y=...).
+func parseCoord(t *testing.T, line, key string) int {
+	t.Helper()
+	m := regexp.MustCompile(key + `=(-?[0-9]+)`).FindStringSubmatch(line)
+	if m == nil {
+		t.Fatalf("поле %s отсутствует: %s", key, line)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("поле %s: %v", key, err)
+	}
+	return n
+}
+
+// TestE2EMovementDeliveredToObserver — два клиента: движение Alice доведено
+// до Bob (CharMoveToLocation с авторитетной позицией), эхо себе, StopMove на
+// прибытие; перезаход на позиции прибытия (снимок с живым heading).
+func TestE2EMovementDeliveredToObserver(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	alice := enterWorld(t, env, "mova")
+	lineUI := waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
+	bob := enterWorld(t, env, "movb")
+	waitForLine(t, bob.out, "CHAR_INFO name=\"Botmova\"", 3*time.Second)
+
+	// движение на 100 юн восточнее (10 Гц: ~9 тиков)
+	if err := alice.gc.MoveToLocation(int32(ax+100), int32(ay), -3104, int32(ax), int32(ay), -3104, 1); err != nil {
+		t.Fatalf("MoveToLocation: %v", err)
+	}
+	echo := waitForLine(t, alice.out, "CHAR_MOVE_TO_LOCATION", 3*time.Second)
+	if got := parseCoord(t, echo, "dstX"); got != ax+100 {
+		t.Errorf("эхо dstX = %d; want %d (цель)", got, ax+100)
+	}
+	stream := waitForLine(t, bob.out, "CHAR_MOVE_TO_LOCATION", 3*time.Second)
+	curX := parseCoord(t, stream, "curX")
+	if curX < ax-50 || curX > ax+110 {
+		t.Errorf("наблюдатель получил curX = %d; want в пределах шага от %d", curX, ax)
+	}
+	stop := waitForLine(t, alice.out, "STOP_MOVE", 3*time.Second)
+	if got := parseCoord(t, stop, "x"); got != ax+100 {
+		t.Errorf("прибытие x = %d; want %d", got, ax+100)
+	}
+	waitForLine(t, bob.out, "STOP_MOVE", 3*time.Second)
+
+	// перезаход на позиции прибытия (снимок сохранения: позиция, не исходная)
+	if err := alice.gc.Logout(); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	waitForLeaveWorld(t, alice, env)
+	again := enterWorld(t, env, "mova")
+	line2 := waitForLine(t, again.out, "USER_INFO", 3*time.Second)
+	if got := parseCoord(t, line2, "x"); got != ax+100 {
+		t.Errorf("перезаход x = %d; want %d (позиция прибытия)", got, ax+100)
+	}
+}
+
+// TestE2EMovementObserverOutsideRadius — третий клиент вне радиуса: кадров
+// движения не получает (тайминг-инвариант молчуна, не синхронизация).
+// Позиция «далеко́го» — правкой файла персонажей + рестартом GS (charStore
+// живого актора держит записи в памяти — правка диска видима после релоада).
+func TestE2EMovementObserverOutsideRadius(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	// подготовка «далеко́го» персонажа: создание, сохранение, правка позиции,
+	// рестарт GS (charStore живого актора держит записи в памяти — правка диска
+	// видима после релоада; коннектов ещё нет).
+	far := enterWorld(t, env, "faraway")
+	lineF := waitForLine(t, far.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineF, "x"), parseCoord(t, lineF, "y")
+	if err := far.gc.Logout(); err != nil {
+		t.Fatalf("Logout(far): %v", err)
+	}
+	waitForLeaveWorld(t, far, env)
+	path := env.charFile("faraway")
+	waitFileSettled(t, path) // сохранение логаута асинхронно: ждём записи до правки
+	recs := readChars(t, path)
+	recs[0]["x"] = ax + 10000
+	recs[0]["y"] = ay
+	writeChars(t, path, recs)
+	env.restartGS(t)
+
+	alice := enterWorld(t, env, "neara")
+	waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	far2 := enterWorld(t, env, "faraway")
+	lineFar := waitForLine(t, far2.out, "USER_INFO", 3*time.Second)
+	if got := parseCoord(t, lineFar, "x"); got != ax+10000 {
+		t.Fatalf("далёкий клиент вошёл на x=%d; want %d (правка файла не видна)", got, ax+10000)
+	}
+	if err := alice.gc.MoveToLocation(int32(ax+100), int32(ay), -3104, int32(ax), int32(ay), -3104, 1); err != nil {
+		t.Fatalf("MoveToLocation: %v", err)
+	}
+	waitForLine(t, alice.out, "STOP_MOVE", 3*time.Second)
+	time.Sleep(300 * time.Millisecond) // ≥3 тика 10 Гц: молчание далеко́го устойчиво
+	if txt := far2.out.String(); strings.Contains(txt, "CHAR_MOVE_TO_LOCATION") ||
+		strings.Contains(txt, "STOP_MOVE") || strings.Contains(txt, "CHAR_INFO") {
+		t.Errorf("клиент вне радиуса получил кадры движения/ввода; лог:\n%s", txt)
+	}
+}
+
+// TestE2ESpeedhackHeadlessSnapBack — headless-клиент шлёт ValidatePosition со
+// скачком ×3: snap-back (VALIDATE_LOCATION) доставлен, серверная позиция
+// авторитетна (перезаход на серверной позиции).
+func TestE2ESpeedhackHeadlessSnapBack(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	s := enterWorld(t, env, "cheat")
+	lineUI := waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+	startX, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
+	for range 5 { // серия отчётов с нарастающим скачком ×3 (движения не было)
+		if err := s.gc.ValidatePosition(int32(startX+900), int32(ay), -3104, 0); err != nil {
+			t.Fatalf("ValidatePosition: %v", err)
+		}
+		time.Sleep(120 * time.Millisecond) // ~1 отчёт/с канона (нагрузка, не синхронизация)
+	}
+	line := waitForLine(t, s.out, "VALIDATE_LOCATION", 3*time.Second)
+	if got := parseCoord(t, line, "x"); got != startX {
+		t.Errorf("snap-back x = %d; want серверную %d (сущность не двигалась)", got, startX)
+	}
+	if err := s.gc.Logout(); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	waitForLeaveWorld(t, s, env)
+	again := enterWorld(t, env, "cheat")
+	line2 := waitForLine(t, again.out, "USER_INFO", 3*time.Second)
+	if got := parseCoord(t, line2, "x"); got != startX {
+		t.Errorf("перезаход после спидхака x = %d; want серверную %d (позиция не мутирована отчётами)",
+			got, startX)
+	}
+}
+
+// TestE2EMovementCoalescingOneFramePerStep — серия быстрых кликов в окне шага:
+// стрим наблюдателя не превосходит кадровой частоты (одна позиция на кадр).
+func TestE2EMovementCoalescingOneFramePerStep(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	alice := enterWorld(t, env, "coala")
+	lineUI := waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
+	bob := enterWorld(t, env, "coalb")
+	waitForLine(t, bob.out, "CHAR_INFO name=\"Botcoala\"", 3*time.Second)
+
+	for i := range 5 { // быстрые клики: шлюз коалесит до 1 письма/конн/шаг
+		if err := alice.gc.MoveToLocation(int32(ax+300+i), int32(ay), -3104, int32(ax), int32(ay), -3104, 1); err != nil {
+			t.Fatalf("MoveToLocation: %v", err)
+		}
+	}
+	time.Sleep(400 * time.Millisecond) // 4 тика 10 Гц — окно подсчёта (тайминг-инвариант)
+	n := strings.Count(bob.out.String(), "CHAR_MOVE_TO_LOCATION")
+	if n > 12 { // окно + калибровка + запас: runaway-дубли ловятся, честный стрим ~4-6
+		t.Errorf("кадров движения наблюдателю = %d за окно; want ≤12 (одна позиция на кадр)", n)
+	}
+}
+
+// waitFileSettled — mtime файла стабилен три пробы подряд (асинхронное
+// сохранение логаута завершилось; дедлайн 3 с).
+func waitFileSettled(t *testing.T, path string) {
+	t.Helper()
+	var prev time.Time
+	stable := 0
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if fi.ModTime() == prev {
+			stable++
+			if stable >= 3 {
+				return
+			}
+		} else {
+			stable = 0
+			prev = fi.ModTime()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("файл персонажей не стабилизировался")
 }
