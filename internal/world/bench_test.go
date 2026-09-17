@@ -27,6 +27,9 @@ func newBenchRegion(b *testing.B, cfg Config, population int) *Region {
 	if err != nil {
 		b.Fatalf("NewRegion: %v", err)
 	}
+	if err := r.Wire(901, 900); err != nil {
+		b.Fatalf("Wire: %v", err) // Rules.PeriodNS: без Wire advance получает dt=0
+	}
 	b.Cleanup(func() { _ = log.Close() })
 	for range population {
 		if _, err := r.Spawn(Entity{Owner: 1, HP: 100}); err != nil {
@@ -228,6 +231,9 @@ func BenchmarkRegionPhaseA(b *testing.B) {
 // BenchmarkJoinStreamCompose — стрим движения: k движущихся × M
 // наблюдателей-игроков, компоновка CharMoveToLocation В метрике (новый
 // горячий путь P3.9; прецедент P3.8-F4 «путь реестра без бенча = мажор»).
+// Отрезки реалистичные (сдвиг за шаг > int32-кванта — запись меняется каждый
+// шаг: dirty/EventUpdate/компоновка живы); прибывшие перезапускаются вне
+// измеряемой стоимости (перезапуск — до step, как доставка писем в Tick-бенче).
 func BenchmarkJoinStreamCompose(b *testing.B) {
 	base := DefaultConfig()
 	for _, tc := range []struct{ movers, observers int }{
@@ -245,8 +251,16 @@ func BenchmarkJoinStreamCompose(b *testing.B) {
 					b.Fatalf("Spawn: %v", err)
 				}
 			}
+			var movers []*Entity
 			for i := range tc.movers {
-				spawnMover(r, int32(i%50)*10+5, int32(i/50)*10+5)
+				x, y := int32(i%50)*10+5, int32(i/50)*10+5
+				if _, err := r.Spawn(Entity{Owner: 1, HP: 100,
+					Pos: Position{X: x, Y: y}, Moving: true,
+					Dest:     Position{X: x + 1000, Y: y},
+					MoveFrom: Position{X: x, Y: y}, MoveDist: 1_000_000}); err != nil {
+					b.Fatalf("Spawn: %v", err)
+				}
+				movers = append(movers, r.residents[len(r.residents)-1].ent)
 			}
 			for range 3 { // прогрев: вводы в известность, старт dirty-потока
 				r.metro.tick.Add(1)
@@ -255,6 +269,15 @@ func BenchmarkJoinStreamCompose(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
+				for _, e := range movers { // прибывшие — в новый отрезок
+					if !e.Moving {
+						e.Moving = true
+						e.Dest = Position{X: e.MoveFrom.X + 1000, Y: e.MoveFrom.Y}
+						e.MoveFrom = e.Pos
+						e.MoveDist = 1_000_000
+						e.MoveDone = 0
+					}
+				}
 				r.metro.tick.Add(1)
 				r.step()
 			}

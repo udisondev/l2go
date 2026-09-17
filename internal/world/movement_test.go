@@ -100,6 +100,62 @@ func startMove(e *Entity, dx, dy, dz int32) {
 	e.Heading = calcHeading(e.MoveFrom, e.Dest)
 }
 
+// TestFoldCannotMoveAnymoreHeadingNormalization — домен [0,65536) на любом
+// int32 письма: маска, не знаконосный Go-% (F6/F17), включая край 65536→0.
+func TestFoldCannotMoveAnymoreHeadingNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		heading int32
+		want    int32
+	}{
+		{70000, 4464},
+		{-70000, 61072},
+		{65535, 65535},
+		{65536, 0},
+		{0, 0},
+	} {
+		st := newState()
+		ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
+		startMove(ents[0], 500, 0, 0)
+		foldM(10, 0, st, ents, emptyGeo, cannotMoveLetter(101, syncPos.X+10, syncPos.Y, 0, tc.heading))
+		if got := ents[0].Heading; got != tc.want {
+			t.Errorf("heading(%d) = %d; want %d", tc.heading, got, tc.want)
+		}
+	}
+}
+
+// TestFoldBirthSpeedBucketAtCAP — рождение наливает бакет до CAP (иначе честный
+// вход флагался бы первым отчётом).
+func TestFoldBirthSpeedBucketAtCAP(t *testing.T) {
+	st := newState()
+	rec := mkRecAt("bca", "Hero", int(syncPos.X), int(syncPos.Y))
+	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, []*Entity{},
+		portion(enterMsg(1, "bca", rec)), nil, testRules(), emptyGeo)
+	if len(res.Births) != 1 {
+		t.Fatalf("рождение: %d", len(res.Births))
+	}
+	b := applyBirth(st, res)
+	if b[0].Player.SpeedBudget != speedCAP {
+		t.Fatalf("бакет рождения = %d; want CAP %d", b[0].Player.SpeedBudget, speedCAP)
+	}
+	if b[0].Player.PendingTeleport != true {
+		t.Fatalf("PendingTeleport при рождении не поставлен")
+	}
+}
+
+// TestFoldHeadingDomainAtBirth — запись персиста за trust-границей: heading
+// рождения нормализуется в домен [0,65536).
+func TestFoldHeadingDomainAtBirth(t *testing.T) {
+	st := newState()
+	rec := mkRecAt("bcb", "Hero", int(syncPos.X), int(syncPos.Y))
+	rec.Heading = -70000
+	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, []*Entity{},
+		portion(enterMsg(1, "bcb", rec)), nil, testRules(), emptyGeo)
+	ents := applyBirth(st, res)
+	if ents[0].Heading != 61072 {
+		t.Fatalf("heading рождения = %d; want 61072 (маска домена)", ents[0].Heading)
+	}
+}
+
 // syncPos — позиция, безопасная для старта (центр ячейки синтетического мира).
 var syncPos = Position{X: int32(geo.GeoToWorldX(16*2048 + 100)), Y: int32(geo.GeoToWorldY(16*2048 + 100)), Z: 0}
 
@@ -176,23 +232,27 @@ func TestFoldAdvanceAfterTickDropDelta2(t *testing.T) {
 }
 
 func TestFoldAdvanceFollowsPeriodNotTickCount(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
+		name     string
 		periodNS int64
 		want     int64
 	}{
-		{100_000_000, 11500},
-		{200_000_000, 23000},
+		{"канон 10 Гц", 100_000_000, 11500},
+		{"200 мс", 200_000_000, 23000},
 	} {
-		st := newState()
-		ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
-		startMove(ents[0], 115, 0, 0)
-		rules := testRules()
-		rules.PeriodNS = tc.periodNS
-		Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, ents, portion(), nil, rules, emptyGeo)
-		if got := ents[0].MoveDone; got != tc.want {
-			t.Errorf("MoveDone при периоде %d нс = %d; want %d (дистанция следует периоду, не числу тиков)",
-				tc.periodNS, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			st := newState()
+			ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
+			startMove(ents[0], 115, 0, 0)
+			rules := testRules()
+			rules.PeriodNS = tc.periodNS
+			Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, ents, portion(), nil, rules, emptyGeo)
+			if got := ents[0].MoveDone; got != tc.want {
+				t.Errorf("MoveDone при периоде %d нс = %d; want %d (дистанция следует периоду, не числу тиков)",
+					tc.periodNS, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -279,31 +339,37 @@ func TestFoldSpeedBudgetRefillClamp(t *testing.T) {
 }
 
 func TestFoldTwoArrivalsSameStep(t *testing.T) {
-	st := newState()
-	ents := []*Entity{
-		playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z),
-		playerEnt(102, syncPos.X, syncPos.Y+1000, syncPos.Z),
-	}
-	ents[1].Player.ConnID = 8
-	startMove(ents[0], 115, 0, 0)
-	startMove(ents[1], 0, 115, 0)
-	var res StepResult
-	for i := range 10 {
-		res = foldM(10+Tick(i), 1, st, ents, emptyGeo)
-	}
-	stops := 0
-	for _, p := range res.Pushes {
-		if pushOp(p) == opStopMove {
-			stops++
+	run := func() (int, []byte) {
+		st := newState()
+		ents := []*Entity{
+			playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z),
+			playerEnt(102, syncPos.X, syncPos.Y+1000, syncPos.Z),
 		}
+		ents[1].Player.ConnID = 8
+		startMove(ents[0], 115, 0, 0)
+		startMove(ents[1], 0, 115, 0)
+		var res StepResult
+		for i := range 10 {
+			res = foldM(10+Tick(i), 1, st, ents, emptyGeo)
+		}
+		stops := 0
+		for _, p := range res.Pushes {
+			if pushOp(p) == opStopMove {
+				stops++
+			}
+		}
+		if ents[0].Moving || ents[1].Moving {
+			t.Fatalf("парные прибытия: moving %v/%v; want false/false", ents[0].Moving, ents[1].Moving)
+		}
+		return stops, st.Dump(ents)
 	}
-	if stops != 2 || ents[0].Moving || ents[1].Moving {
-		t.Fatalf("парные прибытия: StopMove %d, moving %v/%v; want 2, false/false",
-			stops, ents[0].Moving, ents[1].Moving)
+	stops, dump1 := run()
+	_, dump2 := run()
+	if string(dump1) != string(dump2) {
+		t.Errorf("два независимых прогона расходятся (порядок эффектов по id недетерминирован)")
 	}
-	d1, d2 := st.Dump(ents), st.Dump(ents)
-	if string(d1) != string(d2) {
-		t.Errorf("дамп недетерминирован")
+	if stops != 2 {
+		t.Fatalf("парные прибытия: StopMove %d; want 2", stops)
 	}
 }
 
@@ -624,23 +690,27 @@ func TestFoldLinkDeadExpiryWhileMovingSnapshot(t *testing.T) {
 }
 
 func TestFoldHeadingCalculationTable(t *testing.T) {
-	// осевые и диагональ: N=0, E=16384, S=32768, W=57344 (atan2(dx,dy)·65536/2π)
+	t.Parallel()
+	// осевые и диагональ: N=0, E=16384, S=32768, W=49152 (atan2(dx,dy)·65536/2π)
 	cases := []struct {
+		name   string
 		dx, dy int32
 		want   int32
 	}{
-		{0, 100, 0},
-		{100, 0, 16384},
-		{0, -100, 32768},
-		{-100, 0, 49152},
-		{100, 100, 8192},
+		{"север", 0, 100, 0},
+		{"восток", 100, 0, 16384},
+		{"юг", 0, -100, 32768},
+		{"запад", -100, 0, 49152},
+		{"СВ", 100, 100, 8192},
 	}
 	for _, tc := range cases {
-		from := syncPos
-		to := Position{X: from.X + tc.dx, Y: from.Y + tc.dy, Z: from.Z}
-		if got := calcHeading(from, to); got != tc.want {
-			t.Errorf("calcHeading(dx=%d, dy=%d) = %d; want %d", tc.dx, tc.dy, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			from := syncPos
+			to := Position{X: from.X + tc.dx, Y: from.Y + tc.dy, Z: from.Z}
+			if got := calcHeading(from, to); got != tc.want {
+				t.Errorf("calcHeading(dx=%d, dy=%d) = %d; want %d", tc.dx, tc.dy, got, tc.want)
+			}
+		})
 	}
 }
 

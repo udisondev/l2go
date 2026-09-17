@@ -745,6 +745,7 @@ func parsePlayer(c *parseCursor) (*Player, error) {
 	r.LastSeenUnix = c.varint()
 	p.ConnID = c.uvarint()
 	p.SpeedBudget = c.varint()
+	p.SpeedFlagged = c.byte() == 1
 	p.PendingTeleport = c.byte() == 1
 	p.EnterLeaving = c.byte() == 1
 	return p, c.err

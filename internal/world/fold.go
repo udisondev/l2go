@@ -292,7 +292,7 @@ func foldEnterWorld(tick Tick, st *State, msg transport.EnterWorldMsg, res *Step
 	}
 	res.Births = append(res.Births, Birth{Ent: Entity{
 		Pos:     Position{X: int32(rec.X), Y: int32(rec.Y), Z: int32(rec.Z)},
-		Heading: int32(rec.Heading),
+		Heading: int32(rec.Heading) & 0xFFFF, // запись за trust-границей — домен [0,65536)
 		HP:      int32(rec.HP),
 		Player:  &Player{Rec: rec, ConnID: msg.Conn, PendingTeleport: true, SpeedBudget: speedCAP},
 	}})
@@ -406,6 +406,15 @@ func foldRetries(tick Tick, st *State, rules Rules, res *StepResult) {
 		sendSave(res, rules, q)
 		q.NextTry = tick + Tick(rules.SaveRetryTicks)
 	}
+}
+
+// saveSnapshot — единая точка снимка: запись персиста получает текущую
+// позицию и живой heading сущности (обе точки сохранения — queueSave свёртки
+// и finalSave актора).
+func saveSnapshot(rec persist.CharRecord, e *Entity) persist.CharRecord {
+	rec.X, rec.Y, rec.Z = int(e.Pos.X), int(e.Pos.Y), int(e.Pos.Z)
+	rec.Heading = int(e.Heading)
+	return rec
 }
 
 // queueSave — постановка финального сохранения (снимок saveSnapshot: позиция
@@ -677,6 +686,11 @@ func appendPlayer(buf []byte, p *Player) []byte {
 	buf = binary.AppendVarint(buf, r.LastSeenUnix)
 	buf = binary.AppendUvarint(buf, p.ConnID)
 	buf = binary.AppendVarint(buf, p.SpeedBudget) // бакет бывает отрицательным (ниже −SLACK)
+	if p.SpeedFlagged {
+		buf = append(buf, 1)
+	} else {
+		buf = append(buf, 0)
+	}
 	if p.PendingTeleport {
 		buf = append(buf, 1)
 	} else {

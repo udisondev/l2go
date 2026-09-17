@@ -20,6 +20,7 @@ func TestInWorldEquivalentToPanicCondition(t *testing.T) {
 		{GeoToWorldX(0) - 1, GeoToWorldY(0)}, // полоса целочисленного усечения у кромки
 		{GeoToWorldX(0), GeoToWorldY(0) - 1},
 		{-1 << 30, 1 << 30}, {1 << 30, -1 << 30}, {-(1 << 31), -(1 << 31)},
+		{1<<31 - 1, 1<<31 - 1}, {1<<31 - 1, 0},
 	}
 	for _, p := range points {
 		panics := func() (yes bool) {

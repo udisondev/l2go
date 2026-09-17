@@ -68,6 +68,8 @@ func foldMoveToLocation(st *State, ent *Entity, env *transport.Envelope, mov *mo
 		return
 	}
 	mov.budget--
+	// признак ok игнорируем осознанно: кламп — желаемая цель отрезка
+	// (отказ = ближайшая достижимая точка того же пути)
 	dest, _ := mov.gm.ValidLocation(
 		geo.Loc{X: int(ent.Pos.X), Y: int(ent.Pos.Y), Z: int(ent.Pos.Z)},
 		geo.Loc{X: int(v.TargetX()), Y: int(v.TargetY()), Z: int(v.TargetZ())})
@@ -85,7 +87,7 @@ func foldMoveToLocation(st *State, ent *Entity, env *transport.Envelope, mov *mo
 	ent.MoveDist = distMilli(ent.MoveFrom, ent.Dest)
 	ent.MoveDone = 0
 	ent.Heading = calcHeading(ent.MoveFrom, ent.Dest)
-	pushCharMove(res, ent)
+	pushCharMoveToLocation(res, ent)
 }
 
 // foldAdvance — фаза A: продвижение всех движущихся по валидированным
@@ -107,7 +109,11 @@ func foldAdvance(delta uint64, rules Rules, ents []*Entity, res *StepResult) {
 		if e.MoveDone >= e.MoveDist {
 			e.Pos = e.Dest
 			stopSegment(e)
-			pushStopMove(res, e)
+			//self-кадр — только игроку (движущийся не-игрок фаз 4+: NPC);
+			// наблюдатели получают StopMove через AoI-запись
+			if e.Player != nil {
+				pushStopMove(res, e)
+			}
 			continue
 		}
 		advancePos(e)
@@ -162,16 +168,18 @@ func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, res *
 	// дрейф и бакет — независимые механизмы (дрейф = коррекция позиции,
 	// бакет = накопительное свидетельство скорости); SnapBacks считает кадры
 	// коррекции — один на отчёт
-	snap := false
-	if d > driftMilli {
-		snap = true
-	}
-	p.SpeedBudget -= d
+	snap := d > driftMilli
+	p.SpeedBudget = max(p.SpeedBudget-d, -speedCAP) // пол — переполнение снизу исключено классово
 	if p.SpeedBudget < -speedSLACK {
 		st.SpeedFlags++
 		snap = true
-		slog.Error("world: спидхак — флаг и коррекция",
-			"entity", ent.ID, "account", p.Rec.Account, "driftMilli", d, "budget", p.SpeedBudget)
+		if !p.SpeedFlagged { // алерт однократен на эпизод: лог-DoS валидными кадрами исключён
+			p.SpeedFlagged = true
+			slog.Error("world: спидхак — флаг и коррекция",
+				"entity", ent.ID, "account", p.Rec.Account, "driftMilli", d, "budget", p.SpeedBudget)
+		}
+	} else {
+		p.SpeedFlagged = false
 	}
 	if snap {
 		st.SnapBacks++
@@ -228,9 +236,9 @@ func distMilli(a, b Position) int64 {
 	return int64(math.Sqrt(float64(dx*dx+dy*dy)) * 1000)
 }
 
-// pushCharMove — эхо CharMoveToLocation себе: авторитетная текущая и
-// клампнутая цель.
-func pushCharMove(res *StepResult, ent *Entity) {
+// pushCharMoveToLocation — эхо CharMoveToLocation себе: авторитетная
+// текущая и клампнутая цель.
+func pushCharMoveToLocation(res *StepResult, ent *Entity) {
 	objID := int32(encode.ObjectIDBase + uint64(ent.ID))
 	pushFrame(res, ent.Player.ConnID, protocol.CharMoveToLocationSize, func(dst []byte) int {
 		return protocol.WriteCharMoveToLocation(dst, objID,
@@ -252,13 +260,4 @@ func pushValidateLocation(res *StepResult, ent *Entity) {
 	pushFrame(res, ent.Player.ConnID, protocol.ValidateLocationSize, func(dst []byte) int {
 		return protocol.WriteValidateLocation(dst, objID, ent.Pos.X, ent.Pos.Y, ent.Pos.Z, ent.Heading)
 	})
-}
-
-// saveSnapshot — единая точка снимка: запись персиста получает текущую позицию
-// и живой heading сущности (обе точки сохранения — queueSave свёртки и
-// finalSave актора).
-func saveSnapshot(rec persist.CharRecord, e *Entity) persist.CharRecord {
-	rec.X, rec.Y, rec.Z = int(e.Pos.X), int(e.Pos.Y), int(e.Pos.Z)
-	rec.Heading = int(e.Heading)
-	return rec
 }

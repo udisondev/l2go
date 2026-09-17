@@ -856,13 +856,14 @@ func TestE2EMovementObserverOutsideRadius(t *testing.T) {
 	far := enterWorld(t, env, "faraway")
 	lineF := waitForLine(t, far.out, "USER_INFO", 3*time.Second)
 	ax, ay := parseCoord(t, lineF, "x"), parseCoord(t, lineF, "y")
+	logoutUnix := time.Now().Unix()
 	if err := far.gc.Logout(); err != nil {
 		t.Fatalf("Logout(far): %v", err)
 	}
 	waitForLeaveWorld(t, far, env)
 	path := env.charFile("faraway")
-	waitFileSettled(t, path) // сохранение логаута асинхронно: ждём записи до правки
-	recs := readChars(t, path)
+	// сохранение логаута асинхронно: ждём записи с last_seen ≥ логаута до правки
+	recs := waitFreshChars(t, path, logoutUnix)
 	recs[0]["x"] = ax + 10000
 	recs[0]["y"] = ay
 	writeChars(t, path, recs)
@@ -898,7 +899,7 @@ func TestE2ESpeedhackHeadlessSnapBack(t *testing.T) {
 		if err := s.gc.ValidatePosition(int32(startX+900), int32(ay), -3104, 0); err != nil {
 			t.Fatalf("ValidatePosition: %v", err)
 		}
-		time.Sleep(120 * time.Millisecond) // ~1 отчёт/с канона (нагрузка, не синхронизация)
+		time.Sleep(120 * time.Millisecond) // темп серии (нагрузка, не синхронизация)
 	}
 	line := waitForLine(t, s.out, "VALIDATE_LOCATION", 3*time.Second)
 	if got := parseCoord(t, line, "x"); got != startX {
@@ -936,30 +937,4 @@ func TestE2EMovementCoalescingOneFramePerStep(t *testing.T) {
 	if n > 12 { // окно + калибровка + запас: runaway-дубли ловятся, честный стрим ~4-6
 		t.Errorf("кадров движения наблюдателю = %d за окно; want ≤12 (одна позиция на кадр)", n)
 	}
-}
-
-// waitFileSettled — mtime файла стабилен три пробы подряд (асинхронное
-// сохранение логаута завершилось; дедлайн 3 с).
-func waitFileSettled(t *testing.T, path string) {
-	t.Helper()
-	var prev time.Time
-	stable := 0
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		fi, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("stat %s: %v", path, err)
-		}
-		if fi.ModTime() == prev {
-			stable++
-			if stable >= 3 {
-				return
-			}
-		} else {
-			stable = 0
-			prev = fi.ModTime()
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatal("файл персонажей не стабилизировался")
 }

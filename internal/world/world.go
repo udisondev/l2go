@@ -58,6 +58,10 @@ type Player struct {
 	// SpeedBudget — токен-бакет скорости в милли-юнитах (r1: списывает
 	// расхождение отчёта с authPos; при рождении = CAP).
 	SpeedBudget int64
+	// SpeedFlagged — сессия в состоянии спидхак-флага: slog-алерт однократен
+	// на эпизод (бакет восстанавливается refill-ом), метрика SpeedFlags
+	// считается на каждый кадр.
+	SpeedFlagged bool
 	// EnterLeaving — «вошёл и оборвался тем же шагом»: актор не шлёт
 	// слиток/бинд, сущность сразу в grace.
 	EnterLeaving bool

@@ -412,12 +412,15 @@ func TestPortionLogReplayMovementDigest(t *testing.T) {
 	if err := r.log.w.Flush(); err != nil { // тест читает при живом писателе
 		t.Fatalf("flush: %v", err)
 	}
-	_, steps, _, err := ReadPortionLogDir(r.log.dir, r.log.region)
+	hdr, steps, _, err := ReadPortionLogDir(r.log.dir, r.log.region)
 	if err != nil {
 		t.Fatalf("ReadPortionLogDir: %v", err)
 	}
 	if len(steps) < 10 {
 		t.Fatalf("шагов в логе = %d; want ≥10", len(steps))
+	}
+	if hdr.PeriodNS != uint64(r.metro.period) {
+		t.Fatalf("заголовок несёт период %d; want %d (метроном сессии)", hdr.PeriodNS, r.metro.period)
 	}
 
 	// replay — зеркалит шаг региона: fold писем, рождения применяются с ID из
@@ -426,7 +429,7 @@ func TestPortionLogReplayMovementDigest(t *testing.T) {
 		st := newState()
 		var ents []*Entity
 		rules := testRules()
-		rules.PeriodNS = int64(r.metro.period)
+		rules.PeriodNS = int64(hdr.PeriodNS) // шов 1: реплей берёт период из заголовка лога
 		for si, s := range steps {
 			portions := make([]Portion, len(s.Portions))
 			for i, p := range s.Portions {

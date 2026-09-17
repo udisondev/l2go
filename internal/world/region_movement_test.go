@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/udisondev/l2go/internal/persist"
+	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/replica"
 	"github.com/udisondev/l2go/internal/transport"
 )
@@ -87,17 +88,69 @@ func TestComposeJoinIntroduceMovingDescribed(t *testing.T) {
 	r := &Region{}
 	moving := replica.Record{Entity: 5, Kind: replica.RecordKindPlayer, Name: "Hero",
 		X: 100, Y: 100, DestX: 500, DestY: 100, Moving: true, Heading: 16384}
-	pushes := r.composeJoin([]replica.Event{
-		{Obs: replica.Observer{ConnID: 9}, Target: moving, Kind: replica.EventIntroduce},
-	})
-	if len(pushes) != 2 {
-		t.Fatalf("кадров = %d; want 2 (CharInfo + describeState CharMoveToLocation)", len(pushes))
+	standing := moving
+	standing.Moving = false
+	standing.Entity = 6
+	for _, tc := range []struct {
+		name         string
+		rec          replica.Record
+		wantFrames   int
+		wantStanding bool
+	}{
+		{"движущийся: describeState", moving, 2, false},
+		{"стоячий: только CharInfo", standing, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pushes := r.composeJoin([]replica.Event{
+				{Obs: replica.Observer{ConnID: 9}, Target: tc.rec, Kind: replica.EventIntroduce},
+			})
+			if len(pushes) != tc.wantFrames {
+				t.Fatalf("кадров = %d; want %d", len(pushes), tc.wantFrames)
+			}
+			if pushes[0].Frame[0] != 0x03 {
+				t.Fatalf("первый кадр = %#x; want CharInfo", pushes[0].Frame[0])
+			}
+			v, ok := protocol.NewCharInfoView(pushes[0].Frame)
+			if !ok {
+				t.Fatalf("CharInfo не разбирается")
+			}
+			if v.Standing() != tc.wantStanding || !v.Running() {
+				t.Fatalf("Standing=%v Running=%v; want %v, true (флип-флоп-компонента F7)",
+					v.Standing(), v.Running(), tc.wantStanding)
+			}
+			if tc.rec.Moving {
+				if pushes[1].Frame[0] != opCharMoveToLocation {
+					t.Fatalf("второй кадр = %#x; want CharMoveToLocation", pushes[1].Frame[0])
+				}
+			}
+		})
 	}
-	if pushes[0].Frame[0] != 0x03 {
-		t.Fatalf("первый кадр = %#x; want CharInfo", pushes[0].Frame[0])
-	}
-	if pushes[1].Frame[0] != opCharMoveToLocation {
-		t.Fatalf("второй кадр = %#x; want CharMoveToLocation", pushes[1].Frame[0])
+}
+
+// TestComposeJoinUpdateStreamsOneFramePerStep — апдейт записи → ровно один
+// кадр: движущейся — CharMoveToLocation (авторитетный стрим), стоячей — StopMove.
+func TestComposeJoinUpdateStreamsOneFramePerStep(t *testing.T) {
+	r := &Region{}
+	moving := replica.Record{Entity: 5, Kind: replica.RecordKindPlayer, Name: "Hero",
+		X: 100, Y: 100, DestX: 500, DestY: 100, Moving: true, Heading: 16384}
+	standing := moving
+	standing.Moving = false
+	for _, tc := range []struct {
+		name string
+		rec  replica.Record
+		want byte
+	}{
+		{"движущейся", moving, opCharMoveToLocation},
+		{"стоячей", standing, opStopMove},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pushes := r.composeJoin([]replica.Event{
+				{Obs: replica.Observer{ConnID: 9}, Target: tc.rec, Kind: replica.EventUpdate},
+			})
+			if len(pushes) != 1 || pushOp(pushes[0]) != tc.want {
+				t.Fatalf("кадров %d с глаголом %#x; want 1 с %#x", len(pushes), pushOp(pushes[0]), tc.want)
+			}
+		})
 	}
 }
 
@@ -174,20 +227,43 @@ func TestRegionArrivalStopMoveBroadcast(t *testing.T) {
 	if got := countOp(pc, 2, opCharMoveToLocation); got != 0 {
 		t.Fatalf("стрим после остановки = %d; want 0", got)
 	}
+	// повторный ввод после остановки (умышленная перезаводка известности):
+	// CharInfo стоячей записи — Standing=true
+	b3 := spawnPlayer(t, r, 3, syncPos.X+200, syncPos.Y)
+	stepN(r, 1)
+	var intro *FramePush
+	for i, p := range pc.Snapshot() {
+		if p.Client == 3 && pushOp(p) == 0x03 {
+			intro = &pc.Snapshot()[i]
+			break
+		}
+	}
+	if intro == nil {
+		t.Fatalf("ввод новичку после остановки не доставлен")
+	}
+	v, ok := protocol.NewCharInfoView(intro.Frame)
+	if !ok || !v.Standing() || !v.Running() {
+		t.Fatalf("CharInfo остановившегося: Standing=%v Running=%v; want true, true", v.Standing(), v.Running())
+	}
+	_ = b3
 }
 
 func TestRegionObserverOutsideRadiusSilent(t *testing.T) {
 	r, pc := moveRegion(t)
 	a := spawnPlayer(t, r, 1, syncPos.X, syncPos.Y)
-	spawnPlayer(t, r, 2, syncPos.X+5000, syncPos.Y) // вне enter-радиуса 3500
+	spawnPlayer(t, r, 2, syncPos.X+200, syncPos.Y)  // свидетель: в радиусе
+	spawnPlayer(t, r, 3, syncPos.X+5000, syncPos.Y) // вне enter-радиуса 3500
 	stepN(r, 2)
 	pc.Reset()
 	b := make([]byte, 29)
 	writeMoveFrame(b, syncPos.X+2000, syncPos.Y, syncPos.Z, syncPos.X, syncPos.Y, syncPos.Z)
 	sendToBox(r, a, b)
 	stepN(r, 3)
-	if got := countOp(pc, 2, opCharMoveToLocation) + countOp(pc, 2, opStopMove) + countOp(pc, 2, 0x03); got != 0 {
+	if got := countOp(pc, 3, opCharMoveToLocation) + countOp(pc, 3, opStopMove) + countOp(pc, 3, 0x03); got != 0 {
 		t.Fatalf("кадров движения далёкому C = %d; want 0", got)
+	}
+	if got := countOp(pc, 2, opCharMoveToLocation); got == 0 {
+		t.Fatalf("свидетель B в радиусе не получил стрим (молчание не взаимное)")
 	}
 }
 
@@ -200,21 +276,21 @@ func TestRegionMovementPanicTailDurable(t *testing.T) {
 	writeMoveFrame(b, syncPos.X+2000, syncPos.Y, syncPos.Z, syncPos.X, syncPos.Y, syncPos.Z)
 	sendToBox(r, a, b)
 	stepN(r, 1) // движение идёт, стрим течёт
-	before := countOp(pc, 2, opCharMoveToLocation)
+	pc.Reset()  // считаем только паник-шаг и последующие
 	r.forcePanic.Store(uint32(phaseB))
 	r.metro.tick.Add(1)
 	r.safeStep() // recover-политика региона (паника фазы B: кадры — хвостом)
 	r.forcePanic.Store(0)
-	stepN(r, 2)
-	after := countOp(pc, 2, opCharMoveToLocation)
 	if r.Stats().Failed < 1 {
 		t.Fatalf("паника не учтена: %+v", r.Stats())
 	}
-	if after < before {
-		t.Fatalf("хвост кадров потерян: до %d после %d", before, after)
+	// хвост паник-шага доставлен recovered немедленно: ровно один кадр шага
+	if got := countOp(pc, 2, opCharMoveToLocation); got != 1 {
+		t.Fatalf("хвост паник-шага = %d кадров; want 1 (доставка recovered, без потери)", got)
 	}
-	if n := after - before; n > 3 { // паник-шаг (хвост) + 2 шага = ≤3 кадров, по одному на шаг
-		t.Fatalf("дублей головы: +%d кадров за паник-шаг и 2 шага", n)
+	stepN(r, 2)
+	if got := countOp(pc, 2, opCharMoveToLocation); got != 3 { // +1 на шаг — стрим продолжается, без дублей
+		t.Fatalf("стрим после паники = %d кадров; want 3 (1 хвост + 2 шага)", got)
 	}
 }
 
@@ -242,15 +318,14 @@ func TestRegionFinalSaveSnapshotWithHeading(t *testing.T) {
 	writeMoveFrame(b, syncPos.X+2000, syncPos.Y, syncPos.Z, syncPos.X, syncPos.Y, syncPos.Z)
 	sendToBox(h.r, id, b)
 	waitTick(t, h.r)
-	// живой heading отличается от слепка записи
+	h.rCancel()
+	<-h.rDone // quiesce: чтение жителей региона только после выхода Run
 	res := sort.Search(len(h.r.residents), func(i int) bool { return h.r.residents[i].ent.ID >= id })
 	if res >= len(h.r.residents) || h.r.residents[res].ent.ID != id {
 		t.Fatalf("житель %d не найден", id)
 	}
 	ent := h.r.residents[res].ent
 	wantX, wantH := ent.Pos.X, ent.Heading
-	h.rCancel()
-	<-h.rDone
 	saves := 0
 	for _, env := range h.pBox.ExtractInto(h.pToken, nil) {
 		if env.Kind != transport.KindPersistRequest {

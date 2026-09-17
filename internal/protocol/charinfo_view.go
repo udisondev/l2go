@@ -77,3 +77,9 @@ func (v CharInfoView) ClassID() int32 { return leD(v, v.tailOff()+37) }
 
 // Heading возвращает heading из хвоста.
 func (v CharInfoView) Heading() int32 { return leD(v, v.tailOff()+74) }
+
+// Standing возвращает факт позы: стоячий (не сидит).
+func (v CharInfoView) Standing() bool { return v[v.tailOff()+20] == 1 }
+
+// Running возвращает режим передвижения run/walk.
+func (v CharInfoView) Running() bool { return v[v.tailOff()+21] == 1 }

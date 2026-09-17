@@ -176,21 +176,30 @@ func TestFoldEmptyGeoMapNullRegionSemantics(t *testing.T) {
 	}
 }
 
-func TestFoldBridgeLayerKeepsNearestZ(t *testing.T) {
-	// мост/склон из P2.4: двухслойная колонка с перепадом <1000 — ближайший слой
-	// держит путь под мостом; Z цели принимается слоем.
+func TestFoldSlopeArrivalZFollowsRelief(t *testing.T) {
+	// склон из P2.4: ступени по 40 юн в complex-ячейках — проход по рельефу;
+	// прибытие ставит Z слоя цели (gm.NearestZ), не заявленный клиентом ноль.
 	sg := newSynthGeo(t)
-	// двухслойность недоступна из complex-ячеек билдера (нужен multilayer-
-	// блок); склон: ступень высотой 200 в complex-ячейках — проход по рельефу
 	for gy := 16*2048 + 100; gy <= 16*2048+102; gy++ {
-		sg.set(16*2048+101, gy, (gy-16*2048-100)*8*5, geo.NSWEAll) // ступени по 40 юн
+		sg.set(16*2048+101, gy, (gy-16*2048-100)*40, geo.NSWEAll)
 	}
 	gm := sg.build()
 	from := atGeo(16*2048+100, 16*2048+100, 0)
 	st := newState()
 	ents := []*Entity{playerEnt(101, from.X, from.Y, 0)}
-	foldM(10, 0, st, ents, gm, moveLetter(101, atGeo(16*2048+103, 16*2048+102, 0).X, atGeo(16*2048+103, 16*2048+102, 0).Y, 0))
+	target := atGeo(16*2048+102, 16*2048+102, 0)
+	foldM(10, 0, st, ents, gm, moveLetter(101, target.X, target.Y, 0))
 	if !ents[0].Moving {
 		t.Fatalf("движение по склону не начато (ступени ≤40 проходимы)")
+	}
+	for i := range 20 {
+		foldM(10+Tick(i), 1, st, ents, gm)
+	}
+	if ents[0].Moving {
+		t.Fatalf("прибытие не наступило")
+	}
+	wantZ := int32(gm.NearestZ(geo.Loc{X: int(target.X), Y: int(target.Y), Z: 0}))
+	if ents[0].Pos.Z != wantZ {
+		t.Fatalf("Z прибытия = %d; want %d (слой рельефа цели)", ents[0].Pos.Z, wantZ)
 	}
 }
