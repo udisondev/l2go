@@ -994,3 +994,28 @@ func TestE2EMovementCoalescingOneFramePerStep(t *testing.T) {
 		t.Errorf("кадров движения наблюдателю = %d за окно; want ≤12 (одна позиция на кадр)", n)
 	}
 }
+
+// TestE2EJoinCarriesLiveHeading — стоячий поворот до входа наблюдателя:
+// join-кадр CharInfo несёт живой heading записи, а не застоявшийся спавна
+// (KT4-6: расхождение собственного и чужого рендера на входе живых клиентов).
+func TestE2EJoinCarriesLiveHeading(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	alice := enterWorld(t, env, "turna")
+	lineUI := waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
+	az := parseCoord(t, lineUI, "z")
+
+	const want = 12345
+	b := make([]byte, protocol.CannotMoveAnymoreSize)
+	protocol.WriteCannotMoveAnymore(b, int32(ax), int32(ay), int32(az), want)
+	if err := alice.gc.SendRaw(b, "CANNOT_MOVE_ANYMORE"); err != nil {
+		t.Fatalf("SendRaw(CannotMoveAnymore): %v", err)
+	}
+	time.Sleep(300 * time.Millisecond) // ≥3 тика 10 Гц: свёртка + публикация записи
+
+	bob := enterWorld(t, env, "turnb")
+	line := waitForLine(t, bob.out, "CHAR_INFO name=\"Botturna\"", 3*time.Second)
+	if got := parseCoord(t, line, "heading"); got != want {
+		t.Errorf("join CharInfo heading = %d; want %d (живой поворот записи)", got, want)
+	}
+}

@@ -500,6 +500,7 @@ func (gc *GameClient) handleFrame(f []byte) {
 				{K: "objID", V: num32(v.ObjID())},
 				{K: "x", V: num32(v.X())},
 				{K: "y", V: num32(v.Y())},
+				{K: "heading", V: num32(v.Heading())},
 			}
 		}
 	case protocol.OpDeleteObject:
