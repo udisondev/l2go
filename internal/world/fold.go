@@ -108,7 +108,7 @@ type State struct {
 	Unsavable       uint64 // валидационные отказы персиста (стоп ретраев)
 	SpeedFlags      uint64 // флаги спидхака (токен-бакет ниже −SLACK)
 	SnapBacks       uint64 // коррекции ValidateLocation (дрейф/спидхак/телепорт)
-	CannotMoveNoops uint64 // CannotMoveAnymore вне движения (валидный no-op)
+	CannotMoveNoops uint64 // CannotMoveAnymore вне движения: применён как стоячий поворот (метрика)
 }
 
 // newState — состояние с инициализированными картами.

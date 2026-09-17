@@ -217,7 +217,14 @@ func foldCannotMoveAnymore(st *State, ent *Entity, env *transport.Envelope, res 
 		return
 	}
 	if !ent.Moving {
+		// Стоячий поворот: клиент сообщает финальный heading каналом
+		// CannotMoveAnymore — канон stopMove(loc) ставит heading из пакета и
+		// бродкастит StopMove всем (наблюдатели — через dirty-запись →
+		// EventUpdate → composeStopFrame). Молчаливый no-op оставлял чужую
+		// запись со старым heading — поворот не синхронизировался (KT4-5).
 		st.CannotMoveNoops++
+		ent.Heading = v.Heading() & 0xFFFF
+		pushStopMove(res, ent)
 		return
 	}
 	d := distMilli(ent.Pos, Position{X: v.X(), Y: v.Y(), Z: v.Z()})

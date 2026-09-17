@@ -534,16 +534,17 @@ func TestFoldPendingTeleportBucketReset(t *testing.T) {
 func TestFoldCannotMoveAnymoreTable(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name     string
-		moving   bool
-		dx       int32
-		heading  int32
-		wantH    int32
-		wantNoop bool
+		name    string
+		moving  bool
+		dx      int32
+		heading int32
+		wantH   int32
 	}{
-		{"в движении рядом", true, 10, 70000, 4464, false},
-		{"в движении дрейф", true, 400, -70000, 61072, false},
-		{"не в движении", false, 10, 65536, 1, true},
+		{"в движении рядом", true, 10, 70000, 4464},
+		{"в движении дрейф", true, 400, -70000, 61072},
+		// стоячий поворот: heading применяется, StopMove — себе (KT4-5)
+		{"не в движении", false, 10, 65536, 0},
+		{"стоячий поворот", false, 10, -70000, 61072},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newState()
@@ -554,13 +555,7 @@ func TestFoldCannotMoveAnymoreTable(t *testing.T) {
 			res := foldM(10, 0, st, ents, emptyGeo,
 				cannotMoveLetter(101, syncPos.X+tc.dx, syncPos.Y, syncPos.Z, tc.heading))
 			e := ents[0]
-			if tc.wantNoop {
-				if st.CannotMoveNoops != 1 || len(res.Pushes) != 0 {
-					t.Fatalf("no-op: счётчик %d пуши %d; want 1, 0", st.CannotMoveNoops, len(res.Pushes))
-				}
-				return
-			}
-			if e.Moving || e.Dest != e.Pos {
+			if tc.moving && (e.Moving || e.Dest != e.Pos) {
 				t.Fatalf("остановка: moving %v dest %v", e.Moving, e.Dest)
 			}
 			if e.Heading != tc.wantH {
@@ -569,7 +564,10 @@ func TestFoldCannotMoveAnymoreTable(t *testing.T) {
 			if _, ok := findPush(res, 7, opStopMove); !ok {
 				t.Errorf("StopMove отсутствует")
 			}
-			if tc.dx > 300 {
+			if !tc.moving && st.CannotMoveNoops != 1 {
+				t.Errorf("счётчик стоячих кадров = %d; want 1", st.CannotMoveNoops)
+			}
+			if tc.moving && tc.dx > 300 {
 				if st.SnapBacks != 1 {
 					t.Errorf("дрейф упора: SnapBacks %d; want 1", st.SnapBacks)
 				}
