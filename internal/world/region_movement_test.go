@@ -150,8 +150,20 @@ func TestComposeJoinUpdateStreamsOneFramePerStep(t *testing.T) {
 			if len(pushes) != 1 || pushOp(pushes[0]) != tc.want {
 				t.Fatalf("кадров %d с глаголом %#x; want 1 с %#x", len(pushes), pushOp(pushes[0]), tc.want)
 			}
+			if tc.name == "стоячей" {
+				// Пейлоад, не только глагол: наблюдатель получает поворот
+				// записи (heading — 5-е D после опкода и objID/x/y/z).
+				if got := leD32(pushes[0].Frame[17:]); got != 16384 {
+					t.Errorf("StopMove heading наблюдателю = %d; want 16384 (живой поворот записи)", got)
+				}
+			}
 		})
 	}
+}
+
+// leD32 — младшие байты вперёд (разбор пейлоада кадра в тесте).
+func leD32(b []byte) int32 {
+	return int32(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
 }
 
 func TestRecordOfCarriesLiveHeadingAndDest(t *testing.T) {

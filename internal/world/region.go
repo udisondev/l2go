@@ -384,9 +384,9 @@ func (r *Region) sendSave(rec persist.CharRecord, corr transport.EntityID) {
 }
 
 // userInfoOf — CharRecord → данные UserInfo. Скорости/атака/коллизии —
-// константы golden-прецедента P3.5 (те же, что CharInfo: живой клиент с
-// нулевой скоростью не двигается сам — KT-4); производные статы —
-// плейсхолдеры до формул (фаза 4).
+// константы шаблона (единый источник с CharInfo: живой клиент с нулевой
+// скоростью не двигается сам — KT4-1); производные статы — плейсхолдеры
+// до формул.
 func userInfoOf(p *Player) protocol.UserInfoData {
 	r := &p.Rec
 	return protocol.UserInfoData{
@@ -406,16 +406,16 @@ func userInfoOf(p *Player) protocol.UserInfoData {
 		MaxHp:     int32(r.HP), CurHp: int32(r.HP),
 		MaxMp: int32(r.MP), CurMp: int32(r.MP),
 		Sp:                    0,
-		PAtkSpd:               300,
-		MAtkSpd:               333,
+		PAtkSpd:               int32(persist.HumanFighter.BasePAtkSpd),
+		MAtkSpd:               int32(persist.HumanFighter.BaseMAtkSpd),
 		RunSpd:                int32(persist.HumanFighter.RunSpd),
 		WalkSpd:               int32(persist.HumanFighter.WalkSpd),
-		SwimRunSpd:            50,
-		SwimWalkSpd:           50,
+		SwimRunSpd:            int32(persist.HumanFighter.SwimSpd),
+		SwimWalkSpd:           int32(persist.HumanFighter.SwimSpd),
 		MoveMultiplier:        1.0,
 		AttackSpeedMultiplier: 1.0,
-		CollisionRadius:       9.0,
-		CollisionHeight:       23.0,
+		CollisionRadius:       persist.HumanFighter.CollisionR,
+		CollisionHeight:       persist.HumanFighter.CollisionH,
 		Running:               true,
 	}
 }

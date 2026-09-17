@@ -541,7 +541,7 @@ func TestConnCloseBeforeFirstFrameNoArm(t *testing.T) {
 // — close-выход и ошибка записи; порядок Recycle→Unregister гарантирован
 // стеком defer'ов. Фейк считает; реальный пул проверяется в encode.
 func TestWriteLoopRecyclesOnBothExits(t *testing.T) {
-	t.Parallel()
+	// timing-зависим (живой сокет, дедлайны) — последовательно (docs/testing.md §2)
 	// close-выход: живой сервер + клиент до стационара, закрытие с флешом.
 	cfg := testConfig()
 	out := newFakeOutbounds()

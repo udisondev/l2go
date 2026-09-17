@@ -103,12 +103,12 @@ type State struct {
 	Leaving  []leaveState                  // сортировано (Deadline, Entity)
 	SaveQ    map[string]*saveState         // аккаунт → попытка сохранения
 
-	DroppedFrames   uint64 // кадры Leaving/неизвестных сущностей
-	DeadLetters     uint64 // контрольные письма без адресата
-	Unsavable       uint64 // валидационные отказы персиста (стоп ретраев)
-	SpeedFlags      uint64 // флаги спидхака (токен-бакет ниже −SLACK)
-	SnapBacks       uint64 // коррекции ValidateLocation (дрейф/спидхак/телепорт)
-	CannotMoveNoops uint64 // CannotMoveAnymore вне движения: применён как стоячий поворот (метрика)
+	DroppedFrames      uint64 // кадры Leaving/неизвестных сущностей
+	DeadLetters        uint64 // контрольные письма без адресата
+	Unsavable          uint64 // валидационные отказы персиста (стоп ретраев)
+	SpeedFlags         uint64 // флаги спидхака (токен-бакет ниже −SLACK)
+	SnapBacks          uint64 // коррекции ValidateLocation (дрейф/спидхак/телепорт)
+	CannotMoveStanding uint64 // CannotMoveAnymore вне движения: применён как стоячий поворот (метрика)
 }
 
 // newState — состояние с инициализированными картами.
@@ -351,7 +351,7 @@ func foldClientFrame(tick Tick, st *State, ents []*Entity, env *transport.Envelo
 	case protocol.OpCMoveToLocation:
 		foldMoveToLocation(st, ent, env, mov, res)
 	case protocol.OpCValidatePosition:
-		foldValidatePosition(st, ent, env, res)
+		foldValidatePosition(st, ent, env, mov, res)
 	case protocol.OpCCannotMoveAnymore:
 		foldCannotMoveAnymore(st, ent, env, res)
 	default:
@@ -555,7 +555,7 @@ func (st *State) Dump(ents []*Entity) []byte {
 	buf = binary.AppendUvarint(buf, st.Unsavable)
 	buf = binary.AppendUvarint(buf, st.SpeedFlags)
 	buf = binary.AppendUvarint(buf, st.SnapBacks)
-	buf = binary.AppendUvarint(buf, st.CannotMoveNoops)
+	buf = binary.AppendUvarint(buf, st.CannotMoveStanding)
 	buf = binary.AppendUvarint(buf, uint64(len(ents)))
 	for _, e := range ents {
 		buf = appendEntity(buf, e)

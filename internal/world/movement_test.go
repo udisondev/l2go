@@ -564,8 +564,8 @@ func TestFoldCannotMoveAnymoreTable(t *testing.T) {
 			if _, ok := findPush(res, 7, opStopMove); !ok {
 				t.Errorf("StopMove отсутствует")
 			}
-			if !tc.moving && st.CannotMoveNoops != 1 {
-				t.Errorf("счётчик стоячих кадров = %d; want 1", st.CannotMoveNoops)
+			if !tc.moving && st.CannotMoveStanding != 1 {
+				t.Errorf("счётчик стоячих кадров = %d; want 1", st.CannotMoveStanding)
 			}
 			if tc.moving && tc.dx > 300 {
 				if st.SnapBacks != 1 {
@@ -606,8 +606,18 @@ func TestFoldClientFrameEvilInputsTable(t *testing.T) {
 			if st.DroppedFrames != 1 {
 				t.Fatalf("DroppedFrames = %d; want 1", st.DroppedFrames)
 			}
-			if !ents[0].Moving || len(res.Pushes) != 0 {
-				t.Errorf("состояние тронуто злым входом: moving %v pushes %d", ents[0].Moving, len(res.Pushes))
+			if !ents[0].Moving {
+				t.Errorf("состояние тронуто злым входом: moving %v", ents[0].Moving)
+			}
+			// «Цель вне мира» — достижимый клик живого клиента (терраин всей
+			// карты): канон отвечает ActionFailed (М4/F90); прочий мусор —
+			// метрика без ответа.
+			if tc.name == "цель вне мира" {
+				if _, ok := findPush(res, 7, opActionFailed); !ok {
+					t.Errorf("цель вне мира без ActionFailed (клин инпута живого клиента)")
+				}
+			} else if len(res.Pushes) != 0 {
+				t.Errorf("мусорный вход отвечен кадрами: %d", len(res.Pushes))
 			}
 		})
 	}
@@ -797,22 +807,38 @@ func TestUserInfoSpeedsNonZero(t *testing.T) {
 	if d.MoveMultiplier != 1.0 || d.AttackSpeedMultiplier != 1.0 || !d.Running {
 		t.Fatalf("UserInfo множители/режим = %v/%v/%v; want 1.0/1.0/run", d.MoveMultiplier, d.AttackSpeedMultiplier, d.Running)
 	}
+	// Полный набор проводки шаблона: атака/плавание/коллизии — из шаблона
+	// и совпадают с CharInfo (единый источник, иначе дрейф копий молчит).
+	if d.PAtkSpd != int32(persist.HumanFighter.BasePAtkSpd) || d.MAtkSpd != int32(persist.HumanFighter.BaseMAtkSpd) {
+		t.Errorf("UserInfo PAtkSpd/MAtkSpd = %d/%d; want %d/%d (шаблон)",
+			d.PAtkSpd, d.MAtkSpd, persist.HumanFighter.BasePAtkSpd, persist.HumanFighter.BaseMAtkSpd)
+	}
+	if d.SwimRunSpd != int32(persist.HumanFighter.SwimSpd) || d.SwimWalkSpd != int32(persist.HumanFighter.SwimSpd) {
+		t.Errorf("UserInfo swim = %d/%d; want %d/%d", d.SwimRunSpd, d.SwimWalkSpd,
+			persist.HumanFighter.SwimSpd, persist.HumanFighter.SwimSpd)
+	}
+	c := charInfoOf(replica.Record{Kind: replica.RecordKindPlayer})
+	if d.RunSpd != c.RunSpd || d.WalkSpd != c.WalkSpd || d.PAtkSpd != c.PAtkSpd ||
+		d.MAtkSpd != c.MAtkSpd || d.SwimRunSpd != c.SwimRunSpd ||
+		d.CollisionRadius != c.CollisionRadius || d.CollisionHeight != c.CollisionHeight {
+		t.Errorf("UserInfo/CharInfo разошлись: %+v против %+v", d, c)
+	}
 }
 
-// TestFoldValidatePositionAdoptsZ — KT3-4: вертикаль рельефа клиента
-// принимается стоящему в допуске (планар не трогаем — сервер-авторитетен);
+// TestFoldValidatePositionAdoptsZ — вертикаль рельефа клиента принимается
+// стоящему в допуске от слоя гео (планар не трогаем — сервер-авторитетен);
 // вне допуска и движущемуся — серверная Z сохраняется.
 func TestFoldValidatePositionAdoptsZ(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name     string
-		dz       int32
-		want     int32 // итоговая Z сущности
-		moving   bool
-		wantSnap bool
+		name   string
+		dz     int32
+		want   int32 // итоговая Z сущности
+		moving bool
 	}{
 		{name: "в допуске принят", dz: 400, want: 400},
 		{name: "граница допуска", dz: -500, want: -500},
+		{name: "за границей сохранён", dz: 501, want: 0},
 		{name: "вне допуска сохранён", dz: 900, want: 0},
 		{name: "движущемуся не адаптируется", dz: 400, want: 0, moving: true},
 	}
@@ -824,7 +850,7 @@ func TestFoldValidatePositionAdoptsZ(t *testing.T) {
 			if tc.moving {
 				startMove(ents[0], 300, 0, 0)
 			}
-			res := foldM(10, 1, st, ents, emptyGeo,
+			foldM(10, 1, st, ents, emptyGeo,
 				validateLetter(101, syncPos.X, syncPos.Y, tc.dz, 0))
 			if got := ents[0].Pos.Z; got != tc.want {
 				t.Fatalf("Z = %d; want %d", got, tc.want)
@@ -834,7 +860,29 @@ func TestFoldValidatePositionAdoptsZ(t *testing.T) {
 					t.Fatalf("X мутирован отчётом: %d; want %d (планар сервер-авторитетен)", got, syncPos.X)
 				}
 			}
-			_ = res
 		})
+	}
+}
+
+// TestFoldValidatePositionZDriftCappedByGeoLayer — кумулятив вертикали
+// капсут: серия отчётов, каждый «в допуске от текущей Z», не уводит Z дальше
+// допуска от слоя гео (якорь — слой, не принятая ранее Z).
+func TestFoldValidatePositionZDriftCappedByGeoLayer(t *testing.T) {
+	t.Parallel()
+	sg := newSynthGeo(t)
+	const layer = -3104
+	gx := int(geo.WorldToGeoX(int(syncPos.X)))
+	gy := int(geo.WorldToGeoY(int(syncPos.Y)))
+	sg.set(gx, gy, layer, geo.NSWEAll)
+	gm := sg.build()
+
+	st := newState()
+	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, layer)}
+	for _, dz := range []int32{400, 799, 1200} {
+		foldM(10, 1, st, ents, gm,
+			validateLetter(101, syncPos.X, syncPos.Y, layer+dz, 0))
+	}
+	if got := ents[0].Pos.Z; got != layer+400 {
+		t.Fatalf("Z после серии = %d; want %d (кумулятив капснут слоем гео)", got, layer+400)
 	}
 }

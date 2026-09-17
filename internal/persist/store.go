@@ -147,8 +147,10 @@ func (s *store) write(name string, value any) error {
 // renameReplace — атомарная замена. На Windows назначенный файл, открытый
 // в этот момент читателем (поллинг файла тестами/диагностикой), даёт rename
 // access denied (errno 5; окно обмена на стороне чтения — 32); короткий
-// повтор с бюджетом переживает окно чтения. На POSIX оба номера — чужие
-// классы ошибок (EIO/EPIPE от rename не встречаются), ветка мертва.
+// повтор с бюджетом переживает окно чтения. На POSIX errno 5 = EIO: rename
+// может вернуть его при сбое носителя — бюджет ограничивает ложный ретрай
+// 200 мс, ошибка возвращается, не маскируется; errno 32 (EPIPE) от rename
+// не возникает.
 func (s *store) renameReplace(tmpName, dst string) error {
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for {

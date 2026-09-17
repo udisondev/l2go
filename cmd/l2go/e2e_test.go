@@ -448,12 +448,12 @@ func TestE2ELogoutRoundTripPosition(t *testing.T) {
 		t.Errorf("кадры после LeaveWorld: %q", tail)
 	}
 
-	// Путь сохранения: файл отражает сессию. Персист пишет асинхронно —
-	// ждём свежего LastSeenUnix (F22: патч поверх невысохшего сохранения
-	// был бы перезаписан).
+	// Путь сохранения: файл отражает сессию. waitPersistIdle уже доказал,
+	// что все письма сессии обработаны и записаны — маркер свежести не нужен
+	// (last_seen-порог после idle гоняется с секундной границей Unix-времени,
+	// F88); читаем непосредственно.
 	path := env.charFile("roundtrip")
-	start := time.Now().Unix()
-	recs := waitFreshChars(t, path, start)
+	recs := readChars(t, path)
 	if len(recs) != 1 {
 		t.Fatalf("персонажей в файле %d; want 1", len(recs))
 	}
@@ -914,12 +914,12 @@ func TestE2EMovementObserverOutsideRadius(t *testing.T) {
 		t.Fatalf("Logout(far): %v", err)
 	}
 	waitForLeaveWorld(t, far, env)
-	// Сохранения сессии должны лечь до правки файла (см. waitPersistIdle).
+	// Сохранения сессии должны лечь до правки файла (см. waitPersistIdle):
+	// idle доказывает запись — читаем непосредственно, без last_seen-маркера
+	// (его порог после idle гоняется с секундной границей Unix-времени, F88).
 	waitPersistIdle(t, env.gs.actor)
-	logoutUnix := time.Now().Unix() // после ухода: создание/вход уже не пишут
 	path := env.charFile("faraway")
-	// сохранение логаута асинхронно: ждём записи с last_seen ≥ логаута до правки
-	recs := waitFreshChars(t, path, logoutUnix)
+	recs := readChars(t, path)
 	recs[0]["x"] = ax + 10000
 	recs[0]["y"] = ay
 	writeChars(t, path, recs)
@@ -1011,7 +1011,13 @@ func TestE2EJoinCarriesLiveHeading(t *testing.T) {
 	if err := alice.gc.SendRaw(b, "CANNOT_MOVE_ANYMORE"); err != nil {
 		t.Fatalf("SendRaw(CannotMoveAnymore): %v", err)
 	}
-	time.Sleep(300 * time.Millisecond) // ≥3 тика 10 Гц: свёртка + публикация записи
+	// Стоячая ветка шлёт StopMove-самоэхо той же свёрткой — его появление в
+	// трафик-логе доказывает применение поворота до входа наблюдателя.
+	if line := waitForLine(t, alice.out, "STOP_MOVE", 3*time.Second); line != "" {
+		if got := parseCoord(t, line, "heading"); got != want {
+			t.Errorf("самоэхо StopMove heading = %d; want %d", got, want)
+		}
+	}
 
 	bob := enterWorld(t, env, "turnb")
 	line := waitForLine(t, bob.out, "CHAR_INFO name=\"Botturna\"", 3*time.Second)

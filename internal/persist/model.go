@@ -103,7 +103,7 @@ type Template struct {
 	BaseCP  int
 	WalkSpd int
 	RunSpd  int
-	// BasePAtkSpd/BaseMAtkSpd/SwimSpd — скорости кадра CharInfo/NpcInfo
+	// BasePAtkSpd/BaseMAtkSpd/SwimSpd — скорости кадров UserInfo/CharInfo
 	// (basePAtkSpd=300, slowSwim/fastSwim=50 — файл шаблона; baseMAtkSpd=333
 	// — дефолт CreatureTemplate.java кода Mobius, в XML узла нет).
 	BasePAtkSpd int
@@ -111,7 +111,7 @@ type Template struct {
 	SwimSpd     int
 	// CollisionR/CollisionH — габариты male-модели (collisionMale 9/23;
 	// female 8/23.5 — с появлением выбора; мультипликаторы — плейсхолдеры
-	// до формул производных статов, фаза 4).
+	// до формул производных статов).
 	CollisionR float64
 	CollisionH float64
 	StartX     int

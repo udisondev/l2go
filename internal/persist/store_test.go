@@ -2,6 +2,7 @@ package persist
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -137,21 +138,23 @@ func TestStoreRenameSharingViolationRetry(t *testing.T) {
 	// Оба errno занятости (5 — открыт читателем, 32 — окно обмена) —
 	// повтор до успеха; чужой класс (13) — один вызов, ошибка наружу.
 	for _, errno := range []syscall.Errno{5, 32} {
-		calls := 0
-		inner := s.rename
-		s.rename = func(oldpath, newpath string) error {
-			calls++
-			if calls <= 2 {
-				return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: errno}
+		t.Run(fmt.Sprintf("errno%d", errno), func(t *testing.T) {
+			calls := 0
+			inner := s.rename
+			s.rename = func(oldpath, newpath string) error {
+				calls++
+				if calls <= 2 {
+					return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: errno}
+				}
+				return inner(oldpath, newpath)
 			}
-			return inner(oldpath, newpath)
-		}
-		if err := s.write("acc.json", []CharRecord{{Account: "acc", Name: "New"}}); err != nil {
-			t.Fatalf("write() после errno %d = %v; want повтор до успеха", errno, err)
-		}
-		if calls != 3 {
-			t.Errorf("попыток rename при errno %d = %d; want 3", errno, calls)
-		}
+			if err := s.write("acc.json", []CharRecord{{Account: "acc", Name: "New"}}); err != nil {
+				t.Fatalf("write() после errno %d = %v; want повтор до успеха", errno, err)
+			}
+			if calls != 3 {
+				t.Errorf("попыток rename при errno %d = %d; want 3", errno, calls)
+			}
+		})
 	}
 
 	other := 0

@@ -31,9 +31,10 @@ var (
 	// driftMilli — порог дрейфа отчёта: 300 юн (интерлюд-референс
 	// loop_movement.go: distSq > 90000).
 	driftMilli = int64(300 * 1000)
-	// zAdoptMilli — допуск адаптации Z отчёта: 500 юн (канон L2J
-	// ValidatePosition: вертикаль клиента принимается в допуске). Сверх —
-	// серверная Z сохраняется (вертикальный чит не прокрашивается).
+	// zAdoptMilli — допуск адаптации вертикали отчёта от слоя гео в точке:
+	// 500 юн — наш выбор (канонное окно L2J ValidatePosition — 200<|dz|<1500
+	// при |z−clientZ|<800, того же порядка). Якорь-слой капсирует кумулятив
+	// адаптации; сверх допуска серверная вертикаль сохраняется.
 	zAdoptMilli = int64(500 * 1000)
 	// moveLettersCap — обработанных MoveToLocation-писем на шаг (r1 «лимит K
 	// на тик»; 64 line-walk'а ≤ ~54 мкс по baseline P2.4). Сверх капа — дроп
@@ -62,7 +63,15 @@ func foldMoveToLocation(st *State, ent *Entity, env *transport.Envelope, mov *mo
 		st.DroppedFrames++
 		return
 	}
-	if !geo.InWorld(int(v.TargetX()), int(v.TargetY())) || !geo.InWorld(int(ent.Pos.X), int(ent.Pos.Y)) {
+	if !geo.InWorld(int(v.TargetX()), int(v.TargetY())) {
+		// Цель вне сетки мира для живого клиента — достижимый клик (клиент
+		// рендерит терраин всей карты); канон отвечает ActionFailed на
+		// полностью заблокированную цель — вне сетки блокирована всегда.
+		st.DroppedFrames++
+		pushActionFailed(res, ent)
+		return
+	}
+	if !geo.InWorld(int(ent.Pos.X), int(ent.Pos.Y)) {
 		st.DroppedFrames++
 		return
 	}
@@ -150,9 +159,12 @@ func stopSegment(e *Entity) {
 // foldValidatePosition — сверка отчёта (~1/с): pendingTeleport гасит бакет;
 // токен-бакет скорости (дебет = расхождение с authPos, не пройденный путь);
 // дрейф сверх порога — snap-back. Планар отчёта позицию сервера не мутирует;
-// вертикаль адаптируется в допуске (канон L2J: Z рельефа клиента в точке
-// точнее шаблона датапака — закрытие KT3-4 «ноги в земле»).
-func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, res *StepResult) {
+// вертикаль стоящего адаптируется к рельефу клиента (закрытие KT3-4 «ноги в
+// земле»): якорь допуска — слой гео в точке, не принятая ранее Z — серия
+// отчётов иначе уводит вертикаль неограниченно (F87). Принимается только
+// отчётом, прошедшим сверку; движущемуся вертикаль не трогают (Z ведёт
+// отрезок).
+func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, mov *movement, res *StepResult) {
 	v, ok := protocol.NewValidatePositionView(env.Payload)
 	if !ok {
 		st.DroppedFrames++
@@ -163,13 +175,6 @@ func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, res *
 		return
 	}
 	d := distMilli(ent.Pos, Position{X: v.X(), Y: v.Y(), Z: v.Z()})
-	// Стоящему принимаем Z отчёта в допуске: клиент стоит на своём рельефе,
-	// серверный — оценка гео-сетки; движущемуся не трогаем (Z ведёт отрезок).
-	if !ent.Moving {
-		if dz := (int64(v.Z()) - int64(ent.Pos.Z)) * 1000; dz <= zAdoptMilli && dz >= -zAdoptMilli {
-			ent.Pos.Z = v.Z()
-		}
-	}
 	p := ent.Player
 	if p.PendingTeleport {
 		if d <= driftMilli {
@@ -200,12 +205,25 @@ func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, res *
 	if snap {
 		st.SnapBacks++
 		pushValidateLocation(res, ent)
+		return
+	}
+	if !ent.Moving {
+		// Допуск 500 юн — наш выбор (канонное окно L2J: 200<|dz|<1500 при
+		// |z−clientZ|<800 — того же порядка); без гео в точке вертикаль
+		// свободна (NullRegion-семантика).
+		geoZ := mov.gm.NearestZ(geo.Loc{X: int(ent.Pos.X), Y: int(ent.Pos.Y), Z: int(ent.Pos.Z)})
+		if dz := (int64(v.Z()) - int64(geoZ)) * 1000; dz <= zAdoptMilli && dz >= -zAdoptMilli {
+			ent.Pos.Z = v.Z()
+		}
 	}
 }
 
 // foldCannotMoveAnymore — клиент упёрся: авторитетная остановка здесь, heading
 // письма (нормализация маской — Go-% знаконосен); расхождение сверх порога —
-// snap-back. Вне движения — валидный no-op (счётчик, не дроп).
+// snap-back. Вне движения — стоячий поворот: heading применяется, StopMove —
+// себе и наблюдателям (канон stopMove(loc) ставит XYZ+heading из пакета;
+// XYZ не принимается — планар сервер-авторитетен, вертикаль — каналом
+// ValidatePosition).
 func foldCannotMoveAnymore(st *State, ent *Entity, env *transport.Envelope, res *StepResult) {
 	v, ok := protocol.NewCannotMoveAnymoreView(env.Payload)
 	if !ok {
@@ -222,7 +240,7 @@ func foldCannotMoveAnymore(st *State, ent *Entity, env *transport.Envelope, res 
 		// бродкастит StopMove всем (наблюдатели — через dirty-запись →
 		// EventUpdate → composeStopFrame). Молчаливый no-op оставлял чужую
 		// запись со старым heading — поворот не синхронизировался (KT4-5).
-		st.CannotMoveNoops++
+		st.CannotMoveStanding++
 		ent.Heading = v.Heading() & 0xFFFF
 		pushStopMove(res, ent)
 		return

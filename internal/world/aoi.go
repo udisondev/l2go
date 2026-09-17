@@ -52,28 +52,28 @@ func recordOf(ent *Entity) replica.Record {
 	return rec
 }
 
-// charInfoOf — AoI-запись игрока → CharInfo (шаблонные константы HumanFighter
-// как у UserInfo P3.7; скорости/коллизии — константы golden-прецедента P3.5;
-// MaxCp/CurCp=0 до формул статов — запись-отклонение О-6 реестра P3.8).
-// Standing = факт позы (запись стоит); Running — режим run/walk канона, фаза 3
-// пиннит run (walk-режим — фаза 4).
+// charInfoOf — AoI-запись игрока → CharInfo (константы шаблона HumanFighter —
+// единый источник с UserInfo; MaxCp/CurCp=0 до формул статов — запись-
+// отклонение О-6 реестра P3.8). Standing = факт позы (запись стоит);
+// Running — режим run/walk канона,walk-режим — с формулами статов.
 func charInfoOf(rec replica.Record) protocol.CharInfoData {
 	return protocol.CharInfoData{
 		X: rec.X, Y: rec.Y, Z: rec.Z,
-		ObjID:      int32(encode.ObjectIDBase + uint64(rec.Entity)),
-		Name:       rec.Name,
-		Race:       rec.Race,
-		Female:     rec.Female,
-		BaseClass:  rec.BaseClass,
-		MAtkSpd:    333,
-		PAtkSpd:    300,
-		RunSpd:     int32(persist.HumanFighter.RunSpd),
-		WalkSpd:    int32(persist.HumanFighter.WalkSpd),
-		SwimRunSpd: 50, SwimWalkSpd: 50,
+		ObjID:                 int32(encode.ObjectIDBase + uint64(rec.Entity)),
+		Name:                  rec.Name,
+		Race:                  rec.Race,
+		Female:                rec.Female,
+		BaseClass:             rec.BaseClass,
+		MAtkSpd:               int32(persist.HumanFighter.BaseMAtkSpd),
+		PAtkSpd:               int32(persist.HumanFighter.BasePAtkSpd),
+		RunSpd:                int32(persist.HumanFighter.RunSpd),
+		WalkSpd:               int32(persist.HumanFighter.WalkSpd),
+		SwimRunSpd:            int32(persist.HumanFighter.SwimSpd),
+		SwimWalkSpd:           int32(persist.HumanFighter.SwimSpd),
 		MoveMultiplier:        1.0,
 		AttackSpeedMultiplier: 1.0,
-		CollisionRadius:       9.0,
-		CollisionHeight:       23.0,
+		CollisionRadius:       persist.HumanFighter.CollisionR,
+		CollisionHeight:       persist.HumanFighter.CollisionH,
 		HairStyle:             rec.HairStyle,
 		HairColor:             rec.HairColor,
 		Face:                  rec.Face,

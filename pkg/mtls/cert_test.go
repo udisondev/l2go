@@ -78,7 +78,7 @@ func TestWriteMaterial(t *testing.T) {
 	// Биты прав на Windows ненаблюдаемы (Stat всегда 0777/0666, chmod —
 	// только read-only атрибут); проверка — Linux/CI.
 	if runtime.GOOS == "windows" {
-		return
+		t.Skip("биты прав на Windows ненаблюдаемы (Stat всегда 0777/0666)")
 	}
 	dirInfo, err := os.Stat(dir)
 	if err != nil {
