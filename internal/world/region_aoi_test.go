@@ -6,6 +6,7 @@ package world
 // advisory N→N с окном свёртки, наблюдатели — только живые игроки.
 
 import (
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,14 +18,29 @@ import (
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// playerEntity — EntityID игрока по аккаунту (белый ящик: тесты пакета).
-func playerEntity(h *enterHarness, account string) uint64 {
-	for _, res := range h.r.residents {
-		if res.ent.Player != nil && res.ent.Player.Rec.Account == account {
-			return uint64(res.ent.ID)
+// playerEntity — EntityID игрока по bind-письмам региона шлюзу: gwBox
+// изымается ОДИН раз на harness и кешируется (ExtractInto изымает — повторное
+// чтение ящика пусто; новые бинды тесту недоступны до нового harness).
+// Чтение gwBox тест-горутиной легитимно; прямой обход r.residents при живом
+// Run — гонка харнесса.
+func playerEntity(h *enterHarness, conn uint64) uint64 {
+	if h.binds == nil {
+		h.binds = make(map[uint64]uint64)
+	}
+	if _, ok := h.binds[conn]; !ok {
+		// промах: доизвлечь новые bind-письма (рождения после кеширования)
+		for _, env := range h.gwBox.ExtractInto(h.gwToken, nil) {
+			if env.Kind != transport.KindConnBind {
+				continue
+			}
+			msg, err := transport.DecodeLetter[transport.ConnBindMsg](env.Payload)
+			if err != nil {
+				continue
+			}
+			h.binds[msg.Conn] = uint64(msg.Entity)
 		}
 	}
-	return 0
+	return h.binds[conn]
 }
 
 func mkRecAt(account, name string, x, y int) persist.CharRecord {
@@ -121,6 +137,9 @@ func TestRegionPhaseAoIWireOrder(t *testing.T) {
 	if slivokEnd > firstChar {
 		t.Fatalf("CharInfo (инд %d) раньше UserInfo слитка (инд %d)", firstChar, slivokEnd)
 	}
+	if !h.pushes.Snapshot()[firstChar].Crypt {
+		t.Fatalf("join-кадр не криптуется (Crypt=false)")
+	}
 	if h.r.Stats().PhaseAoI == 0 {
 		t.Fatalf("PhaseAoI не тикает")
 	}
@@ -159,7 +178,7 @@ func TestRegionRemovalSingleDeleteObject(t *testing.T) {
 	h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
 	h.enterConn(t, 8, mkRecAt("bob", "Bob", -71338, 258271))
 	h.pushes.Reset()
-	bob := playerEntity(h, "bob")
+	bob := playerEntity(h, 8)
 	h.send(t, transport.Envelope{
 		To: transport.Addr{Entity: transport.EntityID(bob)}, FromID: h.gwID,
 		Kind: transport.KindClientFrame, Payload: []byte{protocol.OpLogout}})
@@ -191,6 +210,7 @@ func TestRegionPanicPostApplyConverges(t *testing.T) {
 	h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
 	h.r.forcePanicPostApply.Store(true)
 	h.enterConnRaw(8, mkRecAt("bob", "Bob", -71338, 258271))
+	waitCond(t, h.r, func(st RegionStats) bool { return st.Failed >= 1 && st.Residents == 2 })
 	h.r.forcePanicPostApply.Store(false)
 	waitTick(t, h.r)
 	waitTick(t, h.r)
@@ -206,6 +226,7 @@ func TestRegionPanicInApplyConverges(t *testing.T) {
 	h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
 	h.r.join.ForcePanicInApply.Store(true)
 	h.enterConnRaw(8, mkRecAt("bob", "Bob", -71338, 258271))
+	waitCond(t, h.r, func(st RegionStats) bool { return st.Failed >= 1 && st.Residents == 2 })
 	h.r.join.ForcePanicInApply.Store(false)
 	waitTick(t, h.r)
 	waitTick(t, h.r)
@@ -223,6 +244,7 @@ func TestRegionBirthAndLeaveThroughPanicWindow(t *testing.T) {
 	h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
 	h.r.forcePanic.Store(uint32(phaseB))
 	h.enterConnRaw(8, mkRecAt("bob", "Bob", -71338, 258271))
+	waitCond(t, h.r, func(st RegionStats) bool { return st.Failed >= 1 && st.Residents == 2 })
 	h.r.forcePanic.Store(0)
 	waitTick(t, h.r)
 	// Bob уходит (LinkDead → короткий grace → Retire)
@@ -231,8 +253,9 @@ func TestRegionBirthAndLeaveThroughPanicWindow(t *testing.T) {
 		waitTick(t, h.r)
 	}
 	known := knownOf(h.pushes)
-	if len(known) != 1 {
-		t.Fatalf("после ухода Bob известны %v; want только Alice (нет вечного фантома)", known)
+	aliceID := playerEntity(h, 7)
+	if len(known) != 1 || !known[encode.ObjectIDBase+aliceID] {
+		t.Fatalf("после ухода Bob известны %v; want только alice (нет вечного фантома)", known)
 	}
 	_, dels := objIDs(h.pushes)
 	if len(dels) < 1 {
@@ -323,7 +346,8 @@ func TestAdvisorySeamPanicsAfterLogStep(t *testing.T) {
 // без кадров, Remove → DeleteObject, Update — без кадров.
 func TestComposeJoinEventKinds(t *testing.T) {
 	r := &Region{}
-	player := replica.Record{Entity: 5, Kind: replica.RecordKindPlayer, Name: "X"}
+	longName := strings.Repeat("Щ", 4096) // корнер: максимальное имя — размер кадра растёт, не паникует
+	player := replica.Record{Entity: 5, Kind: replica.RecordKindPlayer, Name: longName}
 	npc := replica.Record{Entity: 6, Kind: replica.RecordKindNPC}
 	pushes := r.composeJoin([]replica.Event{
 		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventIntroduce},
@@ -378,11 +402,13 @@ func TestRegionPanicInPhaseBJoinTailDurable(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.GraceTicks = 1
-			h := newEnterHarness(t, cfg)
+			// двойник назначается до старта Run (подмена при живом регионе —
+			// гонка); счётчик непрерывен: 16 кадров слитка alice докатываются,
+			// паника — на 3-м кадре шага входа Bob
+			fail := &failAfterPushes{failAfter: 16 + 3, persistent: mode.persistent}
+			h := newEnterHarnessPusher(t, cfg, fail)
+			fail.inner = h.pushes
 			h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
-			// панируем на 4-м кадре шага входа Bob (счётчик двойника с нуля)
-			fail := &failAfterPushes{inner: h.pushes, failAfter: 3, persistent: mode.persistent}
-			h.r.pusher = fail
 			h.enterConnRaw(8, mkRecAt("bob", "Bob", -71338, 258271))
 			waitCond(t, h.r, func(st RegionStats) bool { return st.Failed >= 1 && st.Residents == 2 })
 			fail.disabled.Store(true) // деактивация двойника, а не подмена pusher (гонка)
@@ -390,6 +416,16 @@ func TestRegionPanicInPhaseBJoinTailDurable(t *testing.T) {
 			waitTick(t, h.r)
 			if len(knownOf(h.pushes)) != 2 {
 				t.Fatalf("known-set не сошился: %v (режим %s)", knownOf(h.pushes), mode.name)
+			}
+			// дублей головы нет: заголовок слитка (USER_INFO) доставлен однократно
+			userInfos := 0
+			for _, p := range h.pushes.Snapshot() {
+				if p.Client == 8 && len(p.Frame) > 0 && p.Frame[0] == protocol.OpUserInfo {
+					userInfos++
+				}
+			}
+			if userInfos != 1 {
+				t.Fatalf("USER_INFO клиента 8 доставлен %d раз; want 1 (дубль головы?) в режиме %s", userInfos, mode.name)
 			}
 			chars, _ := objIDs(h.pushes)
 			seen := map[uint64]int{}
@@ -415,12 +451,12 @@ func TestRegionBlobCommitOnlyInPublishPhase(t *testing.T) {
 	h.r.forcePanic.Store(uint32(phaseB))
 	h.enterConnRaw(8, mkRecAt("bob", "Bob", -71338, 258271))
 	waitCond(t, h.r, func(st RegionStats) bool { return st.Failed >= 1 && st.Residents == 2 })
-	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, "bob"))); ok {
+	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, 8))); ok {
 		t.Fatalf("публикация до завершения шага: Bob читается в закоммиченном")
 	}
 	h.r.forcePanic.Store(0)
 	waitTick(t, h.r)
-	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, "bob"))); !ok {
+	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, 8))); !ok {
 		t.Fatalf("после успешного шага Bob не закоммичен")
 	}
 }
@@ -464,7 +500,7 @@ func TestRegionCompensatingBirthsRetireBlob(t *testing.T) {
 	h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
 	h.enterConn(t, 8, mkRecAt("bob", "Bob", -71338, 258271))
 	h.pushes.Reset()
-	bobID := playerEntity(h, "bob") // до ухода: после Retire resident-скан пуст
+	bobID := playerEntity(h, 8) // до ухода: после Retire биндов новых нет
 	// одним шагом: логаут Bob + вход carol
 	h.reg.Send(transport.Envelope{
 		To: transport.Addr{Entity: transport.EntityID(bobID)}, FromID: h.gwID,
@@ -472,10 +508,10 @@ func TestRegionCompensatingBirthsRetireBlob(t *testing.T) {
 	h.enterConnRaw(9, mkRecAt("carol", "Carol", -71338, 258271))
 	waitCond(t, h.r, func(st RegionStats) bool { return st.Residents == 2 })
 	waitTick(t, h.r)
-	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, "carol"))); !ok {
+	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, 9))); !ok {
 		t.Fatalf("born-состав не виден: carol нет в блобе")
 	}
-	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, "bob"))); ok {
+	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, 8))); ok {
 		t.Fatalf("gone-состав не виден: bob остался в блобе")
 	}
 	_, dels := objIDs(h.pushes)
@@ -499,7 +535,7 @@ func TestRegionReenterAccountKnownSetsClean(t *testing.T) {
 	h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
 	h.enterConn(t, 8, mkRecAt("eve", "Eve", -71338, 258271))
 	h.pushes.Reset()
-	oldEve := playerEntity(h, "eve") // до вытеснения
+	oldEve := playerEntity(h, 8) // до вытеснения
 	// перезаход eve с нового конна: вытеснение живой сущности без её персиста
 	h.enterConn(t, 9, mkRecAt("eve", "Eve2", -71338, 258271))
 	chars, _ := objIDs(h.pushes)
@@ -511,5 +547,91 @@ func TestRegionReenterAccountKnownSetsClean(t *testing.T) {
 	// взаимность восстановлена: alice ⇄ новая eve
 	if len(knownOf(h.pushes)) != 2 {
 		t.Fatalf("после перезахода известность = %v; want 2 (alice и новая eve)", knownOf(h.pushes))
+	}
+}
+
+// Рождение+уход через post-Apply-окно (трасса F61): X рождён в шаге с паникой
+// между Apply и merge, ушёл следующим — Remove эмитится примирением,
+// вечного фантома нет.
+func TestRegionBirthAndLeaveThroughPostApplyWindow(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.GraceTicks = 1
+	h := newEnterHarness(t, cfg)
+	h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
+	aliceID := playerEntity(h, 7)
+	h.r.forcePanicPostApply.Store(true)
+	h.enterConnRaw(8, mkRecAt("bob", "Bob", -71338, 258271))
+	waitCond(t, h.r, func(st RegionStats) bool { return st.Failed >= 1 && st.Residents == 2 })
+	bobID := playerEntity(h, 8)
+	h.r.forcePanicPostApply.Store(false)
+	waitTick(t, h.r)
+	// Bob уходит (LinkDead → короткий grace → Retire)
+	h.send(t, h.ctrlLetter(transport.KindLinkDead, mustConnRef(t, 8)))
+	for range 4 {
+		waitTick(t, h.r)
+	}
+	known := knownOf(h.pushes)
+	want := map[uint64]bool{encode.ObjectIDBase + aliceID: true}
+	if len(known) != len(want) || !known[encode.ObjectIDBase+aliceID] {
+		t.Fatalf("после ухода через post-Apply-окно известность = %v; want только alice", known)
+	}
+	_, dels := objIDs(h.pushes)
+	found := false
+	for _, id := range dels {
+		if id == encode.ObjectIDBase+bobID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("DeleteObject(bob) не доставлен примирением (dels=%v)", dels)
+	}
+}
+
+// ObserversOnlyLivingPlayers — расширенный сценарий: EnterLeaving-рождение
+// не наблюдатель (NPC-случай — юнит composeJoin + фильтр aoiObs; Spawn при
+// живом Run из теста — гонка харнесса, не заводим).
+func TestRegionObserversNPCAndEnterLeavingNotWatching(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.GraceTicks = 2
+	h := newEnterHarness(t, cfg)
+	h.enterConn(t, 7, mkRecAt("alice", "Alice", -71338, 258271))
+	// NPC-случай (Kind NPC — резидент без Player) покрыт юнитом composeJoin
+	// (счётчик-ветка) и фильтром aoiObs; прямой Spawn при живом Run — гонка
+	// харнесса (метод «только горутина региона»). Рождение «вошёл и оборвался»:
+	rec := mkRecAt("flash", "Flash", -71338, 258271)
+	body, _ := transport.EncodeLetter(transport.EnterWorldMsg{Conn: 30, Account: "flash", Char: mustJSONChar(rec)})
+	ld, _ := transport.EncodeLetter(transport.ConnRefMsg{Conn: 30})
+	h.reg.Send(h.ctrlLetter(transport.KindEnterWorld, body))
+	h.reg.Send(h.ctrlLetter(transport.KindLinkDead, ld))
+	waitCond(t, h.r, func(st RegionStats) bool { return st.Residents == 2 })
+	h.pushes.Reset()
+	// третий живой игрок: кадры только alice
+	h.enterConn(t, 9, mkRecAt("carol", "Carol", -71338, 258271))
+	aliceID := playerEntity(h, 7)
+	carolID := playerEntity(h, 9)
+	_ = aliceID
+	for _, p := range h.pushes.Snapshot() {
+		if len(p.Frame) == 0 {
+			continue
+		}
+		if p.Frame[0] == protocol.OpCharInfo || p.Frame[0] == protocol.OpDeleteObject {
+			if p.Client != 7 && p.Client != 9 {
+				t.Fatalf("join-кадр не-живому наблюдателю (client=%d)", p.Client)
+			}
+		}
+	}
+	known := knownOf(h.pushes)
+	if !known[encode.ObjectIDBase+carolID] || !known[encode.ObjectIDBase+aliceID] {
+		t.Fatalf("взаимность alice⇄carol не установлена: %v", known)
+	}
+	// flash жив в grace — легитимная цель для alice; после истечения grace —
+	// DeleteObject(flash), известность сходится к alice⇄carol
+	for range 6 {
+		waitTick(t, h.r)
+	}
+	known = knownOf(h.pushes)
+	flashID := playerEntity(h, 30)
+	if flashID != 0 && known[encode.ObjectIDBase+flashID] {
+		t.Fatalf("фантом EnterLeaving после grace: %v (flash=%d)", known, flashID)
 	}
 }

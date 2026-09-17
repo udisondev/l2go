@@ -122,7 +122,11 @@ func (j *Join) Apply() {
 		case EventIntroduce:
 			cur.ids[ev.slot] = ev.Target.Entity
 		case EventRemove:
-			cur.ids[ev.slot] = 0
+			// сверка вечного id: слот мог быть реюзнут новыми жильцом (эмиты
+			// Remove(старого) и Introduce(нового) в любом порядке)
+			if cur.ids[ev.slot] == ev.Target.Entity {
+				cur.ids[ev.slot] = 0
+			}
 		case EventUpdate:
 			// членство не меняется; last-known не хранится — compose фазы 3
 			// самодостаточен пейлоадом события (P3.9 дополнит при надобности)

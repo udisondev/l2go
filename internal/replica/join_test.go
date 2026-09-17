@@ -1,6 +1,7 @@
 package replica
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"testing"
 
@@ -96,44 +97,46 @@ func TestJoinRadiusBoundariesExact(t *testing.T) {
 	}
 	obs := recAt(1, 0, 0)
 	for _, c := range cases {
-		p := NewPublisher()
-		j := NewJoin(cfg)
-		target := recAt(2, c.d, 0)
-		events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
-		intro := false
-		for _, ev := range events {
-			if ev.Kind == EventIntroduce {
-				intro = true
-			}
-		}
-		if c.want == "in" && !intro {
-			t.Errorf("d=%d: ввода нет; want ввод", c.d)
-		}
-		if (c.want == "out" || c.want == "hold" || c.want == "gone") && intro {
-			t.Errorf("d=%d: ввод есть; want нет", c.d)
-		}
-		// удержание/выход: шаг изменения дистанции недостижим без Changed —
-		// проверяем сменой позиции цели (Changed) на ту же дистанцию
-		if c.want == "hold" || c.want == "gone" {
-			// цель уже член (введена с d=enter), позиция меняется на c.d
-			p2 := NewPublisher()
-			j2 := NewJoin(cfg)
-			stepPair(t, p2, j2, []Observer{obsOf(obs)}, []Record{obs, recAt(2, 3500, 0)})
-			moved := recAt(2, c.d, 0)
-			events2 := stepPair(t, p2, j2, []Observer{obsOf(obs)}, []Record{obs, moved})
-			removed := false
-			for _, ev := range events2 {
-				if ev.Kind == EventRemove && ev.Target.Entity == 2 {
-					removed = true
+		t.Run(fmt.Sprintf("d=%d", c.d), func(t *testing.T) {
+			p := NewPublisher()
+			j := NewJoin(cfg)
+			target := recAt(2, c.d, 0)
+			events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
+			intro := false
+			for _, ev := range events {
+				if ev.Kind == EventIntroduce {
+					intro = true
 				}
 			}
-			if c.want == "gone" && !removed {
-				t.Errorf("d=%d: удержание за exit; want Remove", c.d)
+			if c.want == "in" && !intro {
+				t.Errorf("ввода нет; want ввод")
 			}
-			if c.want == "hold" && removed {
-				t.Errorf("d=%d: Remove в кольце гистерезиса", c.d)
+			if (c.want == "out" || c.want == "hold" || c.want == "gone") && intro {
+				t.Errorf("ввод есть; want нет")
 			}
-		}
+			// удержание/выход: шаг изменения дистанции недостижим без Changed —
+			// проверяем сменой позиции цели (Changed) на ту же дистанцию
+			if c.want == "hold" || c.want == "gone" {
+				// цель уже член (введена с d=enter), позиция меняется на c.d
+				p2 := NewPublisher()
+				j2 := NewJoin(cfg)
+				stepPair(t, p2, j2, []Observer{obsOf(obs)}, []Record{obs, recAt(2, 3500, 0)})
+				moved := recAt(2, c.d, 0)
+				events2 := stepPair(t, p2, j2, []Observer{obsOf(obs)}, []Record{obs, moved})
+				removed := false
+				for _, ev := range events2 {
+					if ev.Kind == EventRemove && ev.Target.Entity == 2 {
+						removed = true
+					}
+				}
+				if c.want == "gone" && !removed {
+					t.Errorf("удержание за exit; want Remove")
+				}
+				if c.want == "hold" && removed {
+					t.Errorf("Remove в кольце гистерезиса")
+				}
+			}
+		})
 	}
 }
 
@@ -389,18 +392,20 @@ func TestJoinObserverMoveFullPassDiff(t *testing.T) {
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, near, far})
 	moved := recAt(1, 5000, 0)
 	events := stepPair(t, p, j, []Observer{obsOf(moved)}, []Record{moved, near, far})
-	kinds := map[transport.EntityID]EventKind{}
+	// multiset пар (цель, вид): полный проход может эмитить обе стороны —
+	// сверяем состав, а не последнюю запись по цели
+	got := map[[2]uint64]int{}
 	for _, ev := range events {
 		if ev.Obs.Entity != 1 {
 			continue
 		}
-		kinds[ev.Target.Entity] = ev.Kind
+		got[[2]uint64{uint64(ev.Target.Entity), uint64(ev.Kind)}]++
 	}
-	if kinds[2] != EventRemove {
-		t.Fatalf("покинутая цель: %v; want Remove", kinds[2])
+	if got[[2]uint64{2, uint64(EventRemove)}] != 1 {
+		t.Fatalf("покинутая цель: счётчик Remove(2) = %d; want 1 (состав %v)", got[[2]uint64{2, uint64(EventRemove)}], got)
 	}
-	if kinds[3] != EventIntroduce {
-		t.Fatalf("новая цель: %v; want Introduce", kinds[3])
+	if got[[2]uint64{3, uint64(EventIntroduce)}] != 1 {
+		t.Fatalf("новая цель: счётчик Introduce(3) = %d; want 1 (состав %v)", got[[2]uint64{3, uint64(EventIntroduce)}], got)
 	}
 }
 
@@ -530,5 +535,52 @@ func TestVisibleFlagCombinations(t *testing.T) {
 		if got := Visible(c.obs, c.tgt); got != c.want {
 			t.Errorf("Visible(%d,%d) = %v; want %v", c.obs, c.tgt, got, c.want)
 		}
+	}
+}
+
+// TestJoinSlotReuseInFullPassKeepsNewTenant — реюз слота при полном проходе
+// наблюдателя: Remove(старого жильца) не стирает нового из view (сверка
+// вечного id в Apply), порядок эмита не важен.
+func TestJoinSlotReuseInFullPassKeepsNewTenant(t *testing.T) {
+	t.Parallel()
+	cfg := JoinConfig{Enter: 1000, Exit: 1500}
+	obs := recAt(1, 0, 0)
+	old := recAt(2, 100, 0)
+	p := NewPublisher()
+	j := NewJoin(cfg)
+	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, old})
+	// одним поколением: old ушла, new заняла её слот (младший свободный),
+	// наблюдатель сдвинулся (Changed ⇒ полный проход его пар)
+	moved := recAt(1, 50, 50)
+	next := recAt(3, 120, 0)
+	events := stepPair(t, p, j, []Observer{obsOf(moved)}, []Record{moved, next})
+	sawRemoveOld, sawIntroduceNew := false, false
+	for _, ev := range events {
+		if ev.Kind == EventRemove && ev.Target.Entity == 2 {
+			sawRemoveOld = true
+		}
+		if ev.Kind == EventIntroduce && ev.Target.Entity == 3 {
+			sawIntroduceNew = true
+		}
+	}
+	if !sawRemoveOld || !sawIntroduceNew {
+		t.Fatalf("реюз в fullPass: Remove(2)=%v Introduce(3)=%v (события %v)", sawRemoveOld, sawIntroduceNew, events)
+	}
+	// view держит нового жильца слота; уход new за exit эмитит Remove
+	v := j.views[1]
+	slot := p.Committed().slots[3]
+	if v.ids[slot] != 3 {
+		t.Fatalf("view слота = %d; want 3 (новый жилец стёрт Remove'ом старого)", v.ids[slot])
+	}
+	far := recAt(3, 5000, 0)
+	events = stepPair(t, p, j, []Observer{obsOf(moved)}, []Record{moved, far})
+	removed := false
+	for _, ev := range events {
+		if ev.Kind == EventRemove && ev.Target.Entity == 3 {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Fatalf("вечный фантом: уход new за exit не эмитил Remove")
 	}
 }

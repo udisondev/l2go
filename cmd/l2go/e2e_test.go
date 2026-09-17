@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -755,8 +756,9 @@ func TestE2EMutualVisibilityAndLogoutDelete(t *testing.T) {
 	waitForLine(t, bob.out, "USER_INFO", 3*time.Second)
 
 	lineA := waitForLine(t, alice.out, "CHAR_INFO name=\"Botbob\"", 3*time.Second)
-	if !strings.Contains(lineA, "objID=") {
-		t.Errorf("CHAR_INFO у Alice без objID: %s", lineA)
+	obj := regexp.MustCompile(`objID=([0-9]+)`).FindStringSubmatch(lineA)
+	if obj == nil {
+		t.Fatalf("CHAR_INFO у Alice без objID: %s", lineA)
 	}
 	waitForLine(t, bob.out, "CHAR_INFO name=\"Botalice\"", 3*time.Second)
 
@@ -764,7 +766,10 @@ func TestE2EMutualVisibilityAndLogoutDelete(t *testing.T) {
 		t.Fatalf("Logout(Bob): %v", err)
 	}
 	waitForLeaveWorld(t, bob, env)
-	waitForLine(t, alice.out, "DELETE_OBJECT", 3*time.Second)
+	lineD := waitForLine(t, alice.out, "DELETE_OBJECT", 3*time.Second)
+	if !strings.Contains(lineD, "objID="+obj[1]) {
+		t.Errorf("DELETE_OBJECT с чужим objID: %s (введён был %s)", lineD, obj[1])
+	}
 	if tail := tailAfter(t, bob.out, "LEAVE_WORLD"); len(tail) != 0 {
 		t.Errorf("кадры после LEAVE_WORLD ушедшего: %q", tail)
 	}

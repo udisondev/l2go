@@ -49,6 +49,7 @@ type enterHarness struct {
 	reg     *transport.Registry
 	metro   *Metronome
 	r       *Region
+	binds   map[uint64]uint64 // кеш bind-писем (изымается один раз; playerEntity)
 	rCancel context.CancelFunc
 	rDone   chan struct{}
 	pushes  *pushCollector
@@ -61,6 +62,13 @@ type enterHarness struct {
 }
 
 func newEnterHarness(t *testing.T, cfg Config) *enterHarness {
+	t.Helper()
+	return newEnterHarnessPusher(t, cfg, nil)
+}
+
+// newEnterHarnessPusher — харнесс с пушером-двойником, назначаемым ДО старта
+// Run (подмена pusher при живой горутине региона — гонка харнесса).
+func newEnterHarnessPusher(t *testing.T, cfg Config, pc FramePusher) *enterHarness {
 	t.Helper()
 	base := DefaultConfig()
 	base.Hz = cfg.Hz
@@ -86,12 +94,16 @@ func newEnterHarness(t *testing.T, cfg Config) *enterHarness {
 	if err != nil {
 		t.Fatalf("лог: %v", err)
 	}
-	pc := &pushCollector{}
-	r, err := NewRegion(m, reg, 1, cfg, log, pc)
+	collector := &pushCollector{}
+	pusher := FramePusher(collector)
+	if pc != nil {
+		pusher = pc
+	}
+	r, err := NewRegion(m, reg, 1, cfg, log, pusher)
 	if err != nil {
 		t.Fatalf("регион: %v", err)
 	}
-	h := &enterHarness{reg: reg, r: r, pushes: pc, metro: m}
+	h := &enterHarness{reg: reg, r: r, pushes: collector, metro: m}
 	h.gwID = reg.Register(&h.gwBox)
 	h.gwToken = uint64(h.gwID)
 	if err := h.gwBox.Claim(h.gwToken); err != nil {
