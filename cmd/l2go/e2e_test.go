@@ -856,11 +856,11 @@ func TestE2EMovementObserverOutsideRadius(t *testing.T) {
 	far := enterWorld(t, env, "faraway")
 	lineF := waitForLine(t, far.out, "USER_INFO", 3*time.Second)
 	ax, ay := parseCoord(t, lineF, "x"), parseCoord(t, lineF, "y")
-	logoutUnix := time.Now().Unix()
 	if err := far.gc.Logout(); err != nil {
 		t.Fatalf("Logout(far): %v", err)
 	}
 	waitForLeaveWorld(t, far, env)
+	logoutUnix := time.Now().Unix() // после ухода: создание/вход уже не пишут
 	path := env.charFile("faraway")
 	// сохранение логаута асинхронно: ждём записи с last_seen ≥ логаута до правки
 	recs := waitFreshChars(t, path, logoutUnix)

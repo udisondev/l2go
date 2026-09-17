@@ -183,6 +183,7 @@ func TestFoldSlopeArrivalZFollowsRelief(t *testing.T) {
 	for gy := 16*2048 + 100; gy <= 16*2048+102; gy++ {
 		sg.set(16*2048+101, gy, (gy-16*2048-100)*40, geo.NSWEAll)
 	}
+	sg.set(16*2048+102, 16*2048+102, 80, geo.NSWEAll) // ступень в ячейке цели: слой ≠ 0
 	gm := sg.build()
 	from := atGeo(16*2048+100, 16*2048+100, 0)
 	st := newState()

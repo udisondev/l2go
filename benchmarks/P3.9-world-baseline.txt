@@ -44,27 +44,27 @@ BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN wo
 BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 67	   1649737 ns/op	 1908608 B/op	      76 allocs/op
 BenchmarkRegionPhaseA/pop=12000/movers=100-16       	2026/09/17 21:24:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 63	   1708024 ns/op	 1918505 B/op	      76 allocs/op
 
-## Стрим-компоновка (k движущихся × M наблюдателей, кадры В метрике; отрезки реалистичные, прибытия перезапускаются вне метрики)
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	     237	    519371 ns/op	  758779 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:52 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 242	    490596 ns/op	  758771 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:52 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 230	    496367 ns/op	  758736 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:52 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 241	    494063 ns/op	  758768 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:52 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 236	    504988 ns/op	  758755 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:52 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 228	    502411 ns/op	  758730 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:52 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 226	    504038 ns/op	  758724 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:52 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 232	    506776 ns/op	  758742 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:53 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 256	    466315 ns/op	  758807 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=100/observers=100-16         	2026/09/17 21:24:53 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 236	    492577 ns/op	  758754 B/op	   10020 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	      30	   4426465 ns/op	 7394810 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:53 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 22	   4847374 ns/op	 7394456 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:53 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 31	   4258724 ns/op	 7394456 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:53 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 30	   4404824 ns/op	 7394456 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:53 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 30	   4606052 ns/op	 7394456 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:54 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 24	   4701583 ns/op	 7394456 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:54 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 31	   4371294 ns/op	 7394460 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:54 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 28	   4445864 ns/op	 7394456 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:54 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 30	   4524248 ns/op	 7394459 B/op	  100024 allocs/op
-BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	2026/09/17 21:24:54 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1 27	   4485464 ns/op	 7394456 B/op	  100024 allocs/op
+## Стрим-компоновка (k движущихся × M наблюдателей, кадры В метрике; отрезки реалистичные, прибытия перезапускаются пинг-понгом от исходной точки — дрейф из AoI-радиуса исключён, прецедент P3.8-F66)
+BenchmarkJoinStreamCompose/movers=100/observers=100-16         	     243	    493052 ns/op	  758819 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 236	    504297 ns/op	  758777 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 234	    514787 ns/op	  758748 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 240	    501614 ns/op	  758765 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 235	    504303 ns/op	  758751 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 243	    486429 ns/op	  758774 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 244	    496147 ns/op	  758776 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 226	    527950 ns/op	  758725 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 234	    507853 ns/op	  758748 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=100/observers=100-16 236	    506443 ns/op	  758754 B/op	   10020 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16        	      25	   4567875 ns/op	 7395094 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 27	   4685095 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 30	   4623483 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 25	   4830934 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 22	   4803059 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 27	   4603236 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 30	   4384126 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 28	   4599934 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 25	   4596145 ns/op	 7394456 B/op	  100024 allocs/op
+BenchmarkJoinStreamCompose/movers=1000/observers=100-16 24	   4678215 ns/op	 7394456 B/op	  100024 allocs/op
 ## Сверка с baseline P3.8 (рост Record на DestX/Y/Z): PublishBlob/FullPass/SteadyDirty
 BenchmarkJoinFullPass-16       	     319	    389224 ns/op	    2984 B/op	       4 allocs/op
 BenchmarkJoinFullPass-16       	     316	    379765 ns/op	    2984 B/op	       4 allocs/op

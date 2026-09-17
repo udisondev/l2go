@@ -103,6 +103,7 @@ func startMove(e *Entity, dx, dy, dz int32) {
 // TestFoldCannotMoveAnymoreHeadingNormalization — домен [0,65536) на любом
 // int32 письма: маска, не знаконосный Go-% (F6/F17), включая край 65536→0.
 func TestFoldCannotMoveAnymoreHeadingNormalization(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		heading int32
 		want    int32
@@ -126,6 +127,7 @@ func TestFoldCannotMoveAnymoreHeadingNormalization(t *testing.T) {
 // TestFoldBirthSpeedBucketAtCAP — рождение наливает бакет до CAP (иначе честный
 // вход флагался бы первым отчётом).
 func TestFoldBirthSpeedBucketAtCAP(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	rec := mkRecAt("bca", "Hero", int(syncPos.X), int(syncPos.Y))
 	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, []*Entity{},
@@ -145,6 +147,7 @@ func TestFoldBirthSpeedBucketAtCAP(t *testing.T) {
 // TestFoldHeadingDomainAtBirth — запись персиста за trust-границей: heading
 // рождения нормализуется в домен [0,65536).
 func TestFoldHeadingDomainAtBirth(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	rec := mkRecAt("bcb", "Hero", int(syncPos.X), int(syncPos.Y))
 	rec.Heading = -70000
@@ -160,6 +163,7 @@ func TestFoldHeadingDomainAtBirth(t *testing.T) {
 var syncPos = Position{X: int32(geo.GeoToWorldX(16*2048 + 100)), Y: int32(geo.GeoToWorldY(16*2048 + 100)), Z: 0}
 
 func TestFoldMoveStartsSameStep(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
 	res := foldM(10, 1, st, ents, emptyGeo, moveLetter(101, syncPos.X+115, syncPos.Y, syncPos.Z))
@@ -177,6 +181,7 @@ func TestFoldMoveStartsSameStep(t *testing.T) {
 }
 
 func TestFoldAdvanceArrivalTable(t *testing.T) {
+	t.Parallel()
 	// 115 юн при runSpeed 115 и периоде 100 мс: прибытие ровно на 10-м тике;
 	// 120 юн — перелёт MoveDone>MoveDist на 11-м. Интерполяция от From — без
 	// накопления ошибки округления.
@@ -219,6 +224,7 @@ func TestFoldAdvanceArrivalTable(t *testing.T) {
 }
 
 func TestFoldAdvanceAfterTickDropDelta2(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
 	startMove(ents[0], 115, 0, 0)
@@ -257,6 +263,7 @@ func TestFoldAdvanceFollowsPeriodNotTickCount(t *testing.T) {
 }
 
 func TestFoldRetargetFromAuthoritativePosition(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
 	startMove(ents[0], 115, 0, 0)
@@ -280,6 +287,7 @@ func TestFoldRetargetFromAuthoritativePosition(t *testing.T) {
 }
 
 func TestFoldMoveZeroAndNearZeroDistance(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		dx   int32
@@ -306,6 +314,7 @@ func TestFoldMoveZeroAndNearZeroDistance(t *testing.T) {
 }
 
 func TestFoldMovementNegativeDirection(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
 	startMove(ents[0], -115, 0, 0)
@@ -325,6 +334,7 @@ func TestFoldMovementNegativeDirection(t *testing.T) {
 }
 
 func TestFoldSpeedBudgetRefillClamp(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
 	ents[0].Player.SpeedBudget = speedCAP - 20000
@@ -339,6 +349,7 @@ func TestFoldSpeedBudgetRefillClamp(t *testing.T) {
 }
 
 func TestFoldTwoArrivalsSameStep(t *testing.T) {
+	t.Parallel()
 	run := func() (int, []byte) {
 		st := newState()
 		ents := []*Entity{
@@ -374,6 +385,7 @@ func TestFoldTwoArrivalsSameStep(t *testing.T) {
 }
 
 func TestFoldMoveInFirstStepAfterSleepDelta0(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
 	res := foldM(10, 0, st, ents, emptyGeo, moveLetter(101, syncPos.X+115, syncPos.Y, syncPos.Z))
@@ -388,6 +400,7 @@ func TestFoldMoveInFirstStepAfterSleepDelta0(t *testing.T) {
 }
 
 func TestFoldValidatePositionSpeedhackTable(t *testing.T) {
+	t.Parallel()
 	// Дебет бакета = расхождение отчёта с authPos (не пройденный путь):
 	// честный клиент с джиттером/латентностью не осушает бакет никогда,
 	// скачок ×2–3 флагается после исчерпания CAP+SLACK. Отчёты ~1/с (канон).
@@ -438,6 +451,7 @@ func TestFoldValidatePositionSpeedhackTable(t *testing.T) {
 }
 
 func TestFoldValidatePositionDriftSnapBack(t *testing.T) {
+	t.Parallel()
 	// прыжок 400 юн: расхождение сверх порога канона — флаг класса
 	// спидхака + коррекция; позиция сервера не мутирована отчётом
 	st := newState()
@@ -455,6 +469,7 @@ func TestFoldValidatePositionDriftSnapBack(t *testing.T) {
 }
 
 func TestFoldValidatePositionBoundaries(t *testing.T) {
+	t.Parallel()
 	// системная граница флага из полного бакета: CAP+SLACK = 287.5 юн
 	// (дрейф сверх неё выжигает бакет ниже −SLACK тем же отчётом)
 	for _, tc := range []struct {
@@ -485,6 +500,7 @@ func TestFoldValidatePositionBoundaries(t *testing.T) {
 }
 
 func TestFoldPendingTeleportBucketReset(t *testing.T) {
+	t.Parallel()
 	// рождение ставит флаг (P3.7); первый отчёт рядом гасит и наливает бакет
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
@@ -512,6 +528,7 @@ func TestFoldPendingTeleportBucketReset(t *testing.T) {
 }
 
 func TestFoldCannotMoveAnymoreTable(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		moving   bool
@@ -558,6 +575,7 @@ func TestFoldCannotMoveAnymoreTable(t *testing.T) {
 }
 
 func TestFoldClientFrameEvilInputsTable(t *testing.T) {
+	t.Parallel()
 	base := struct{ tx, ty int32 }{syncPos.X + 100, syncPos.Y}
 	full := func(op byte, n int) []byte {
 		b := make([]byte, n)
@@ -602,6 +620,7 @@ func envFrame(id transport.EntityID, payload []byte) transport.Envelope {
 }
 
 func TestFoldMoveToLocationCapDropsBeyondK(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	var ents []*Entity
 	var envs []transport.Envelope
@@ -629,6 +648,7 @@ func TestFoldMoveToLocationCapDropsBeyondK(t *testing.T) {
 }
 
 func TestFoldEnterWorldRecordOutOfGridDeadLetter(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		x    int
@@ -650,6 +670,7 @@ func TestFoldEnterWorldRecordOutOfGridDeadLetter(t *testing.T) {
 }
 
 func TestFoldLogoutResetsMoveSegmentFields(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
 	startMove(ents[0], 500, 0, 0)
@@ -661,6 +682,7 @@ func TestFoldLogoutResetsMoveSegmentFields(t *testing.T) {
 }
 
 func TestFoldLinkDeadExpiryWhileMovingSnapshot(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, syncPos.Z)}
 	startMove(ents[0], 1150, 0, 0)
@@ -715,6 +737,7 @@ func TestFoldHeadingCalculationTable(t *testing.T) {
 }
 
 func TestFoldMoveToMaxDistanceNoOverflow(t *testing.T) {
+	t.Parallel()
 	st := newState()
 	// противоположный угол сетки — обе точки InWorld, дистанция ~диагональ
 	far := Position{X: int32(geo.GeoToWorldX(31*2048 + 2000)), Y: int32(geo.GeoToWorldY(31*2048 + 2000)), Z: 0}
@@ -731,6 +754,7 @@ func TestFoldMoveToMaxDistanceNoOverflow(t *testing.T) {
 // на ней держатся гладкость экстраполяции наблюдателей и нулевой дебет
 // честного клиента; фаза 4 (баффы) тронет именно её.
 func TestFoldAdvanceSpeedMatchesCharInfoRunSpd(t *testing.T) {
+	t.Parallel()
 	d := charInfoOf(replica.Record{Kind: replica.RecordKindPlayer})
 	if want := int32(persist.HumanFighter.RunSpd); d.RunSpd != want || d.MoveMultiplier != 1.0 {
 		t.Fatalf("CharInfo RunSpd=%d mult=%v; want %d, 1.0", d.RunSpd, d.MoveMultiplier, want)

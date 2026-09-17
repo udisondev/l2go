@@ -229,7 +229,7 @@ func TestRegionArrivalStopMoveBroadcast(t *testing.T) {
 	}
 	// повторный ввод после остановки (умышленная перезаводка известности):
 	// CharInfo стоячей записи — Standing=true
-	b3 := spawnPlayer(t, r, 3, syncPos.X+200, syncPos.Y)
+	spawnPlayer(t, r, 3, syncPos.X+200, syncPos.Y)
 	stepN(r, 1)
 	var intro *FramePush
 	for i, p := range pc.Snapshot() {
@@ -245,7 +245,6 @@ func TestRegionArrivalStopMoveBroadcast(t *testing.T) {
 	if !ok || !v.Standing() || !v.Running() {
 		t.Fatalf("CharInfo остановившегося: Standing=%v Running=%v; want true, true", v.Standing(), v.Running())
 	}
-	_ = b3
 }
 
 func TestRegionObserverOutsideRadiusSilent(t *testing.T) {

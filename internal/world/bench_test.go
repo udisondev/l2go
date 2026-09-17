@@ -251,7 +251,11 @@ func BenchmarkJoinStreamCompose(b *testing.B) {
 					b.Fatalf("Spawn: %v", err)
 				}
 			}
-			var movers []*Entity
+			type benchMover struct {
+				e    *Entity
+				home int32 // исходная X: пинг-понг восток/запад от неё
+			}
+			var movers []benchMover
 			for i := range tc.movers {
 				x, y := int32(i%50)*10+5, int32(i/50)*10+5
 				if _, err := r.Spawn(Entity{Owner: 1, HP: 100,
@@ -260,7 +264,7 @@ func BenchmarkJoinStreamCompose(b *testing.B) {
 					MoveFrom: Position{X: x, Y: y}, MoveDist: 1_000_000}); err != nil {
 					b.Fatalf("Spawn: %v", err)
 				}
-				movers = append(movers, r.residents[len(r.residents)-1].ent)
+				movers = append(movers, benchMover{e: r.residents[len(r.residents)-1].ent, home: x})
 			}
 			for range 3 { // прогрев: вводы в известность, старт dirty-потока
 				r.metro.tick.Add(1)
@@ -269,10 +273,15 @@ func BenchmarkJoinStreamCompose(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				for _, e := range movers { // прибывшие — в новый отрезок
+				for i := range movers { // прибывшие — отрезок от home в противоположную сторону
+					e := movers[i].e
 					if !e.Moving {
 						e.Moving = true
-						e.Dest = Position{X: e.MoveFrom.X + 1000, Y: e.MoveFrom.Y}
+						dest := movers[i].home + 1000
+						if e.Pos.X > movers[i].home {
+							dest = movers[i].home - 1000
+						}
+						e.Dest = Position{X: dest, Y: e.Pos.Y}
 						e.MoveFrom = e.Pos
 						e.MoveDist = 1_000_000
 						e.MoveDone = 0
@@ -286,8 +295,8 @@ func BenchmarkJoinStreamCompose(b *testing.B) {
 }
 
 // Аллокационный бюджет шага с движущимися (без наблюдателей): advance и
-// dirty-манифест движущихся — 0 аллокаций сверх Idle-бюджета (кадры стрима
-// аллоцируются на пару — домен бенча JoinStreamCompose, не бюджета).
+// dirty-сравнение меняющихся записей — 0 аллокаций сверх Idle-бюджета
+// (кадры стрима аллоцируются на пару — домен бенча JoinStreamCompose).
 func TestRegionStepMovingAllocBudget(t *testing.T) {
 	cfg := DefaultConfig()
 	m, err := NewMetronome(cfg)
