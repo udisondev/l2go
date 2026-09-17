@@ -610,7 +610,7 @@ func TestFoldClientFrameEvilInputsTable(t *testing.T) {
 				t.Errorf("состояние тронуто злым входом: moving %v", ents[0].Moving)
 			}
 			// «Цель вне мира» — достижимый клик живого клиента (терраин всей
-			// карты): канон отвечает ActionFailed (М4/F90); прочий мусор —
+			// карты): канон отвечает ActionFailed (F88); прочий мусор —
 			// метрика без ответа.
 			if tc.name == "цель вне мира" {
 				if _, ok := findPush(res, 7, opActionFailed); !ok {
@@ -884,5 +884,24 @@ func TestFoldValidatePositionZDriftCappedByGeoLayer(t *testing.T) {
 	}
 	if got := ents[0].Pos.Z; got != layer+400 {
 		t.Fatalf("Z после серии = %d; want %d (кумулятив капснут слоем гео)", got, layer+400)
+	}
+}
+
+// TestFoldValidatePositionSpawnReportAdoptsZ — первый отчёт спавна (окно
+// PendingTeleport, планар в допуске) гасит телепорт-флаг и сразу адаптирует
+// вертикаль: «ноги в земле» не живут до второго отчёта.
+func TestFoldValidatePositionSpawnReportAdoptsZ(t *testing.T) {
+	t.Parallel()
+	st := newState()
+	ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, 0)}
+	ents[0].Player.PendingTeleport = true
+	foldM(10, 1, st, ents, emptyGeo,
+		validateLetter(101, syncPos.X, syncPos.Y, 400, 0))
+	e := ents[0]
+	if e.Player.PendingTeleport {
+		t.Fatalf("PendingTeleport не погашен первым отчётом")
+	}
+	if got := e.Pos.Z; got != 400 {
+		t.Fatalf("Z первого отчёта = %d; want 400 (адаптация в окне телепорта)", got)
 	}
 }

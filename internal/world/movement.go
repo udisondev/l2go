@@ -161,9 +161,9 @@ func stopSegment(e *Entity) {
 // дрейф сверх порога — snap-back. Планар отчёта позицию сервера не мутирует;
 // вертикаль стоящего адаптируется к рельефу клиента (закрытие KT3-4 «ноги в
 // земле»): якорь допуска — слой гео в точке, не принятая ранее Z — серия
-// отчётов иначе уводит вертикаль неограниченно (F87). Принимается только
-// отчётом, прошедшим сверку; движущемуся вертикаль не трогают (Z ведёт
-// отрезок).
+// отчётов иначе уводит вертикаль неограниченно (F85). Принимается только
+// отчётом, прошедшим сверку (включая первый отчёт спавна — окно
+// PendingTeleport); движущемуся вертикаль не трогают (Z ведёт отрезок).
 func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, mov *movement, res *StepResult) {
 	v, ok := protocol.NewValidatePositionView(env.Payload)
 	if !ok {
@@ -180,6 +180,11 @@ func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, mov *
 		if d <= driftMilli {
 			p.PendingTeleport = false
 			p.SpeedBudget = speedCAP
+			// Первый отчёт спавна несёт рельеф клиента — без адаптации здесь
+			// «ноги в земле» жили бы до второго отчёта.
+			if !ent.Moving {
+				adoptStandingZ(ent, mov, v)
+			}
 		} else {
 			st.SnapBacks++
 			pushValidateLocation(res, ent)
@@ -208,13 +213,18 @@ func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, mov *
 		return
 	}
 	if !ent.Moving {
-		// Допуск 500 юн — наш выбор (канонное окно L2J: 200<|dz|<1500 при
-		// |z−clientZ|<800 — того же порядка); без гео в точке вертикаль
-		// свободна (NullRegion-семантика).
-		geoZ := mov.gm.NearestZ(geo.Loc{X: int(ent.Pos.X), Y: int(ent.Pos.Y), Z: int(ent.Pos.Z)})
-		if dz := (int64(v.Z()) - int64(geoZ)) * 1000; dz <= zAdoptMilli && dz >= -zAdoptMilli {
-			ent.Pos.Z = v.Z()
-		}
+		adoptStandingZ(ent, mov, v)
+	}
+}
+
+// adoptStandingZ — вертикаль стоящего к рельефу клиента: допуск 500 юн от
+// слоя гео в точке — наш выбор (канонное окно L2J: 200<|dz|<1500 при
+// |z−clientZ|<800 — того же порядка); без гео в точке вертикаль свободна
+// (NullRegion-семантика).
+func adoptStandingZ(ent *Entity, mov *movement, v protocol.ValidatePositionView) {
+	geoZ := mov.gm.NearestZ(geo.Loc{X: int(ent.Pos.X), Y: int(ent.Pos.Y), Z: int(ent.Pos.Z)})
+	if dz := (int64(v.Z()) - int64(geoZ)) * 1000; dz <= zAdoptMilli && dz >= -zAdoptMilli {
+		ent.Pos.Z = v.Z()
 	}
 }
 

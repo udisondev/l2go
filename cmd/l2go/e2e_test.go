@@ -451,7 +451,7 @@ func TestE2ELogoutRoundTripPosition(t *testing.T) {
 	// Путь сохранения: файл отражает сессию. waitPersistIdle уже доказал,
 	// что все письма сессии обработаны и записаны — маркер свежести не нужен
 	// (last_seen-порог после idle гоняется с секундной границей Unix-времени,
-	// F88); читаем непосредственно.
+	// F86); читаем непосредственно.
 	path := env.charFile("roundtrip")
 	recs := readChars(t, path)
 	if len(recs) != 1 {
@@ -916,7 +916,7 @@ func TestE2EMovementObserverOutsideRadius(t *testing.T) {
 	waitForLeaveWorld(t, far, env)
 	// Сохранения сессии должны лечь до правки файла (см. waitPersistIdle):
 	// idle доказывает запись — читаем непосредственно, без last_seen-маркера
-	// (его порог после idle гоняется с секундной границей Unix-времени, F88).
+	// (его порог после idle гоняется с секундной границей Unix-времени, F86).
 	waitPersistIdle(t, env.gs.actor)
 	path := env.charFile("faraway")
 	recs := readChars(t, path)
