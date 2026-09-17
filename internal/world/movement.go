@@ -31,6 +31,10 @@ var (
 	// driftMilli — порог дрейфа отчёта: 300 юн (интерлюд-референс
 	// loop_movement.go: distSq > 90000).
 	driftMilli = int64(300 * 1000)
+	// zAdoptMilli — допуск адаптации Z отчёта: 500 юн (канон L2J
+	// ValidatePosition: вертикаль клиента принимается в допуске). Сверх —
+	// серверная Z сохраняется (вертикальный чит не прокрашивается).
+	zAdoptMilli = int64(500 * 1000)
 	// moveLettersCap — обработанных MoveToLocation-писем на шаг (r1 «лимит K
 	// на тик»; 64 line-walk'а ≤ ~54 мкс по baseline P2.4). Сверх капа — дроп
 	// с метрикой: defer-очередь задумана для NPC-ре-пасов осады (фаза 4), а
@@ -142,7 +146,9 @@ func stopSegment(e *Entity) {
 
 // foldValidatePosition — сверка отчёта (~1/с): pendingTeleport гасит бакет;
 // токен-бакет скорости (дебет = расхождение с authPos, не пройденный путь);
-// дрейф сверх порога — snap-back. Отчёт не мутирует позицию сервера.
+// дрейф сверх порога — snap-back. Планар отчёта позицию сервера не мутирует;
+// вертикаль адаптируется в допуске (канон L2J: Z рельефа клиента в точке
+// точнее шаблона датапака — закрытие KT3-4 «ноги в земле»).
 func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, res *StepResult) {
 	v, ok := protocol.NewValidatePositionView(env.Payload)
 	if !ok {
@@ -154,6 +160,13 @@ func foldValidatePosition(st *State, ent *Entity, env *transport.Envelope, res *
 		return
 	}
 	d := distMilli(ent.Pos, Position{X: v.X(), Y: v.Y(), Z: v.Z()})
+	// Стоящему принимаем Z отчёта в допуске: клиент стоит на своём рельефе,
+	// серверный — оценка гео-сетки; движущемуся не трогаем (Z ведёт отрезок).
+	if !ent.Moving {
+		if dz := (int64(v.Z()) - int64(ent.Pos.Z)) * 1000; dz <= zAdoptMilli && dz >= -zAdoptMilli {
+			ent.Pos.Z = v.Z()
+		}
+	}
 	p := ent.Player
 	if p.PendingTeleport {
 		if d <= driftMilli {

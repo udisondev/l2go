@@ -770,3 +770,64 @@ func TestFoldAdvanceSpeedMatchesCharInfoRunSpd(t *testing.T) {
 		t.Errorf("за 1 с пройдено %d юн; want %d (= RunSpd)", got, d.RunSpd)
 	}
 }
+
+// TestUserInfoSpeedsNonZero — живой клиент KT-4: с нулевой скоростью в
+// UserInfo собственный персонаж не двигается (клиент умножает локальную
+// симуляцию на RunSpd/MoveMultiplier кадра). Связка — те же константы, что
+// CharInfo и advance.
+func TestUserInfoSpeedsNonZero(t *testing.T) {
+	t.Parallel()
+	st := newState()
+	rec := mkRecAt("uiz", "Hero", int(syncPos.X), int(syncPos.Y))
+	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, []*Entity{},
+		portion(enterMsg(1, "uiz", rec)), nil, testRules(), emptyGeo)
+	ents := applyBirth(st, res)
+	d := userInfoOf(ents[0].Player)
+	if d.RunSpd != int32(persist.HumanFighter.RunSpd) || d.WalkSpd != int32(persist.HumanFighter.WalkSpd) {
+		t.Fatalf("UserInfo RunSpd/WalkSpd = %d/%d; want %d/%d (шаблон)",
+			d.RunSpd, d.WalkSpd, persist.HumanFighter.RunSpd, persist.HumanFighter.WalkSpd)
+	}
+	if d.MoveMultiplier != 1.0 || d.AttackSpeedMultiplier != 1.0 || !d.Running {
+		t.Fatalf("UserInfo множители/режим = %v/%v/%v; want 1.0/1.0/run", d.MoveMultiplier, d.AttackSpeedMultiplier, d.Running)
+	}
+}
+
+// TestFoldValidatePositionAdoptsZ — KT3-4: вертикаль рельефа клиента
+// принимается стоящему в допуске (планар не трогаем — сервер-авторитетен);
+// вне допуска и движущемуся — серверная Z сохраняется.
+func TestFoldValidatePositionAdoptsZ(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		dz       int32
+		want     int32 // итоговая Z сущности
+		moving   bool
+		wantSnap bool
+	}{
+		{name: "в допуске принят", dz: 400, want: 400},
+		{name: "граница допуска", dz: -500, want: -500},
+		{name: "вне допуска сохранён", dz: 900, want: 0},
+		{name: "движущемуся не адаптируется", dz: 400, want: 0, moving: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := newState()
+			ents := []*Entity{playerEnt(101, syncPos.X, syncPos.Y, 0)}
+			if tc.moving {
+				startMove(ents[0], 300, 0, 0)
+			}
+			res := foldM(10, 1, st, ents, emptyGeo,
+				validateLetter(101, syncPos.X, syncPos.Y, tc.dz, 0))
+			if got := ents[0].Pos.Z; got != tc.want {
+				t.Fatalf("Z = %d; want %d", got, tc.want)
+			}
+			if !tc.moving {
+				if got := ents[0].Pos.X; got != syncPos.X {
+					t.Fatalf("X мутирован отчётом: %d; want %d (планар сервер-авторитетен)", got, syncPos.X)
+				}
+			}
+			_ = res
+		})
+	}
+}
