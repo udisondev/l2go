@@ -189,21 +189,24 @@ func (j *Join) stepEvents(obs []Observer, blob *Blob) {
 			refs[i].covered = true
 		}
 	}
-	// dirty-слоты × обычные наблюдатели; порядок битов слота: gone → born →
-	// changed (реюз слота: Remove прежнего жильца раньше ввода нового)
-	for slot := range seg.records {
-		gone := bitHas(seg.gone, slot)
-		born := bitHas(seg.born, slot)
-		changed := bitHas(seg.changed, slot)
-		if !gone && !born && !changed {
+	// dirty-слоты × обычные наблюдатели, obs-major (внешний цикл —
+	// наблюдатели, внутренний — слоты): события наблюдателя контигуальны в
+	// staging — Apply резолвит view при смене наблюдателя, без хеша на пару
+	// (ось 3). Порядок битов слота: gone → born → changed (реюз слота:
+	// Remove прежнего жильца раньше ввода нового)
+	for i := range refs {
+		ref := &refs[i]
+		if ref.covered || ref.slot < 0 || ref.v == nil {
 			continue
 		}
-		for i := range refs {
-			ref := &refs[i]
-			if ref.covered || ref.slot < 0 || ref.v == nil {
+		v := ref.v
+		for slot := range seg.records {
+			gone := bitHas(seg.gone, slot)
+			born := bitHas(seg.born, slot)
+			changed := bitHas(seg.changed, slot)
+			if !gone && !born && !changed {
 				continue
 			}
-			v := ref.v
 			if gone && slot < len(v.ids) && v.ids[slot] != 0 {
 				// ушедший жилец идентифицируется вечным id из view (пейлоад
 				// недоступен — DeleteObject нуждается только в id)
