@@ -44,13 +44,6 @@ type StepResult struct {
 	Retires []Retire
 }
 
-// AdvisoryIn — залогированный advisory-вход шага (шов replica; сводится с
-// модулем репликации в фазе 3.8).
-type AdvisoryIn struct {
-	Cell   uint32
-	Entity transport.EntityID
-}
-
 // Rules — параметры поведения свёртки: тиковые окна и адресаты контрольных
 // писем (актор передаёт значением из своего конфига и wire-up; глобалов нет).
 type Rules struct {

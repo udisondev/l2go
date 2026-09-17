@@ -20,6 +20,9 @@ const (
 	deleteObject       = 0x12
 )
 
+// OpDeleteObject — опкод кадра DeleteObject (GS→C).
+const OpDeleteObject = deleteObject
+
 // Размеры кадров с опкодом (конвенция AttackSize).
 const (
 	MoveToLocationSize     = 29 // опкод + 7×D

@@ -11,16 +11,18 @@ import (
 	"github.com/udisondev/l2go/internal/encode"
 	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/protocol"
+	"github.com/udisondev/l2go/internal/replica"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// Фазы шага — порядок drain → fold → эффекты населения → B → publish → ack;
-// маркер текущей фазы едет в лог при панике.
+// Фазы шага — порядок drain → fold → эффекти населения → log → AoI → B →
+// publish → ack; маркер текущей фазы едет в лог при панике.
 const (
 	phaseDrain byte = iota + 1
 	phaseFold
 	phaseEffects
 	phaseLog
+	phaseAoI
 	phaseB
 	phasePublish
 	phaseAck
@@ -30,13 +32,6 @@ const (
 // (троттлинг compose — фаза 4; предел отсутствует: исходящие региона —
 // надёжный класс, живому не дропаются).
 const outboxAlertThreshold = 4096
-
-// snapshot — заготовка снапшота региона: шов replica (публикация после шага,
-// атомарный свап). SoA-блоб — задача репликации (фаза 3.8); фаза 3 публикует
-// заготовку с тиком шага.
-type snapshot struct {
-	tick Tick
-}
 
 // resident — запись сущности у владельца: заголовок ящика встраивается в
 // запись (кеш-локальность опроса тика). Слайс значений невозможен: карта
@@ -67,6 +62,11 @@ type Region struct {
 	rules   Rules
 	started atomic.Bool
 
+	pub       *replica.Publisher
+	join      *replica.Join
+	adv       *logAdviser
+	advWindow bool // окно advisory-чтений: от начала шага до LogStep
+
 	ctrl      transport.Mailbox
 	ctrlID    transport.EntityID
 	ctrlToken uint64
@@ -94,13 +94,28 @@ type Region struct {
 	activeFlag   bool
 	panicStreak  int
 	curPhase     byte
-	forcePanic   byte // инъекция сбоя для тестов recover-политики; 0 — выключена
+	forcePanic   atomic.Uint32 // инъекция сбоя для тестов recover-политики; 0 — выключена (тест-горутина пишет при живом Run — атомик)
 	outbox       []transport.Envelope
 	backlogNoted bool
 
 	pendingPushes []FramePush // пуши шага (исполнение — фазой B раньше писем)
 
-	// Буферы дрена — поля региона, переиспользуются между шагами.
+	// Фаза AoI: блоб шага, события, кадры join и курсор доставки (долговечный
+	// хвост: недоставленное переносится в голову следующего шага).
+	nextBlob   *replica.Blob
+	events     []replica.Event
+	joinPushes []FramePush
+	pushCursor int
+	aoiRecs    []replica.Record
+	aoiObs     []replica.Observer
+
+	// forcePanicPostApply — тестовый шов окна [Apply, merge] (recover-политика;
+	// атомик: пишется тест-горутиной при живом Run).
+	forcePanicPostApply atomic.Bool
+
+	npcIntroduceSkipped atomic.Uint64
+
+	// Буферы дрена — поля региона, переиспользуемые между шагами.
 	ctrlBatch []transport.Envelope
 	prioBuf   []transport.Envelope
 	restBuf   []transport.Envelope
@@ -113,11 +128,10 @@ type Region struct {
 	phDrain   atomic.Uint64
 	phFold    atomic.Uint64
 	phEffects atomic.Uint64
+	phAoI     atomic.Uint64
 	phB       atomic.Uint64
 	phPublish atomic.Uint64
 	phAck     atomic.Uint64
-
-	snapPtr atomic.Pointer[snapshot]
 }
 
 // NewRegion создаёт регион: контрольный ящик регистрируется в реестре и
@@ -139,7 +153,10 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 		pusher: pusher,
 		state:  newState(),
 		slept:  true,
+		pub:    replica.NewPublisher(),
+		join:   replica.NewJoin(replica.CanonJoinConfig()),
 	}
+	r.adv = &logAdviser{src: r.pub, r: r}
 	r.ringCh = make(chan struct{}, 1)
 	r.fbCh = make(chan struct{}, 1)
 	r.ctrlID = reg.Register(&r.ctrl)
@@ -184,6 +201,7 @@ func (r *Region) Stats() RegionStats {
 		PhaseDrain:   r.phDrain.Load(),
 		PhaseFold:    r.phFold.Load(),
 		PhaseEffects: r.phEffects.Load(),
+		PhaseAoI:     r.phAoI.Load(),
 		PhaseB:       r.phB.Load(),
 		PhasePublish: r.phPublish.Load(),
 		PhaseAck:     r.phAck.Load(),
@@ -203,6 +221,7 @@ type RegionStats struct {
 	PhaseDrain   uint64
 	PhaseFold    uint64
 	PhaseEffects uint64
+	PhaseAoI     uint64
 	PhaseB       uint64
 	PhasePublish uint64
 	PhaseAck     uint64
@@ -412,9 +431,25 @@ func (r *Region) recovered(p any) {
 		r.ctrl.DropBatch(r.rereadBuf)
 	}
 	r.adviseBuf = r.adviseBuf[:0]
+	r.advWindow = false
 	if err := r.log.LogPanic(r.stepTick, phase); err != nil {
 		slog.Error("world: маркер паники не записан", "region", r.id, "err", err)
 	}
+	// немедленная доставка выжившего хвоста кадров (оптимизация латентности;
+	// гарантия — перенос resetDrain): под recover — неудача оставляет остаток
+	// живым по курсору, процесс не падает мимо freeze-политики
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("world: паника доставки хвоста в recovered", "region", r.id, "panic", p)
+			}
+		}()
+		for i := r.pushCursor; i < len(r.pendingPushes); i++ {
+			p := r.pendingPushes[i]
+			r.pusher.Push(p.Client, p.Frame, p.Crypt)
+			r.pushCursor = i + 1
+		}
+	}()
 	slog.Error("world: паника в шаге региона — тик провален",
 		"region", r.id, "phase", phase, "panic", p, "streak", r.panicStreak)
 	if r.panicStreak >= r.cfg.FreezePanics {
@@ -446,6 +481,7 @@ func (r *Region) freeze(reason string) {
 // publish → ack. Номер шага — Now() на старте; накопившиеся звонки
 // сбрасываются (non-blocking перечит).
 func (r *Region) step() {
+	r.advWindow = true // advisory-окно: чтения допустимы до LogStep этого шага
 	n := r.metro.Now()
 	r.stepTick = n
 	select {
@@ -470,6 +506,9 @@ func (r *Region) step() {
 	rng := rand.New(rand.NewPCG(uint64(r.id), uint64(n)))
 	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf, r.rules)
 	r.pendingPushes = append(r.pendingPushes, res.Pushes...)
+	// письма свёртки — в outbox сразу после Fold: переживают панику любой
+	// позднейшей фазы (надёжный класс, доставляются phaseB/backlog-ом)
+	r.outbox = append(r.outbox, res.Out...)
 	r.phFold.Add(1)
 
 	r.curPhase = phaseEffects
@@ -487,16 +526,21 @@ func (r *Region) step() {
 		return
 	}
 	r.adviseBuf = r.adviseBuf[:0]
+	r.advWindow = false // чтения после LogStep — паника шва (не своя порция)
+
+	r.curPhase = phaseAoI
+	r.injectPanic(phaseAoI)
+	r.aoiStep()
+	r.phAoI.Add(1)
 
 	r.curPhase = phaseB
 	r.injectPanic(phaseB)
-	r.outbox = append(r.outbox, res.Out...)
 	r.phaseB()
 	r.phB.Add(1)
 
 	r.curPhase = phasePublish
 	r.injectPanic(phasePublish)
-	r.snapPtr.Store(&snapshot{tick: n})
+	r.pub.Commit(r.nextBlob)
 	r.phPublish.Add(1)
 
 	r.curPhase = phaseAck
@@ -509,10 +553,37 @@ func (r *Region) step() {
 	r.syncMembership()
 }
 
+// aoiStep — фаза AoI: Build (издатель не мутируется) → Step (стадинг
+// диффов) → компоновка кадров → Apply (view-мутации, appliedGen первой
+// операцией) → merge (слив ТОЛЬКО применённого стадинга). Паника до merge ⇒
+// joinPushes шага дропаются (курсор их не видит), события пере-выведутся
+// манифестом/примирением следующего шага.
+func (r *Region) aoiStep() {
+	r.aoiRecs = r.aoiRecs[:0]
+	for _, res := range r.residents {
+		r.aoiRecs = append(r.aoiRecs, recordOf(res.ent))
+	}
+	r.nextBlob = r.pub.Build(r.aoiRecs)
+	r.aoiObs = r.aoiObs[:0]
+	for _, res := range r.residents {
+		if res.ent.Player == nil || res.ent.Player.EnterLeaving || leavingEntity(r.state, res.ent.ID) {
+			continue // наблюдатели — только живые игроки (Leaving кадры некому доставлять)
+		}
+		r.aoiObs = append(r.aoiObs, replica.Observer{Entity: res.ent.ID, ConnID: res.ent.Player.ConnID})
+	}
+	r.events = r.join.Step(r.aoiObs, r.nextBlob)
+	r.joinPushes = r.composeJoin(r.events)
+	r.join.Apply()
+	if r.forcePanicPostApply.Load() {
+		panic("world: инъекция сбоя между Apply и merge фазы AoI")
+	}
+	r.pendingPushes = append(r.pendingPushes, r.joinPushes...)
+}
+
 // injectPanic — тестовый шов инъекции сбоя (критерий «паника в фазе B ⇒
 // счётчики A выросли, B/publish/ack — нет»); в поставке выключен.
 func (r *Region) injectPanic(phase byte) {
-	if r.forcePanic != 0 && r.forcePanic == phase {
+	if fp := r.forcePanic.Load(); fp != 0 && byte(fp) == phase {
 		panic(fmt.Sprintf("world: инъекция сбоя в фазе %d", phase))
 	}
 }
@@ -526,7 +597,13 @@ func (r *Region) injectPanic(phase byte) {
 // resetDrain — сброс буферов дрена на старте шага: паника фазы дрена не
 // дропает пачки прошлого успешного шага.
 func (r *Region) resetDrain() {
-	r.pendingPushes = r.pendingPushes[:0]
+	// долговечный хвост: недоставленные кадры переносятся в голову (сброс
+	// слайса без переноса запрещён — потеря = вечный фантом/невидимость)
+	if r.pushCursor > 0 {
+		n := copy(r.pendingPushes, r.pendingPushes[r.pushCursor:])
+		r.pendingPushes = r.pendingPushes[:n]
+		r.pushCursor = 0
+	}
 	r.portions = r.portions[:0]
 	r.records = r.records[:0]
 	r.ctrlBatch = r.ctrlBatch[:0]
@@ -674,10 +751,15 @@ func (r *Region) composeEnterWorld(id transport.EntityID, p *Player, tick Tick) 
 // flush стейджа выдаёт кадр до разрыва). Письма: сначала backlog, затем
 // свежие (порядок отправителя); кап на шаг, излишек переносится.
 func (r *Region) phaseB() {
-	for _, p := range r.pendingPushes {
+	for i := r.pushCursor; i < len(r.pendingPushes); i++ {
+		p := r.pendingPushes[i]
 		r.pusher.Push(p.Client, p.Frame, p.Crypt)
+		r.pushCursor = i + 1
 	}
-	r.pendingPushes = r.pendingPushes[:0]
+	if r.pushCursor == len(r.pendingPushes) {
+		r.pendingPushes = r.pendingPushes[:0]
+		r.pushCursor = 0
+	}
 	sent := 0
 	for sent < len(r.outbox) && sent < r.cfg.PhaseBCap {
 		r.reg.Send(r.outbox[sent])

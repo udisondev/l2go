@@ -743,3 +743,44 @@ func TestE2EGoroutineLeak(t *testing.T) {
 	t.Fatalf("горутины утекли: до=%d после≤%d, теперь=%d",
 		before, before+5, runtime.NumGoroutine())
 }
+
+// TestE2EMutualVisibilityAndLogoutDelete — два клиента: взаимные CHAR_INFO
+// после второго входа, DELETE_OBJECT у оставшегося после логаута второго
+// (join AoI, P3.8). Молчун: у ушедшего после LEAVE_WORLD join-кадров нет.
+func TestE2EMutualVisibilityAndLogoutDelete(t *testing.T) {
+	env := startE2E(t, 50, 4)
+	alice := enterWorld(t, env, "alice")
+	waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	bob := enterWorld(t, env, "bob")
+	waitForLine(t, bob.out, "USER_INFO", 3*time.Second)
+
+	lineA := waitForLine(t, alice.out, "CHAR_INFO name=\"Botbob\"", 3*time.Second)
+	if !strings.Contains(lineA, "objID=") {
+		t.Errorf("CHAR_INFO у Alice без objID: %s", lineA)
+	}
+	waitForLine(t, bob.out, "CHAR_INFO name=\"Botalice\"", 3*time.Second)
+
+	if err := bob.gc.Logout(); err != nil {
+		t.Fatalf("Logout(Bob): %v", err)
+	}
+	waitForLeaveWorld(t, bob, env)
+	waitForLine(t, alice.out, "DELETE_OBJECT", 3*time.Second)
+	if tail := tailAfter(t, bob.out, "LEAVE_WORLD"); len(tail) != 0 {
+		t.Errorf("кадры после LEAVE_WORLD ушедшего: %q", tail)
+	}
+}
+
+// TestE2ESingleClientJoinSilence — одиночный клиент: join-кадров нет
+// (регресс P3.7; тайминг-инвариант «молчун», не синхронизация).
+func TestE2ESingleClientJoinSilence(t *testing.T) {
+	env := startE2E(t, 50, 4)
+	s := enterWorld(t, env, "lone")
+	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+	time.Sleep(150 * time.Millisecond) // ≥3 тиков 50 Гц без событий членства
+	for _, line := range s.out.String() {
+		_ = line
+	}
+	if txt := s.out.String(); strings.Contains(txt, "CHAR_INFO") || strings.Contains(txt, "DELETE_OBJECT") {
+		t.Errorf("одиночный клиент получил join-кадры: лог содержит CHAR_INFO/DELETE_OBJECT")
+	}
+}

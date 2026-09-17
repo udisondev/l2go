@@ -167,10 +167,14 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 		r.step()
 	})
 	t.Logf("Idle-шаг: %.0f аллокаций", allocs)
-	// точная раскладка: rand.New(PCG) = 1, публикация снапшота = 1; всё прочее
-	// (дрен, лог-кадр) — 0 по построению; изменение числа — regress или
-	// осознанная правка бюджета
-	if allocs != 2 {
-		t.Fatalf("аллокаций на Idle-шаг = %.0f; want 2 (rand.New + снапшот)", allocs)
+	// точная раскладка фазы 3.8 (оценка плана «≈5–6» превышена платой
+	// событийного join — карты/слайсы разрешения наблюдателей; измерено, не
+	// выведено): rand.New(PCG) = 1; Build = 7 (records + 4 битмапа + копия
+	// слот-карты + present-map); join = 5 (resolveObs-слайс + obsSet-map +
+	// стартовые ёмкости staging/events); composeJoin = 2. Нулевые слайсы/карты
+	// — без аллокаций. Изменение числа — regress или осознанная правка бюджета
+	// с записью в реестр задачи.
+	if allocs != 15 {
+		t.Fatalf("аллокаций на Idle-шаг = %.0f; want 15 (PCG=1 + Build=7 + join=5 + compose=2)", allocs)
 	}
 }

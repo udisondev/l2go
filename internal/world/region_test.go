@@ -116,14 +116,15 @@ func TestRegionPhaseCounters(t *testing.T) {
 	spawnResident(t, r, 100)
 	r.step()
 	st := r.Stats()
-	if st.PhaseDrain != 1 || st.PhaseFold != 1 || st.PhaseEffects != 1 || st.PhaseB != 1 || st.PhasePublish != 1 || st.PhaseAck != 1 {
+	if st.PhaseDrain != 1 || st.PhaseFold != 1 || st.PhaseEffects != 1 || st.PhaseAoI != 1 || st.PhaseB != 1 || st.PhasePublish != 1 || st.PhaseAck != 1 {
 		t.Fatalf("фазовые счётчики после шага: %+v", st)
 	}
 	if st.DoneTick != r.metro.Now() {
 		t.Fatalf("doneTick = %d; want %d", st.DoneTick, r.metro.Now())
 	}
-	if got := r.snapPtr.Load(); got == nil || got.tick != r.metro.Now() {
-		t.Fatalf("снапшот не несёт тик шага: %+v", got)
+	// публикация — блоб в фазе publish (снапшот-заготовка P3.2 заменена)
+	if got := r.pub.Committed(); got == nil {
+		t.Fatalf("шаг не опубликовал блоб")
 	}
 }
 
@@ -243,7 +244,7 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	r.step()
 	done := r.Stats().DoneTick
 
-	r.forcePanic = phaseFold
+	r.forcePanic.Store(uint32(phaseFold))
 	r.safeStep()
 	st := r.Stats()
 	if st.Failed != 1 || st.DoneTick != done {
@@ -252,14 +253,14 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	if st.PhaseDrain != 2 || st.PhaseFold != 1 {
 		t.Fatalf("паника в fold: drain = %d (want 2, дорос), fold = %d (want 1, не дорос)", st.PhaseDrain, st.PhaseFold)
 	}
-	r.forcePanic = 0
+	r.forcePanic.Store(0)
 	r.safeStep() // успешный шаг — серия сброшена
 	if st := r.Stats(); st.Failed != 1 {
 		t.Fatalf("после успеха серия не сброшена: failed = %d", st.Failed)
 	}
 	// паника в фазе B: drain/fold доросли, B/publish/ack — нет (дельтами)
 	beforeB := r.Stats()
-	r.forcePanic = phaseB
+	r.forcePanic.Store(uint32(phaseB))
 	r.safeStep()
 	st = r.Stats()
 	if st.PhaseDrain != beforeB.PhaseDrain+1 || st.PhaseFold != beforeB.PhaseFold+1 {
@@ -277,7 +278,7 @@ func TestRegionRecoverAndFreeze(t *testing.T) {
 	if !st.Frozen {
 		t.Fatalf("серия паник не заморозила регион")
 	}
-	r.forcePanic = 0
+	r.forcePanic.Store(0)
 	before := r.Stats()
 	r.safeStep() // замороженный не исполняет шаги
 	if r.Stats().PhaseAck != before.PhaseAck {
@@ -296,9 +297,9 @@ func TestRegionPanicDropsBatchAndMarks(t *testing.T) {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: id}, FromID: 5, Kind: transport.KindAggro})
 	}
 	r.metro.tick.Add(1)
-	r.forcePanic = phaseFold
+	r.forcePanic.Store(uint32(phaseFold))
 	r.safeStep()
-	r.forcePanic = 0
+	r.forcePanic.Store(0)
 	st := r.ctrl.Stats()
 	if st.FinalReliable != 4 {
 		t.Fatalf("классовый дроп остатка reliable = %d; want 4 (тихая потеря запрещена)", st.FinalReliable)
@@ -543,9 +544,9 @@ func TestRegionPanicDropCoverDisjoint(t *testing.T) {
 		r.reg.Send(transport.Envelope{To: transport.Addr{Entity: r.ctrlID}, FromID: 5, Kind: transport.KindEnterWorld})
 	}
 	r.metro.tick.Add(1)
-	r.forcePanic = phaseFold
+	r.forcePanic.Store(uint32(phaseFold))
 	r.safeStep()
-	r.forcePanic = 0
+	r.forcePanic.Store(0)
 	if got := r.ctrl.Stats().FinalReliable; got != 20 {
 		t.Fatalf("FinalReliable = %d; want 20 (излишек сверх K не считается дважды)", got)
 	}

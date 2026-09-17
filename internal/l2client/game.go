@@ -476,6 +476,24 @@ func (gc *GameClient) handleFrame(f []byte) {
 				{K: "level", V: num32(v.Level())},
 			}
 		}
+	case protocol.OpCharInfo:
+		// CharInfo — ввод чужого игрока в известность (join AoI, P3.8).
+		if v, ok := protocol.NewCharInfoView(f); ok {
+			nm, _ := v.Name()
+			name, typed = "CHAR_INFO", true
+			fields = []Field{
+				{K: "name", V: Quote(nm)},
+				{K: "objID", V: num32(v.ObjID())},
+				{K: "x", V: num32(v.X())},
+				{K: "y", V: num32(v.Y())},
+			}
+		}
+	case protocol.OpDeleteObject:
+		// DeleteObject — уход из известности (join AoI, P3.8).
+		if v, ok := protocol.NewDeleteObjectView(f); ok {
+			name, typed = "DELETE_OBJECT", true
+			fields = []Field{{K: "objID", V: num32(v.ObjID())}}
+		}
 	}
 	if typed {
 		gc.logRecv(name, fields...)

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/udisondev/l2go/internal/replica"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
@@ -638,7 +639,7 @@ func parseStep(body []byte, payloads bool) (StepRecord, error) {
 		st.Advisory = make([]AdvisoryIn, 0, na)
 		for range na {
 			st.Advisory = append(st.Advisory, AdvisoryIn{
-				Cell:   uint32(c.uvarint()),
+				Cell:   replica.CellID(c.uvarint()),
 				Entity: transport.EntityID(c.uvarint()),
 			})
 		}
