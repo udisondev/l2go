@@ -72,26 +72,32 @@ func TestGridCellOfPropertyDomainBoundedDeterministic(t *testing.T) {
 }
 
 // TestGridWindowCoversMembershipProperty — геометрия инварианта «окно 3×3
-// покрывает членство»: клетки цели и наблюдателя не обе в окне ⟹ любая пара
-// позиций дальше Exit; обратно — позиции в пределах Enter ⟹ клетки соседние.
+// покрывает членство» в обе стороны: (а) клетки не обе в окне ⟹ любая пара
+// позиций дальше Exit (член, покинувший окно, гарантированно удаляется);
+// (б) пары позиций в пределах Enter ⟹ клетки соседние (ввод невозможен вне
+// окна) — фальсифицирует сужение окна при сохранении exit-порога.
 func TestGridWindowCoversMembershipProperty(t *testing.T) {
 	t.Parallel()
 	const cell, enter, exit = 8192, 3500, 4200
 	offsets := []int32{0, 1, cell / 2, cell - 1}
-	posIn := func(base, gx int32, o int32) int64 { return int64(base) + int64(gx)*cell + int64(o) }
+	posIn := func(gx int32, o int32) int64 { return int64(gx)*cell + int64(o) }
 	for dx := -2; dx <= 2; dx++ {
 		for dy := -2; dy <= 2; dy++ {
 			inWindow := absI(int32(dx)) <= 1 && absI(int32(dy)) <= 1
-			minD2 := int64(0)
+			minD2 := int64(-1)
 			for _, ox := range offsets {
 				for _, oy := range offsets {
 					for _, tx := range offsets {
 						for _, ty := range offsets {
-							d2x := gapI(posIn(0, 1, ox), posIn(0, int32(1+dx), tx))
-							d2y := gapI(posIn(0, 1, oy), posIn(0, int32(1+dy), ty))
+							d2x := gapI(posIn(1, ox), posIn(1+int32(dx), tx))
+							d2y := gapI(posIn(1, oy), posIn(1+int32(dy), ty))
 							m := d2x*d2x + d2y*d2y
-							if minD2 == 0 || m < minD2 {
+							if minD2 < 0 || m < minD2 {
 								minD2 = m
+							}
+							// (б) близкая пара обязана лежать в соседних клетках
+							if m <= enter*enter && !inWindow {
+								t.Errorf("пара дистанции² %d ≤ Enter² в клетках офсета (%d,%d) вне окна — ввод потерян", m, dx, dy)
 							}
 						}
 					}
@@ -100,12 +106,8 @@ func TestGridWindowCoversMembershipProperty(t *testing.T) {
 			if !inWindow && minD2 <= exit*exit {
 				t.Errorf("офсет (%d,%d) вне окна: минимальная дистанция² = %d ≤ Exit² (ввод вне окна возможен)", dx, dy, minD2)
 			}
-			if inWindow && minD2 > 4*cell*cell {
-				t.Errorf("офсет (%d,%d) в окне: дистанция взорвалась (%d)", dx, dy, minD2)
-			}
 		}
 	}
-	_ = enter
 }
 
 func absI(v int32) int32 {
@@ -125,7 +127,7 @@ func gapI(a, b int64) int64 {
 // TestNewGridRejectsCellSizeBelowExit — фабрик-инвариант cellSize ≥ Exit:
 // нарушение — ошибка конструирования (защита от тюнинга фазы 6 в
 // осцилляцию); равенство допустимо (кольцо вырождается в кромку).
-func TestNewGridRejectsCellSizeBelowExit(t *testing.T) {
+func TestNewJoinRejectsCellSizeBelowExit(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		shift uint

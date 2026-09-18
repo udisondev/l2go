@@ -38,11 +38,15 @@ const (
 	EventUpdate
 )
 
-// Event — исходящее событие пары. slot — слот цели в сегменте Step (поле
-// пакета: применяется стадингом Apply).
+// Event — исходящее событие пары. Target — указатель на запись цели в блобе
+// шага (ввод/апдейт; блоб иммутабелен в окне Step → компоновка → Apply —
+// без копии ~200-байтной записи на событие: 490k событий/шаг на лестнице
+// 10k игроков). При Remove запись недоступна (деспавн) — Target nil, вечный
+// id цели несёт Entity. slot — слот цели (применяется стадингом Apply).
 type Event struct {
 	Obs    Observer
-	Target Record
+	Target *Record
+	Entity transport.EntityID
 	Kind   EventKind
 	slot   int
 }
@@ -138,12 +142,12 @@ func (j *Join) Apply() {
 		}
 		switch ev.Kind {
 		case EventIntroduce:
-			cur.ids[ev.slot] = ev.Target.Entity
+			cur.ids[ev.slot] = ev.Entity
 			bitMark(cur.bits, ev.slot)
 		case EventRemove:
 			// сверка вечного id: слот мог быть реюзнут новыми жильцом (эмиты
 			// Remove(старого) и Introduce(нового) в любом порядке)
-			if cur.ids[ev.slot] == ev.Target.Entity {
+			if cur.ids[ev.slot] == ev.Entity {
 				cur.ids[ev.slot] = 0
 				cur.bits[ev.slot/64] &^= 1 << (uint(ev.slot) % 64)
 			}
@@ -252,11 +256,11 @@ func (j *Join) dirtyWindow(ref obsRef, blob *Blob, win []CellID) {
 			member := slot < len(v.ids) && v.ids[slot] == rec.Entity
 			switch {
 			case !member && inEnter(ref.rec, rec, j.cfg):
-				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot})
+				j.emit(Event{Obs: ref.o, Target: rec, Entity: rec.Entity, Kind: EventIntroduce, slot: slot})
 			case member && changed && (beyondExit(ref.rec, rec, j.cfg) || !Visible(ref.rec.Flags, rec.Flags)):
-				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventRemove, slot: slot})
+				j.emit(Event{Obs: ref.o, Entity: rec.Entity, Kind: EventRemove, slot: slot})
 			case member && changed:
-				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventUpdate, slot: slot})
+				j.emit(Event{Obs: ref.o, Target: rec, Entity: rec.Entity, Kind: EventUpdate, slot: slot})
 			}
 		}
 	}
@@ -289,17 +293,17 @@ func (j *Join) fullPass(ref obsRef, blob *Blob, win []CellID, fullEmit bool) {
 			case member:
 				// удержание: выход только за exit-радиус (гистерезис) или предикат
 				if beyondExit(ref.rec, rec, j.cfg) || !Visible(ref.rec.Flags, rec.Flags) {
-					j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventRemove, slot: slot})
+					j.emit(Event{Obs: ref.o, Entity: rec.Entity, Kind: EventRemove, slot: slot})
 				} else if fullEmit {
-					j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot}) // повторный ввод — примирение
+					j.emit(Event{Obs: ref.o, Target: rec, Entity: rec.Entity, Kind: EventIntroduce, slot: slot}) // повторный ввод — примирение
 				} else if bitHas(blob.changed, slot) {
 					// изменившаяся цель члена: полный проход — единственная точка
 					// обработки пар covered-наблюдателя — апдейт движения здесь,
 					// иначе одновременное движение наблюдателя и цели теряет стрим пары
-					j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventUpdate, slot: slot})
+					j.emit(Event{Obs: ref.o, Target: rec, Entity: rec.Entity, Kind: EventUpdate, slot: slot})
 				}
 			case inEnter(ref.rec, rec, j.cfg):
-				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot})
+				j.emit(Event{Obs: ref.o, Target: rec, Entity: rec.Entity, Kind: EventIntroduce, slot: slot})
 			}
 		}
 	}
@@ -329,7 +333,7 @@ func (j *Join) cleanupTail(ref obsRef, blob *Blob) {
 			if seatInWindow(blob, slot, v.ids[slot], ref.rec.Cell) {
 				continue
 			}
-			j.emit(Event{Obs: ref.o, Target: Record{Entity: v.ids[slot]}, Kind: EventRemove, slot: slot})
+			j.emit(Event{Obs: ref.o, Entity: v.ids[slot], Kind: EventRemove, slot: slot})
 		}
 	}
 }

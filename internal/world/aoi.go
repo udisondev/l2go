@@ -154,33 +154,34 @@ func npcInfoOf(rec replica.Record) protocol.NpcInfoData {
 // NpcInfo (P3.10; счётчик вводов — метрика живого прогона).
 func (r *Region) composeJoin(events []replica.Event) []FramePush {
 	pushes := make([]FramePush, 0, len(events))
-	for _, ev := range events {
+	for i := range events {
+		ev := &events[i]
 		switch ev.Kind {
 		case replica.EventIntroduce:
 			if ev.Target.Kind != replica.RecordKindPlayer {
-				d := npcInfoOf(ev.Target)
+				d := npcInfoOf(*ev.Target)
 				dst := make([]byte, protocol.NpcInfoSize(d))
 				protocol.WriteNpcInfo(dst, d)
 				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: dst, Crypt: true})
 				r.npcIntroduced.Add(1)
 				continue
 			}
-			d := charInfoOf(ev.Target)
+			d := charInfoOf(*ev.Target)
 			dst := make([]byte, protocol.CharInfoSize(d))
 			protocol.WriteCharInfo(dst, d)
 			pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: dst, Crypt: true})
 			if ev.Target.Moving {
-				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeMoveFrame(ev.Target), Crypt: true})
+				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeMoveFrame(*ev.Target), Crypt: true})
 			}
 		case replica.EventRemove:
 			dst := make([]byte, protocol.DeleteObjectSize)
-			protocol.WriteDeleteObject(dst, int32(encode.ObjectIDBase+uint64(ev.Target.Entity)))
+			protocol.WriteDeleteObject(dst, int32(encode.ObjectIDBase+uint64(ev.Entity)))
 			pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: dst, Crypt: true})
 		case replica.EventUpdate:
 			if ev.Target.Moving {
-				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeMoveFrame(ev.Target), Crypt: true})
+				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeMoveFrame(*ev.Target), Crypt: true})
 			} else {
-				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeStopFrame(ev.Target), Crypt: true})
+				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: composeStopFrame(*ev.Target), Crypt: true})
 			}
 		}
 	}

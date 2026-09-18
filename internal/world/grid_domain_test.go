@@ -38,5 +38,9 @@ func TestRegionGridCoversDomainEdges(t *testing.T) {
 			t.Errorf("позиция (%d,%d): Cell=%d; want %d (рассинхрон источника сетки)",
 				pos.X, pos.Y, rec.Cell, r.grid.CellOf(pos.X, pos.Y))
 		}
+		gx, gy := rec.Cell>>16, rec.Cell&0xFFFF
+		if rec.Cell&(1<<31) != 0 || gx > 0x7FFF || gy > 0x7FFF {
+			t.Errorf("позиция (%d,%d): клетка %d вне домена [0,0x7FFF]²/сентинел", pos.X, pos.Y, rec.Cell)
+		}
 	}
 }

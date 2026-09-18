@@ -133,7 +133,7 @@ func TestPublisherCellChangeRegroupsSlotLives(t *testing.T) {
 	updates, others := 0, 0
 	for _, ev := range events {
 		switch {
-		case ev.Kind == EventUpdate && ev.Target.Entity == 2:
+		case ev.Kind == EventUpdate && ev.Entity == 2:
 			updates++
 		case ev.Obs.Entity == 1:
 			others++
@@ -153,7 +153,7 @@ func TestPublisherCellChangeRegroupsSlotLives(t *testing.T) {
 
 // TestBuildAllocsIndependentOfCellCount — плотная укладка: счёт аллокаций
 // Build+Commit не зависит от числа клеток (per-сегментные слайсы дали бы
-// ~2×#ячеек). Абсолют фиксируется комментарием (OQ-3/S6: ~8–9 с битмапами).
+// ~2×#ячеек). Абсолют фиксируется комментарием.
 // Без Parallel: AllocsPerRun зовёт runtime.GC — глобальная точка.
 func TestBuildAllocsIndependentOfCellCount(t *testing.T) {
 	g := testGrid()
@@ -176,9 +176,11 @@ func TestBuildAllocsIndependentOfCellCount(t *testing.T) {
 	if a != b {
 		t.Fatalf("аллокации зависят от числа клеток: 1 клетка = %.0f, 100 клеток = %.0f; want равны", a, b)
 	}
-	// измеренный абсолют стационарного Build+Commit: карты/present + порядок +
-	// слоты + записи + сиды + позиции + сегменты + буфер битмап (бюджет Idle-шага
-	// мира — TestRegionStepIdleAllocBudget; ср. benchmarks/P4.1-*-baseline.txt)
+	// измеренный абсолют стационарного Build+Commit на 1000 записей: 19
+	// (две карты с хинтом + порядок + слоты + записи + сиды + индекс +
+	// сегменты + буфер битмап + хвосты роста; зависит от населения, НЕ от
+	// числа клеток; бюджет Idle-шага мира на ~100 населении — 8, см.
+	// TestRegionStepIdleAllocBudget)
 	t.Logf("Build+Commit на 1000 записей: %.0f аллокаций (независимо от клеток)", a)
 }
 
@@ -208,5 +210,42 @@ func TestPublisherReadRoutesByCellSegment(t *testing.T) {
 	}
 	if _, ok := p.Read(cellC, 2); !ok {
 		t.Fatalf("Read по новой клетке переезда промахнулся")
+	}
+}
+
+// TestPublisherFreeListLowestReuse — чередующиеся деспавны: свободный список
+// отсортирован целиком, новорожденный занимает младший свободный слот
+// (инвариант реюза; конкатенация несортированного хвоста оставляла бы выбор
+// слота зависящим от порядка map-итерации сбора ушедших).
+func TestPublisherFreeListLowestReuse(t *testing.T) {
+	t.Parallel()
+	g := testGrid()
+	p := NewPublisher(g)
+	a := recAt(1, -100, -100)
+	b := recAt(2, -200, -100)
+	stepBuild := func(recs ...Record) *Blob {
+		blob := p.Build(recs)
+		p.Commit(blob)
+		return blob
+	}
+	stepBuild(a, b) // A→слот 0, B→слот 1
+	stepBuild(a)    // B деспавн: free=[1]
+	stepBuild(a)    // стабильность: free=[1]
+	// A деспавн + C рождение одним поколением: младший свободный — 0
+	c := recAt(3, -300, -100)
+	blob := stepBuild(c)
+	if got := blob.slotOf[3]; got != 0 {
+		t.Fatalf("новорожденный на слоте %d; want 0 (младший свободный после чередующихся деспавнов)", got)
+	}
+	for i := 1; i < len(blob.free); i++ {
+		if blob.free[i-1] >= blob.free[i] {
+			t.Fatalf("свободный список не отсортирован: %v", blob.free)
+		}
+	}
+	// два рождения из двух свободных: младшие по порядку
+	d := recAt(4, -400, -100)
+	next := stepBuild(c, d)
+	if got := next.slotOf[4]; got != 1 {
+		t.Fatalf("второй новорожденный на слоте %d; want 1", got)
 	}
 }

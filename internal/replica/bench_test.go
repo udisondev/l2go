@@ -186,9 +186,10 @@ func BenchmarkJoinStepIsolatedFromCrowd(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				// Build линеен по населению — ВНЕ метрики (один и тот же блоб:
-				// dirty-бит члена статичен, Step пересчитывает события каждый вызов)
+				// dirty-бит члена статичен, Step пересчитывает события каждый вызов).
+				// Apply не зовём: appliedGen остаётся равным base — каждый вызов
+				// идёт событийным dirty-путём (не примирением)
 				events := j.Step(obs, blob)
-				j.Apply()
 				if len(events) == 0 {
 					b.Fatalf("живость: стрим пары потерян (мёртвый бенч)")
 				}
@@ -204,11 +205,15 @@ func BenchmarkPublishBlobMultiCell(b *testing.B) {
 	for _, cells := range []int{1, 100} {
 		b.Run(fmt.Sprintf("cells=%d", cells), func(b *testing.B) {
 			recs := make([]Record, n)
+			perAxis := 1 // клеток ровно cells: perAxis²
+			for perAxis*perAxis < cells {
+				perAxis++
+			}
 			for i := range recs {
 				x, y := int32(-100), int32(-100)
 				if cells > 1 {
-					x = int32(i%(cells/10))*8192 + 100
-					y = int32(i/(cells/10))*8192 + 100
+					x = int32(i%perAxis)*8192 + 100
+					y = int32(i/perAxis%perAxis)*8192 + 100
 				}
 				recs[i] = Record{Entity: transport.EntityID(i + 1), X: x, Y: y, Kind: RecordKindPlayer}
 			}
@@ -231,11 +236,15 @@ func BenchmarkAdvisoryReadMultiCell(b *testing.B) {
 	for _, cells := range []int{1, 100} {
 		b.Run(fmt.Sprintf("cells=%d", cells), func(b *testing.B) {
 			recs := make([]Record, n)
+			perAxis := 1 // клеток ровно cells: perAxis²
+			for perAxis*perAxis < cells {
+				perAxis++
+			}
 			for i := range recs {
 				x, y := int32(-100+i%50*10), int32(-100+i/50*10)
 				if cells > 1 {
-					x = int32(i%(cells/10))*8192 + 100
-					y = int32(i/(cells/10))*8192 + 100
+					x = int32(i%perAxis)*8192 + 100
+					y = int32(i/perAxis%perAxis)*8192 + 100
 				}
 				recs[i] = Record{Entity: transport.EntityID(i + 1), X: x, Y: y, Kind: RecordKindPlayer}
 			}

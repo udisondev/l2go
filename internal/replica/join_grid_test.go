@@ -1,7 +1,7 @@
 package replica
 
 import (
-	"fmt"
+	"math"
 	"math/rand/v2"
 	"testing"
 
@@ -29,7 +29,7 @@ func counts(events []Event, obs transport.EntityID) map[[2]uint64]int {
 		if ev.Obs.Entity != obs {
 			continue
 		}
-		got[[2]uint64{uint64(ev.Target.Entity), uint64(ev.Kind)}]++
+		got[[2]uint64{uint64(ev.Entity), uint64(ev.Kind)}]++
 	}
 	return got
 }
@@ -345,7 +345,7 @@ func TestJoinPropertyGridSetEquality(t *testing.T) {
 	t.Parallel()
 	g := testGrid()
 	cfg := CanonJoinConfig()
-	for iter := 0; iter < 40; iter++ {
+	for iter := 0; iter < 100; iter++ {
 		rng := rand.New(rand.NewPCG(42, uint64(iter)))
 		p := NewPublisher(g)
 		j := mustJoin(t, g, cfg)
@@ -414,9 +414,13 @@ func TestJoinPropertyGridSetEquality(t *testing.T) {
 	}
 }
 
-// randCellPos — координата с таргетингом границ клеток: кратные 8192 и ±1
-// (кламп в диапазон 4 клеток от начала сетки).
+// randCellPos — координата с таргетингом границ клеток (кратные 8192 и ±1)
+// и краёв домена (за пределами — кламп CellOf; края int32 — прецедент
+// TestGridCellOfBoundariesAndClamp).
 func randCellPos(rng *rand.Rand, mode int) int32 {
+	if rng.IntN(20) == 0 { // края домена и int32
+		return []int32{math.MinInt32, math.MaxInt32, -8193, 5 * 8192}[rng.IntN(4)]
+	}
 	switch mode {
 	case 0: // произвольная в [−8192, 4·8192)
 		return int32(rng.IntN(5*8192)) - 8192
@@ -503,11 +507,15 @@ func TestJoinWindowImmuneToOutsideCrowd(t *testing.T) {
 		if len(got) != len(base) {
 			t.Fatalf("толпа %d в %d клетках: событий %d; want %d", tc.crowd, tc.cells, len(got), len(base))
 		}
+		// семантическое сравнение: Target — указатель в блоб своего сценария
 		for i := range base {
-			if base[i] != got[i] {
+			if base[i].Obs != got[i].Obs || base[i].Entity != got[i].Entity ||
+				base[i].Kind != got[i].Kind || base[i].Target == nil != (got[i].Target == nil) {
 				t.Fatalf("толпа %d/%d: событие %d = %v; want %v", tc.crowd, tc.cells, i, got[i], base[i])
+			}
+			if base[i].Target != nil && *base[i].Target != *got[i].Target {
+				t.Fatalf("толпа %d/%d: запись события %d различна", tc.crowd, tc.cells, i)
 			}
 		}
 	}
-	_ = fmt.Sprint()
 }

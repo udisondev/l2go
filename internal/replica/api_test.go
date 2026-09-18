@@ -28,8 +28,6 @@ func TestReplicaExportedAPISurface(t *testing.T) {
 		"CanonJoinConfig": true, "Visible": true, "NewPublisher": true,
 		"Build": true, "Commit": true, "Read": true, "Committed": true,
 		"NewJoin": true, "Step": true, "Apply": true, "ForcePanicInApply": true,
-		// sort.Interface плотной укладки (имена продиктованы stdlib)
-		"Len": true, "Less": true, "Swap": true,
 		// аксессоры Snapshot
 		"Entity": true, "Pos": true, "Kind": true,
 		// поля экспортированных типов-значений (Record/Event/Observer/

@@ -102,7 +102,7 @@ func TestComposeJoinIntroduceMovingDescribed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pushes := r.composeJoin([]replica.Event{
-				{Obs: replica.Observer{ConnID: 9}, Target: tc.rec, Kind: replica.EventIntroduce},
+				{Obs: replica.Observer{ConnID: 9}, Target: &tc.rec, Kind: replica.EventIntroduce},
 			})
 			if len(pushes) != tc.wantFrames {
 				t.Fatalf("кадров = %d; want %d", len(pushes), tc.wantFrames)
@@ -145,7 +145,7 @@ func TestComposeJoinUpdateStreamsOneFramePerStep(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pushes := r.composeJoin([]replica.Event{
-				{Obs: replica.Observer{ConnID: 9}, Target: tc.rec, Kind: replica.EventUpdate},
+				{Obs: replica.Observer{ConnID: 9}, Target: &tc.rec, Kind: replica.EventUpdate},
 			})
 			if len(pushes) != 1 || pushOp(pushes[0]) != tc.want {
 				t.Fatalf("кадров %d с глаголом %#x; want 1 с %#x", len(pushes), pushOp(pushes[0]), tc.want)

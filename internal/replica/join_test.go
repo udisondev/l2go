@@ -47,7 +47,7 @@ func TestJoinSetEqualityPopulationIntersectsRadius(t *testing.T) {
 			if ev.Kind != EventIntroduce {
 				t.Fatalf("iter %d: свежий наблюдатель получил %v", iter, ev.Kind)
 			}
-			got[ev.Target.Entity] = true
+			got[ev.Entity] = true
 		}
 		want := map[transport.EntityID]bool{}
 		for _, r := range recs {
@@ -125,7 +125,7 @@ func TestJoinRadiusBoundariesExact(t *testing.T) {
 				events2 := stepPair(t, p2, j2, []Observer{obsOf(obs)}, []Record{obs, moved})
 				removed := false
 				for _, ev := range events2 {
-					if ev.Kind == EventRemove && ev.Target.Entity == 2 {
+					if ev.Kind == EventRemove && ev.Entity == 2 {
 						removed = true
 					}
 				}
@@ -164,7 +164,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 	out := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, recAt(2, 4250, 0)})
 	removes := 0
 	for _, ev := range out {
-		if ev.Kind == EventRemove && ev.Target.Entity == 2 {
+		if ev.Kind == EventRemove && ev.Entity == 2 {
 			removes++
 		}
 	}
@@ -180,7 +180,7 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 	in := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, recAt(2, 3000, 0)})
 	intros := 0
 	for _, ev := range in {
-		if ev.Kind == EventIntroduce && ev.Target.Entity == 2 {
+		if ev.Kind == EventIntroduce && ev.Entity == 2 {
 			intros++
 		}
 	}
@@ -298,10 +298,10 @@ func TestJoinSlotReuseDetectedByEternalID(t *testing.T) {
 	events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, next})
 	var removedOld, introducedNew bool
 	for _, ev := range events {
-		if ev.Kind == EventRemove && ev.Target.Entity == 2 {
+		if ev.Kind == EventRemove && ev.Entity == 2 {
 			removedOld = true
 		}
-		if ev.Kind == EventIntroduce && ev.Target.Entity == 3 {
+		if ev.Kind == EventIntroduce && ev.Entity == 3 {
 			introducedNew = true
 		}
 	}
@@ -326,7 +326,7 @@ func TestJoinFlagsFlipReevaluatesPredicate(t *testing.T) {
 	hidden := target
 	hidden.Flags = FlagHidden
 	events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, hidden})
-	if len(events) != 1 || events[0].Kind != EventRemove || events[0].Target.Entity != 2 {
+	if len(events) != 1 || events[0].Kind != EventRemove || events[0].Entity != 2 {
 		t.Fatalf("скрытие: события %v; want Remove(2)", events)
 	}
 	// повторный шаг без изменения: ноль событий (переоценка члена ⇒ 0)
@@ -335,7 +335,7 @@ func TestJoinFlagsFlipReevaluatesPredicate(t *testing.T) {
 	}
 	shown := target
 	events = stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, shown})
-	if len(events) != 1 || events[0].Kind != EventIntroduce || events[0].Target.Entity != 2 {
+	if len(events) != 1 || events[0].Kind != EventIntroduce || events[0].Entity != 2 {
 		t.Fatalf("раскрытие: события %v; want Introduce(2)", events)
 	}
 }
@@ -351,7 +351,7 @@ func TestJoinGoneWithoutMarkerRemovesImmediately(t *testing.T) {
 	target := recAt(2, 100, 0)
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
 	events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs})
-	if len(events) != 1 || events[0].Kind != EventRemove || events[0].Target.Entity != 2 {
+	if len(events) != 1 || events[0].Kind != EventRemove || events[0].Entity != 2 {
 		t.Fatalf("исчезновение: события %v; want Remove(2)", events)
 	}
 	if len(p.Committed().header.Moving) != 0 {
@@ -369,7 +369,7 @@ func TestJoinObserverBirthFillsViewDeathDrops(t *testing.T) {
 	p := NewPublisher(testG)
 	j := mustJoin(t, testG, cfg)
 	events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
-	if len(events) != 1 || events[0].Obs.Entity != 1 || events[0].Target.Entity != 2 {
+	if len(events) != 1 || events[0].Obs.Entity != 1 || events[0].Entity != 2 {
 		t.Fatalf("рождение наблюдателя: %v; want Introduce(2→1)", events)
 	}
 	// наблюдатель уходит из населения: его view дропается
@@ -399,7 +399,7 @@ func TestJoinObserverMoveFullPassDiff(t *testing.T) {
 		if ev.Obs.Entity != 1 {
 			continue
 		}
-		got[[2]uint64{uint64(ev.Target.Entity), uint64(ev.Kind)}]++
+		got[[2]uint64{uint64(ev.Entity), uint64(ev.Kind)}]++
 	}
 	if got[[2]uint64{2, uint64(EventRemove)}] != 1 {
 		t.Fatalf("покинутая цель: счётчик Remove(2) = %d; want 1 (состав %v)", got[[2]uint64{2, uint64(EventRemove)}], got)
@@ -499,7 +499,7 @@ func TestJoinReconciliationPartialApply(t *testing.T) {
 	events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, recAt(2, 300, 0), recAt(3, 400, 0)})
 	seen3 := false
 	for _, ev := range events {
-		if ev.Kind == EventIntroduce && ev.Target.Entity == 3 {
+		if ev.Kind == EventIntroduce && ev.Entity == 3 {
 			seen3 = true
 		}
 	}
@@ -556,10 +556,10 @@ func TestJoinSlotReuseInFullPassKeepsNewTenant(t *testing.T) {
 	events := stepPair(t, p, j, []Observer{obsOf(moved)}, []Record{moved, next})
 	sawRemoveOld, sawIntroduceNew := false, false
 	for _, ev := range events {
-		if ev.Kind == EventRemove && ev.Target.Entity == 2 {
+		if ev.Kind == EventRemove && ev.Entity == 2 {
 			sawRemoveOld = true
 		}
-		if ev.Kind == EventIntroduce && ev.Target.Entity == 3 {
+		if ev.Kind == EventIntroduce && ev.Entity == 3 {
 			sawIntroduceNew = true
 		}
 	}
@@ -576,7 +576,7 @@ func TestJoinSlotReuseInFullPassKeepsNewTenant(t *testing.T) {
 	events = stepPair(t, p, j, []Observer{obsOf(moved)}, []Record{moved, far})
 	removed := false
 	for _, ev := range events {
-		if ev.Kind == EventRemove && ev.Target.Entity == 3 {
+		if ev.Kind == EventRemove && ev.Entity == 3 {
 			removed = true
 		}
 	}
@@ -608,7 +608,7 @@ func TestJoinBothMovingUpdateDelivered(t *testing.T) {
 	join.Apply()
 	var updates int
 	for _, ev := range events {
-		if ev.Kind == EventUpdate && ev.Obs.Entity == 1 && ev.Target.Entity == 2 {
+		if ev.Kind == EventUpdate && ev.Obs.Entity == 1 && ev.Entity == 2 {
 			updates++
 		}
 	}

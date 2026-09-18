@@ -1,6 +1,7 @@
 package replica
 
 import (
+	"slices"
 	"sort"
 	"sync/atomic"
 
@@ -148,16 +149,14 @@ type buildOrder struct {
 	idx  int32
 }
 
-type orderSlice []buildOrder
-
-func (s orderSlice) Len() int { return len(s) }
-func (s orderSlice) Less(i, j int) bool {
-	if s[i].cell != s[j].cell {
-		return s[i].cell < s[j].cell
+// byCellSlot — порядок плотной укладки (slices.SortFunc без interface-
+// конверсии: публикация блоба исполняется каждый тик).
+func byCellSlot(a, b buildOrder) int {
+	if a.cell != b.cell {
+		return int(a.cell) - int(b.cell)
 	}
-	return s[i].slot < s[j].slot
+	return int(a.slot) - int(b.slot)
 }
-func (s orderSlice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 // Build строит следующее поколение: размещает записи по стабильным слотам
 // (прошлые — на своих местах, новые — младшим свободным либо расширением),
@@ -188,8 +187,11 @@ func (p *Publisher) Build(recs []Record) *Blob {
 			departed = append(departed, slot)
 		}
 	}
-	sort.Ints(departed)
+	// свободный список отсортирован целиком: конкатенация префикса с хвостом
+	// прошлых поколений оставляла бы «младший свободный» зависящим от
+	// рандомизированного порядка map-итерации сбора departed
 	free = append(free, departed...)
+	slices.Sort(free)
 
 	b := &Blob{gen: p.gen + 1, base: p.gen}
 	// экстент слотов поколения: за хвостом удержанных И экстентом prev —
@@ -207,13 +209,12 @@ func (p *Publisher) Build(recs []Record) *Blob {
 	}
 	fresh := extent
 	order := make([]buildOrder, len(recs))
-	maxSlot := -1
 	for i := range recs {
 		rec := &recs[i]
 		slot, ok := slots[rec.Entity]
 		if !ok {
 			if len(free) > 0 {
-				slot = free[0] // младший свободный
+				slot = free[0] // младший свободный (список отсортирован)
 				free = free[1:]
 			} else {
 				slot = fresh
@@ -221,12 +222,9 @@ func (p *Publisher) Build(recs []Record) *Blob {
 			}
 			slots[rec.Entity] = slot
 		}
-		if slot > maxSlot {
-			maxSlot = slot
-		}
 		order[i] = buildOrder{cell: p.grid.CellOf(rec.X, rec.Y), slot: int32(slot), idx: int32(i)}
 	}
-	sort.Sort(orderSlice(order))
+	slices.SortFunc(order, byCellSlot)
 
 	b.slots = make([]int, len(order))
 	b.records = make([]Record, len(order))

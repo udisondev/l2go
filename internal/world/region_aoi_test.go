@@ -355,10 +355,10 @@ func TestComposeJoinEventKinds(t *testing.T) {
 		PAtkSpd: 253, MAtkSpd: 333, MoveMultiplier: 1.0, AttackSpeedMultiplier: 1.1,
 		CollisionRadius: 13, CollisionHeight: 22.5}
 	pushes := r.composeJoin([]replica.Event{
-		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventIntroduce},
-		{Obs: replica.Observer{ConnID: 9}, Target: npc, Kind: replica.EventIntroduce},
-		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventRemove},
-		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventUpdate},
+		{Obs: replica.Observer{ConnID: 9}, Target: &player, Kind: replica.EventIntroduce},
+		{Obs: replica.Observer{ConnID: 9}, Target: &npc, Kind: replica.EventIntroduce},
+		{Obs: replica.Observer{ConnID: 9}, Target: &player, Kind: replica.EventRemove},
+		{Obs: replica.Observer{ConnID: 9}, Target: &player, Kind: replica.EventUpdate},
 	})
 	if len(pushes) != 4 {
 		t.Fatalf("кадров = %d; want 4 (CharInfo + NpcInfo + DeleteObject + StopMove)", len(pushes))

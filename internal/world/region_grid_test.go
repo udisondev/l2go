@@ -64,8 +64,8 @@ func TestRegionMovementStreamAcrossCellBoundary(t *testing.T) {
 	_, r := newTestRegion(t, DefaultConfig())
 	obs := Entity{Owner: r.id, HP: 100, Pos: Position{X: -73729, Y: 258271, Z: -3104},
 		Player: &Player{ConnID: 1, SpeedBudget: speedCAP}}
-	start := Position{X: -73748, Y: 258271, Z: -3104} // западнее границы
-	dest := Position{X: -73708, Y: 258271, Z: -3104}  // восточнее границы; ~18 тиков бега
+	start := Position{X: -73828, Y: 258271, Z: -3104} // западнее границы
+	dest := Position{X: -73628, Y: 258271, Z: -3104}  // восточнее: 200 юнитов ≈ 17 тиков бега (11.5 юн/тик, 10 Гц)
 	mover := Entity{Owner: r.id, HP: 100, Pos: start, Moving: true,
 		Dest: dest, MoveFrom: start, MoveDist: distMilli(start, dest),
 		Player: &Player{ConnID: 2, SpeedBudget: speedCAP}}
@@ -77,7 +77,7 @@ func TestRegionMovementStreamAcrossCellBoundary(t *testing.T) {
 	}
 	r.step() // вводы
 	moves, flicker, stops := 0, 0, 0
-	for range 30 {
+	for range 150 {
 		r.metro.tick.Add(1)
 		r.step()
 		if len(r.joinPushes) == 0 {
@@ -97,8 +97,8 @@ func TestRegionMovementStreamAcrossCellBoundary(t *testing.T) {
 			}
 		}
 	}
-	if moves < 2 {
-		t.Fatalf("стрим пересечения границы = %d кадров; want ≥2", moves)
+	if moves < 12 {
+		t.Fatalf("стрим пересечения границы = %d кадров; want ≥12 из ~17 тиков бега", moves)
 	}
 	if flicker != 0 {
 		t.Fatalf("известность мерцает на границе: %d CharInfo/DeleteObject в стриме", flicker)

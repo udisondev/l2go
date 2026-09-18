@@ -171,14 +171,15 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 	})
 	t.Logf("Idle-шаг: %.0f аллокаций", allocs)
 	// раскладка P4.1 (сетка ячеек; до сетки — 15, раскладка P3.8: Build=7):
-	// rand.New(PCG) = 1; Build = 9 (порядок укладки + слоты + записи + сиды +
+	// rand.New(PCG) = 1; Build = 8 (порядок укладки + слоты + записи + сиды +
 	// обратный индекс + сегменты + буфер 4 битмапов + копия слот-карты +
-	// present-map — плотная укладка, счёт не зависит от числа ячеек);
+	// present-map — плотная укладка, счёт не зависит от числа ячеек;
+	// slices.SortFunc — без interface-конверсии);
 	// join = 5 (resolveObs-слайс + obsSet-map + стартовые ёмкости staging);
 	// composeJoin = 2. Изменение числа — regress или осознанная правка бюджета
 	// с записью в реестр задачи.
-	if allocs != 17 {
-		t.Fatalf("аллокаций на Idle-шаг = %.0f; want 17 (PCG=1 + Build=9 + join=5 + compose=2)", allocs)
+	if allocs != 16 {
+		t.Fatalf("аллокаций на Idle-шаг = %.0f; want 16 (PCG=1 + Build=8 + join=5 + compose=2)", allocs)
 	}
 }
 
@@ -326,10 +327,10 @@ func TestRegionStepMovingAllocBudget(t *testing.T) {
 	})
 	t.Logf("шаг со 100 движущимися: %.0f аллокаций", allocs)
 	// раскладка та же, что Idle (advance — чистая арифметика, dirty движущихся
-	// ложится в существующие битмапы Build; P4.1: 15 → 17 с сеткой ячеек —
+	// ложится в существующие битмапы Build; P4.1: 15 → 16 с сеткой ячеек —
 	// см. раскладку TestRegionStepIdleAllocBudget); изменение числа — regress
 	// или осознанная правка бюджета с записью в реестр задачи.
-	if allocs != 17 {
-		t.Fatalf("аллокаций на шаг со 100 движущимися = %.0f; want 17", allocs)
+	if allocs != 16 {
+		t.Fatalf("аллокаций на шаг со 100 движущимися = %.0f; want 16", allocs)
 	}
 }

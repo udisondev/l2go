@@ -403,7 +403,7 @@ func TestComposeJoinNpcInfoHugeNameTitle(t *testing.T) {
 	r := &Region{}
 	huge := strings.Repeat("Щ", 4096)
 	pushes := r.composeJoin([]replica.Event{{Obs: replica.Observer{ConnID: 1},
-		Target: replica.Record{Entity: 7, Kind: replica.RecordKindNPC,
+		Target: &replica.Record{Entity: 7, Kind: replica.RecordKindNPC,
 			Name: huge, Title: huge}, Kind: replica.EventIntroduce}})
 	if len(pushes) != 1 {
 		t.Fatalf("кадров = %d; want 1", len(pushes))

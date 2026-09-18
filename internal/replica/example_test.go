@@ -25,7 +25,7 @@ func Example() {
 	j.Apply()
 	p.Commit(blob)
 	for _, ev := range events {
-		fmt.Println(ev.Obs.ConnID, ev.Kind, ev.Target.Entity, replica.Visible(0, ev.Target.Flags))
+		fmt.Println(ev.Obs.ConnID, ev.Kind, ev.Entity, replica.Visible(0, ev.Target.Flags))
 	}
 	// Output:
 	// 7 0 2 true
