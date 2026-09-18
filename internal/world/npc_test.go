@@ -558,10 +558,11 @@ func TestRecordOfNPCFields(t *testing.T) {
 		PAtkSpd: 253, MAtkSpd: 333, MoveMultiplier: 1.0, AttackSpeedMultiplier: 1.1,
 		RHand: 127, LHand: 42,
 	}
-	rec := recordOf(&Entity{ID: 9, Owner: 1, Pos: Position{X: 1, Y: 2, Z: 3},
+	_, reg := newTestRegion(t, DefaultConfig())
+	rec := reg.recordOf(&Entity{ID: 9, Owner: 1, Pos: Position{X: 1, Y: 2, Z: 3},
 		Heading: 77, Npc: skin})
 	want := replica.Record{
-		Entity: 9, Cell: aoiCell, X: 1, Y: 2, Z: 3, Heading: 77,
+		Entity: 9, Cell: reg.grid.CellOf(1, 2), X: 1, Y: 2, Z: 3, Heading: 77,
 		Kind:       replica.RecordKindNPC,
 		TemplateID: skin.TemplateID, Name: skin.Name, Title: skin.Title,
 		Attackable:      skin.Attackable,
@@ -577,7 +578,7 @@ func TestRecordOfNPCFields(t *testing.T) {
 	}
 	// NPC-поля нули у игрока.
 	ent := playerEntForRecord()
-	prec := recordOf(ent)
+	prec := reg.recordOf(ent)
 	if prec.Kind != replica.RecordKindPlayer || prec.TemplateID != 0 || prec.Title != "" ||
 		prec.Attackable || prec.RunSpd != 0 || prec.RHand != 0 {
 		t.Fatalf("recordOf(игрок) несёт NPC-поля: %+v", prec)

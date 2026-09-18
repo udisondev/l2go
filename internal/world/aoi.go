@@ -16,16 +16,14 @@ import (
 // битовое представление порции и portionVersion не меняются).
 type AdvisoryIn = replica.AdvisoryInput
 
-// aoiCell — вырожденная сетка фазы 3: одна ячейка на регион.
-const aoiCell replica.CellID = 0
-
 // recordOf — сущность → AoI-запись (поля по потребителям CharInfo/NpcInfo;
 // живой Heading и клампнутая Dest — источники кадров движения P3.9; NPC-поля
 // — из скина рождения P3.10; Flags фаза 3 не порождает — синтетика тестов).
-func recordOf(ent *Entity) replica.Record {
+// Cell — из сетки региона (единый источник констант домена — geo).
+func (r *Region) recordOf(ent *Entity) replica.Record {
 	rec := replica.Record{
 		Entity:  ent.ID,
-		Cell:    aoiCell,
+		Cell:    r.grid.CellOf(ent.Pos.X, ent.Pos.Y),
 		X:       ent.Pos.X,
 		Y:       ent.Pos.Y,
 		Z:       ent.Pos.Z,

@@ -1135,3 +1135,70 @@ func TestE2EReenterNpcSetIdenticalById(t *testing.T) {
 		}
 	}
 }
+
+// TestE2EPairMoveAcrossCellBoundary — живой контур сетки ячеек AoI (P4.1):
+// пара в соседних клетках (граница x=−73728, cellSize 8192), движение Alice
+// через границу — непрерывный CHAR_MOVE_TO_LOCATION у наблюдателя из другой
+// клетки, известность не мерцает (молчание ≥3 тиков — тайминг-инвариант),
+// прибытие — STOP_MOVE. Позиция наблюдателя west — правкой char-файла +
+// рестартом GS (прецедент TestE2EMovementObserverOutsideRadius).
+func TestE2EPairMoveAcrossCellBoundary(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	// обе сессии создаются на дефолтных позициях, сохраняются, переносятся
+	// вплотную к границе клеток (west=−73729 клетка 70, alice=−73727 клетка 71)
+	// и контур GS перезапускается (charStore живого актора держит записи в
+	// памяти — правка диска видима после релоада; маршрут 200 юнитов — в
+	// пределах скоростного бюджета сессии, иначе спидхак-детектор душитadvance)
+	for _, user := range []string{"westb", "pairmove"} {
+		s := enterWorld(t, env, user)
+		if err := s.gc.Logout(); err != nil {
+			t.Fatalf("Logout(%s): %v", user, err)
+		}
+		waitForLeaveWorld(t, s, env)
+		waitPersistIdle(t, env.gs.actor)
+	}
+	recs := readChars(t, env.charFile("westb"))
+	recs[0]["x"] = -73729
+	writeChars(t, env.charFile("westb"), recs)
+	recs = readChars(t, env.charFile("pairmove"))
+	recs[0]["x"] = -73727
+	writeChars(t, env.charFile("pairmove"), recs)
+	env.restartGS(t)
+
+	alice := enterWorld(t, env, "pairmove")
+	lineUI := waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	ay := parseCoord(t, lineUI, "y")
+	west2 := enterWorld(t, env, "westb")
+	lineW := waitForLine(t, west2.out, "USER_INFO", 3*time.Second)
+	if got := parseCoord(t, lineW, "x"); got != -73729 {
+		t.Fatalf("западный клиент вошёл на x=%d; want −73729 (правка файла не видна)", got)
+	}
+	// взаимный ввод через границу клеток
+	waitForLine(t, alice.out, `CHAR_INFO name="Botwestb"`, 3*time.Second)
+	waitForLine(t, west2.out, `CHAR_INFO name="Botpairmove"`, 3*time.Second)
+
+	// движение Alice через границу: 200 юнитов западнее (первый же юнит
+	// пересекает −73728), прибытие за секунды
+	const dstX = -73927
+	if err := alice.gc.MoveToLocation(dstX, int32(ay), -3104, -73727, int32(ay), -3104, 1); err != nil {
+		t.Fatalf("MoveToLocation: %v", err)
+	}
+	echo := waitForLine(t, alice.out, "CHAR_MOVE_TO_LOCATION", 3*time.Second)
+	if got := parseCoord(t, echo, "dstX"); got != dstX {
+		t.Errorf("эхо dstX = %d; want %d", got, dstX)
+	}
+	waitForLine(t, west2.out, "CHAR_MOVE_TO_LOCATION", 3*time.Second) // стрим из соседней клетки
+	time.Sleep(300 * time.Millisecond)                                // ≥3 тика 10 Гц: известность не мерцает
+	txt := west2.out.String()
+	if strings.Contains(txt, "DELETE_OBJECT") {
+		t.Errorf("удаление в окне стрима через границу; лог:\n%s", txt)
+	}
+	if n := strings.Count(txt, `CHAR_INFO name="Botpairmove"`); n != 1 {
+		t.Errorf("CharInfo(pairmove) = %d за сессию; want 1 (повторный ввод — мерцание)", n)
+	}
+	stop := waitForLine(t, alice.out, "STOP_MOVE", 30*time.Second)
+	if got := parseCoord(t, stop, "x"); got != dstX {
+		t.Errorf("прибытие x = %d; want %d", got, dstX)
+	}
+	waitForLine(t, west2.out, "STOP_MOVE", 3*time.Second)
+}

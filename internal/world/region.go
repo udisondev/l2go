@@ -66,6 +66,7 @@ type Region struct {
 	rules   Rules
 	started atomic.Bool
 
+	grid      replica.Grid // сетка ячеек AoI (константы домена geo, единая для издателя и join-а)
 	pub       *replica.Publisher
 	join      *replica.Join
 	adv       *logAdviser
@@ -153,6 +154,11 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("world: NewRegion(%d): %w", id, err)
 	}
+	grid := replica.NewGrid(geo.WorldMinX, geo.WorldMinY, replica.DefaultCellShift)
+	join, err := replica.NewJoin(grid, replica.CanonJoinConfig())
+	if err != nil {
+		return nil, fmt.Errorf("world: NewRegion(%d): %w", id, err)
+	}
 	r := &Region{
 		id:     id,
 		cfg:    cfg,
@@ -163,8 +169,9 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 		gm:     gm,
 		state:  newState(),
 		slept:  true,
-		pub:    replica.NewPublisher(),
-		join:   replica.NewJoin(replica.CanonJoinConfig()),
+		grid:   grid,
+		pub:    replica.NewPublisher(grid),
+		join:   join,
 	}
 	if empty := geoRegionCount(gm); empty == 0 {
 		slog.Warn("world: артефакт без гео-регионов — движение без стен (NullRegion)",
@@ -647,7 +654,7 @@ func (r *Region) step() {
 func (r *Region) aoiStep() {
 	r.aoiRecs = r.aoiRecs[:0]
 	for _, res := range r.residents {
-		r.aoiRecs = append(r.aoiRecs, recordOf(res.ent))
+		r.aoiRecs = append(r.aoiRecs, r.recordOf(res.ent))
 	}
 	r.nextBlob = r.pub.Build(r.aoiRecs)
 	r.aoiObs = r.aoiObs[:0]

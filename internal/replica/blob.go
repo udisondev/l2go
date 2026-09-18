@@ -19,7 +19,8 @@ const (
 // Record — полный пейлоад AoI-записи (значение): вечный ID, ячейка позиции,
 // кинематика (включая клампнутую цель движения — кадры P3.9 самодостаточны
 // пейлоадом события) и поля потребителей CharInfo/NpcInfo (примитивы:
-// ребро replica←data не открывается). Поля по потребителю.
+// ребро replica←data не открывается). Поля по потребителю. Cell в построенном
+// блобе перезаписывается издателем из координат (единый источник — сетка).
 type Record struct {
 	Entity    transport.EntityID
 	Cell      CellID
@@ -61,21 +62,22 @@ type Record struct {
 	LHand                 int32
 }
 
-// segment — SoA-сегмент одной ячейки: записи по плотным слотам (слот = индекс,
-// дырка — нулевой Entity), членство и dirty-манифест — битмапами по слотам.
+// segment — сегмент одной ячейки: срез в общих слайсах блоба (плотная
+// укладка — 3–4 аллокации на блоб-тик при любом числе ячеек). Слоты
+// остаются глобальным стабильным пространством издателя: сегмент лишь
+// группирует слоты своей клетки, порядок внутри возрастает.
 type segment struct {
 	cell    CellID
-	records []Record
-	member  []uint64
-	born    []uint64
-	changed []uint64
-	gone    []uint64
+	slotOff int
+	slotLen int
 }
 
-func bitMark(bitmap []uint64, slot int) { bitmap[slot/64] |= 1 << (uint(slot) % 64) }
-
-func bitHas(bitmap []uint64, slot int) bool {
-	return bitmap[slot/64]&(1<<(uint(slot)%64)) != 0
+// seat — жилец слота поколения: клетка и вечный id (единая чистка хвоста
+// join-а и детект реюза слота). Свободный слот — сентинел cellInvalid и
+// нулевой id; нулевая клетка валидна и «нет клетки» не означает.
+type seat struct {
+	cell CellID
+	ent  transport.EntityID
 }
 
 // Blob — иммутабельное после Commit поколение. Поля неотэкспортированы:
@@ -84,14 +86,38 @@ func bitHas(bitmap []uint64, slot int) bool {
 // структурами (копия значений записей) — входной слайс мира переиспользуется
 // без алиасинга опубликованного поколения.
 type Blob struct {
-	gen    uint64 // Generation: номер поколения
-	base   uint64 // BaseGen: поколение-база dirty-манифеста (норма gen-1)
-	seg    segment
+	gen    uint64           // Generation: номер поколения
+	base   uint64           // BaseGen: поколение-база dirty-манифеста (норма gen-1)
 	header MembershipHeader // маркеры переезда — фаза 3 всегда пусто
 
+	segs       []segment // сортированы по cell; пустых ячеек нет
+	slots      []int     // глобальные слоты записей, возрастают внутри сегмента
+	records    []Record  // параллельно slots
+	seatBySlot []seat    // слот → жилец; дырка — {cellInvalid, 0}
+	slotPos    []int32   // слот → индекс в records; дырка — −1 (база сравнения dirty)
+	member     []uint64  // битмапы по глобальным слотам
+	born       []uint64
+	changed    []uint64
+	gone       []uint64
+
 	// Построенные структуры издателя (продвигаются в его состояние Commit-ом):
-	slots map[transport.EntityID]int
-	free  []int
+	slotOf map[transport.EntityID]int
+	free   []int
+}
+
+// segmentOf — сегмент клетки (бинарный поиск по сортированным segs).
+func (b *Blob) segmentOf(c CellID) (segment, bool) {
+	lo := sort.Search(len(b.segs), func(i int) bool { return b.segs[i].cell >= c })
+	if lo < len(b.segs) && b.segs[lo].cell == c {
+		return b.segs[lo], true
+	}
+	return segment{}, false
+}
+
+func bitMark(bitmap []uint64, slot int) { bitmap[slot/64] |= 1 << (uint(slot) % 64) }
+
+func bitHas(bitmap []uint64, slot int) bool {
+	return bitmap[slot/64]&(1<<(uint(slot)%64)) != 0
 }
 
 // Publisher — строитель блоба у владельца: стабильные плотные слоты (слот
@@ -102,22 +128,44 @@ type Blob struct {
 // отстать на поколение, безвредно).
 type Publisher struct {
 	gen       uint64 // поколение последнего Commit
+	grid      Grid
+	prev      *Blob // база dirty-сравнения (последний Commit)
 	slots     map[transport.EntityID]int
 	free      []int
-	prev      *segment // база dirty-сравнения (последний Commit)
 	committed atomic.Pointer[Blob]
 }
 
-// NewPublisher создаёт издателя (нулевое значение тоже работоспособно).
-func NewPublisher() *Publisher {
-	return &Publisher{slots: make(map[transport.EntityID]int)}
+// NewPublisher создаёт издателя сетки (нулевое значение тоже работоспособно:
+// вырожденная сетка cellSize 1).
+func NewPublisher(grid Grid) *Publisher {
+	return &Publisher{grid: grid, slots: make(map[transport.EntityID]int)}
 }
+
+// buildOrder — ключ плотной укладки: сортировка (клетка, слот).
+type buildOrder struct {
+	cell CellID
+	slot int32
+	idx  int32
+}
+
+type orderSlice []buildOrder
+
+func (s orderSlice) Len() int { return len(s) }
+func (s orderSlice) Less(i, j int) bool {
+	if s[i].cell != s[j].cell {
+		return s[i].cell < s[j].cell
+	}
+	return s[i].slot < s[j].slot
+}
+func (s orderSlice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 // Build строит следующее поколение: размещает записи по стабильным слотам
 // (прошлые — на своих местах, новые — младшим свободным либо расширением),
-// освобождает слоты ушедших, выводит dirty-манифест сравнением полных
-// пейлоадов с prev (честный dirty — ловит и смену Flags). Возвращает блоб, НЕ
-// публикуя: публикация — Commit в фазе publish шага.
+// освобождает слоты ушедших, распределяет записи по ячейкам позиций (плотная
+// укладка: общие слайсы + сегменты-срезы) и выводит dirty-манифест
+// сравнением полных пейлоадов с prev (честный dirty — ловит и смену Cell,
+// и смену Flags). Возвращает блоб, НЕ публикуя: публикация — Commit в фазе
+// publish шага.
 func (p *Publisher) Build(recs []Record) *Blob {
 	slots := make(map[transport.EntityID]int, len(p.slots))
 	for k, v := range p.slots {
@@ -144,93 +192,114 @@ func (p *Publisher) Build(recs []Record) *Blob {
 	free = append(free, departed...)
 
 	b := &Blob{gen: p.gen + 1, base: p.gen}
-	maxSlot := -1
+	// экстент слотов поколения: за хвостом удержанных И экстентом prev —
+	// экстент монотонен, свободные слоты всегда ниже него (освобождены из
+	// прошлых поколений): свежий слот не сталкивается со свободным,
+	// реюз остаётся младшим свободным
+	extent := 0
+	if p.prev != nil {
+		extent = len(p.prev.slotPos)
+	}
 	for _, slot := range slots {
-		if slot > maxSlot {
-			maxSlot = slot
+		if slot+1 > extent {
+			extent = slot + 1
 		}
 	}
-	startLen := maxSlot + 1
-	// gone-битмап покрывает и слоты, жившие только в prev (хвостовые дырки) —
-	// иначе усохший сегмент не итерирует ушедшие слоты
-	if p.prev != nil && len(p.prev.records) > startLen {
-		startLen = len(p.prev.records)
-	}
-	b.seg.records = make([]Record, startLen)
+	fresh := extent
+	order := make([]buildOrder, len(recs))
+	maxSlot := -1
 	for i := range recs {
-		rec := recs[i]
-		b.seg.cell = rec.Cell
+		rec := &recs[i]
 		slot, ok := slots[rec.Entity]
 		if !ok {
 			if len(free) > 0 {
-				slot = free[0] // младший свободный (free отсортирован)
+				slot = free[0] // младший свободный
 				free = free[1:]
 			} else {
-				slot = len(b.seg.records)
+				slot = fresh
+				fresh++
 			}
 			slots[rec.Entity] = slot
 		}
-		for slot >= len(b.seg.records) {
-			b.seg.records = append(b.seg.records, Record{})
+		if slot > maxSlot {
+			maxSlot = slot
 		}
-		b.seg.records[slot] = rec
+		order[i] = buildOrder{cell: p.grid.CellOf(rec.X, rec.Y), slot: int32(slot), idx: int32(i)}
 	}
-	words := (len(b.seg.records) + 63) / 64
-	b.seg.member = make([]uint64, words)
-	b.seg.born = make([]uint64, words)
-	b.seg.changed = make([]uint64, words)
-	b.seg.gone = make([]uint64, words)
-	for slot := range b.seg.records {
-		rec := b.seg.records[slot]
-		if rec.Entity == 0 {
-			continue
+	sort.Sort(orderSlice(order))
+
+	b.slots = make([]int, len(order))
+	b.records = make([]Record, len(order))
+	b.segs = make([]segment, 0, len(order))
+	for k := range order {
+		rec := recs[order[k].idx]
+		rec.Cell = order[k].cell
+		b.slots[k] = int(order[k].slot)
+		b.records[k] = rec
+		if k == 0 || order[k-1].cell != order[k].cell {
+			b.segs = append(b.segs, segment{cell: order[k].cell, slotOff: k})
 		}
-		bitMark(b.seg.member, slot)
-		prevRec, was := p.prevRecord(slot)
+		b.segs[len(b.segs)-1].slotLen++
+	}
+
+	// сиды и обратный индекс несут монотонный экстент: дырки — сентинел
+	// (чистка хвоста join-а), хвостовые слоты ушедших покрыты gone
+	b.seatBySlot = make([]seat, fresh)
+	for i := range b.seatBySlot {
+		b.seatBySlot[i].cell = cellInvalid
+	}
+	b.slotPos = make([]int32, fresh)
+	for i := range b.slotPos {
+		b.slotPos[i] = -1
+	}
+	words := (fresh + 63) / 64
+	bitmap := make([]uint64, 4*words)
+	b.member, b.born, b.changed, b.gone = bitmap[:words], bitmap[words:2*words], bitmap[2*words:3*words], bitmap[3*words:]
+	for k := range b.slots {
+		slot := b.slots[k]
+		rec := &b.records[k]
+		bitMark(b.member, slot)
+		b.seatBySlot[slot] = seat{cell: rec.Cell, ent: rec.Entity}
+		b.slotPos[slot] = int32(k)
+		var prevRec Record
+		had := false
+		if p.prev != nil && slot < len(p.prev.slotPos) {
+			if pos := p.prev.slotPos[slot]; pos >= 0 {
+				prevRec = p.prev.records[pos]
+				had = true
+			}
+		}
 		switch {
-		case !was || prevRec.Entity != rec.Entity:
-			bitMark(b.seg.born, slot) // новый жилец (включая реюз слота)
-		case prevRec != rec:
-			bitMark(b.seg.changed, slot)
+		case !had || prevRec.Entity != rec.Entity:
+			bitMark(b.born, slot) // новый жилец (включая реюз слота)
+		case prevRec != *rec:
+			bitMark(b.changed, slot)
 		}
 	}
 	// gone: слот занят в prev, но пуст или передан другому в новом поколении
+	// (слоты prev всегда внутри монотонного экстента нового блоба)
 	if p.prev != nil {
-		for slot := range p.prev.records {
-			prevRec := p.prev.records[slot]
-			if prevRec.Entity == 0 {
+		for slot := range p.prev.slotPos {
+			if p.prev.slotPos[slot] < 0 {
 				continue
 			}
-			if slot >= len(b.seg.records) || b.seg.records[slot].Entity != prevRec.Entity {
-				bitMark(b.seg.gone, slot)
+			if b.seatBySlot[slot].ent != p.prev.records[p.prev.slotPos[slot]].Entity {
+				bitMark(b.gone, slot)
 			}
 		}
 	}
-	b.slots = slots
+	b.slotOf = slots
 	b.free = free
 	b.header = MembershipHeader{Generation: b.gen}
 	return b
-}
-
-// prevRecord — запись prev-поколения по слоту (nil-сегмент — первый Build).
-func (p *Publisher) prevRecord(slot int) (Record, bool) {
-	if p.prev == nil || slot >= len(p.prev.records) {
-		return Record{}, false
-	}
-	rec := p.prev.records[slot]
-	if rec.Entity == 0 {
-		return Record{}, false
-	}
-	return rec, true
 }
 
 // Commit публикует построенное поколение: сначала продвигает prev (базу
 // будущего манифеста — детект рассинхрона поколений у Join остаётся
 // согласованным при панике между шагами), затем свапает закоммиченное.
 func (p *Publisher) Commit(b *Blob) {
-	seg := b.seg
-	p.prev = &seg
-	p.slots = b.slots
+	p.prev = b
+	p.slots = b.slotOf
 	p.free = b.free
 	p.gen = b.gen
 	p.committed.Store(b)
@@ -239,22 +308,24 @@ func (p *Publisher) Commit(b *Blob) {
 // Committed возвращает текущее закоммиченное поколение (nil до первого Commit).
 func (p *Publisher) Committed() *Blob { return p.committed.Load() }
 
-// Read — advisory-точечное чтение по закоммиченному поколению: линейный
-// поиск по сегменту (точечные чтения per-candidate редки; aux-индекс — по
-// измерениям, база — BenchmarkAdvisoryRead).
+// Read — advisory-точечное чтение по закоммиченному поколению: бинарный
+// поиск сегмента клетки + линейный поиск внутри сегмента (точечные чтения
+// per-candidate редки; aux-индекс — по измерениям, база — BenchmarkAdvisoryRead).
 func (p *Publisher) Read(cell CellID, id transport.EntityID) (Snapshot, bool) {
 	b := p.committed.Load()
 	if b == nil {
 		return Snapshot{}, false
 	}
-	for slot := range b.seg.records {
-		rec := b.seg.records[slot]
-		if rec.Entity == id {
-			if rec.Cell != cell {
-				return Snapshot{}, false
-			}
-			return Snapshot{entity: rec.Entity, x: rec.X, y: rec.Y, z: rec.Z, kind: rec.Kind, flags: rec.Flags}, true
+	seg, ok := b.segmentOf(cell)
+	if !ok {
+		return Snapshot{}, false
+	}
+	for k := seg.slotOff; k < seg.slotOff+seg.slotLen; k++ {
+		rec := &b.records[k]
+		if rec.Entity != id {
+			continue
 		}
+		return Snapshot{entity: rec.Entity, x: rec.X, y: rec.Y, z: rec.Z, kind: rec.Kind, flags: rec.Flags}, true
 	}
 	return Snapshot{}, false
 }

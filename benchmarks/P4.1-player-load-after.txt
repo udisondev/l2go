@@ -1,0 +1,73 @@
+# P4.1 после-лестница (та же методика: benchtime 10x × count 5) — 2026-09-18, машина та же (Ryzen 8945HS, go1.27.1)
+# Сетка ячеек AoI: cellSize 8192, окно 3×3, плотная укладка сегментов, единая чистка хвоста (битмап членства view — F18).
+# Медианы: 100: 0.3–0.65 мс; 1000 кластеры50: 3.3 мс (было 6); 1000 толпа: 67 мс (фундаментальный N² кадров — не улучшается и не должна);
+#   10000 кластеры50: 50.9 мс (было 361 — ×7.1; КРИТЕРИЙ ≤60 мс ВЫПОЛНЕН; промежуточный замер без битмап-чистки — 75.7, F18);
+#   20000 кластеры50: 99.8 мс (было 1414 — ×14.2; на границе бюджета тика 100 мс — прогноз плана 78–95 записан как есть, кадры — доминанта, слэб-пул фазы 6);
+# фальсификатор независимости: изолированный Join.Step 119/141/150 нс на 1/100/10000 клетках при толпе 1e5 вне окна (log-рост бинарного поиска, наклона по слотам толпы нет).
+# До-числа: P3.10-player-load-baseline.txt (та же машина), replica: P4.1-replica-before-baseline.txt.
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/world
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkRegionPlayerLoad/players=100/crowd/step-16         	      10	    648083 ns/op	      9900 frames/op	  755855 B/op	    9922 allocs/op
+      10	    691244 ns/op	      9900 frames/op	  755312 B/op	    9922 allocs/op
+      10	    665431 ns/op	      9900 frames/op	  755312 B/op	    9922 allocs/op
+      10	    657884 ns/op	      9900 frames/op	  755312 B/op	    9922 allocs/op
+      10	    700753 ns/op	      9900 frames/op	  755312 B/op	    9922 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/aoi-16          	      10	    629250 ns/op	      9900 frames/op	  755307 B/op	    9921 allocs/op
+      10	    607367 ns/op	      9900 frames/op	  755296 B/op	    9921 allocs/op
+      10	    591184 ns/op	      9900 frames/op	  755296 B/op	    9921 allocs/op
+      10	    676312 ns/op	      9900 frames/op	  755307 B/op	    9921 allocs/op
+      10	    669457 ns/op	      9900 frames/op	  755307 B/op	    9921 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/step-16    	      10	    332479 ns/op	      4900 frames/op	  390512 B/op	    4922 allocs/op
+      10	    300431 ns/op	      4900 frames/op	  390512 B/op	    4922 allocs/op
+      10	    294015 ns/op	      4900 frames/op	  390512 B/op	    4922 allocs/op
+      10	    391780 ns/op	      4900 frames/op	  390512 B/op	    4922 allocs/op
+      10	    314544 ns/op	      4900 frames/op	  390512 B/op	    4922 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/aoi-16     	      10	    363017 ns/op	      4900 frames/op	  390496 B/op	    4921 allocs/op
+      10	    444157 ns/op	      4900 frames/op	  390496 B/op	    4921 allocs/op
+      10	    310222 ns/op	      4900 frames/op	  390496 B/op	    4921 allocs/op
+      10	    325195 ns/op	      4900 frames/op	  390507 B/op	    4921 allocs/op
+      10	    335216 ns/op	      4900 frames/op	  390496 B/op	    4921 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/step-16        	      10	  67474094 ns/op	    999000 frames/op	72335240 B/op	  999028 allocs/op
+      10	  66717010 ns/op	    999000 frames/op	72335240 B/op	  999028 allocs/op
+      10	  63541630 ns/op	    999000 frames/op	72335240 B/op	  999028 allocs/op
+      10	  60507886 ns/op	    999000 frames/op	72335240 B/op	  999028 allocs/op
+      10	  67920839 ns/op	    999000 frames/op	72335240 B/op	  999028 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/aoi-16         	      10	  72307446 ns/op	    999000 frames/op	72335224 B/op	  999027 allocs/op
+      10	  68583231 ns/op	    999000 frames/op	72335224 B/op	  999027 allocs/op
+      10	  70980016 ns/op	    999000 frames/op	72335224 B/op	  999027 allocs/op
+      10	  69480497 ns/op	    999000 frames/op	72335224 B/op	  999027 allocs/op
+      10	  69415426 ns/op	    999000 frames/op	72335224 B/op	  999027 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/step-16   	      10	   3308128 ns/op	     49000 frames/op	 3940744 B/op	   49028 allocs/op
+      10	   3518302 ns/op	     49000 frames/op	 3940744 B/op	   49028 allocs/op
+      10	   3650878 ns/op	     49000 frames/op	 3940755 B/op	   49028 allocs/op
+      10	   3392000 ns/op	     49000 frames/op	 3940744 B/op	   49028 allocs/op
+      10	   3371826 ns/op	     49000 frames/op	 3940744 B/op	   49028 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/aoi-16    	      10	   3279319 ns/op	     49000 frames/op	 3940728 B/op	   49027 allocs/op
+      10	   3306938 ns/op	     49000 frames/op	 3940728 B/op	   49027 allocs/op
+      10	   3352092 ns/op	     49000 frames/op	 3940739 B/op	   49027 allocs/op
+      10	   3301358 ns/op	     49000 frames/op	 3940728 B/op	   49027 allocs/op
+      10	   3461132 ns/op	     49000 frames/op	 3940728 B/op	   49027 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/step-16  	      10	  50892535 ns/op	    490000 frames/op	39075875 B/op	  490112 allocs/op
+      10	  48168037 ns/op	    490000 frames/op	39075864 B/op	  490112 allocs/op
+      10	  47447803 ns/op	    490000 frames/op	39075864 B/op	  490112 allocs/op
+      10	  48073910 ns/op	    490000 frames/op	39075864 B/op	  490112 allocs/op
+      10	  47534369 ns/op	    490000 frames/op	39075864 B/op	  490112 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/aoi-16   	      10	  49399016 ns/op	    490000 frames/op	39075848 B/op	  490111 allocs/op
+      10	  48304661 ns/op	    490000 frames/op	39075848 B/op	  490111 allocs/op
+      10	  49153105 ns/op	    490000 frames/op	39075848 B/op	  490111 allocs/op
+      10	  48684567 ns/op	    490000 frames/op	39075848 B/op	  490111 allocs/op
+      10	  48612680 ns/op	    490000 frames/op	39075848 B/op	  490111 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/step-16  	      10	  99845479 ns/op	    980000 frames/op	78142616 B/op	  980208 allocs/op
+      10	 104991487 ns/op	    980000 frames/op	78142616 B/op	  980208 allocs/op
+      10	  99256219 ns/op	    980000 frames/op	78142616 B/op	  980208 allocs/op
+      10	  96217600 ns/op	    980000 frames/op	78142616 B/op	  980208 allocs/op
+      10	 100852738 ns/op	    980000 frames/op	78142616 B/op	  980208 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/aoi-16   	      10	 100571166 ns/op	    980000 frames/op	78142600 B/op	  980207 allocs/op
+      10	  99557668 ns/op	    980000 frames/op	78142600 B/op	  980207 allocs/op
+      10	  98817332 ns/op	    980000 frames/op	78142600 B/op	  980207 allocs/op
+      10	 104873703 ns/op	    980000 frames/op	78142600 B/op	  980207 allocs/op
+      10	 100393914 ns/op	    980000 frames/op	78142600 B/op	  980207 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/world	49.511s

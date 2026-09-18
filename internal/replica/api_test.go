@@ -22,10 +22,14 @@ func TestReplicaExportedAPISurface(t *testing.T) {
 		"EventIntroduce": true, "EventRemove": true, "EventUpdate": true,
 		"Snapshot": true, "MembershipHeader": true, "GroundItem": true,
 		"Advisory": true, "AdvisoryInput": true, "Flags": true, "FlagHidden": true,
+		// сетка ячеек (P4.1)
+		"Grid": true, "NewGrid": true, "CellOf": true, "DefaultCellShift": true,
 		// функции и методы
 		"CanonJoinConfig": true, "Visible": true, "NewPublisher": true,
 		"Build": true, "Commit": true, "Read": true, "Committed": true,
 		"NewJoin": true, "Step": true, "Apply": true, "ForcePanicInApply": true,
+		// sort.Interface плотной укладки (имена продиктованы stdlib)
+		"Len": true, "Less": true, "Swap": true,
 		// аксессоры Snapshot
 		"Entity": true, "Pos": true, "Kind": true,
 		// поля экспортированных типов-значений (Record/Event/Observer/

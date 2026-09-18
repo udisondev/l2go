@@ -39,8 +39,8 @@ func TestJoinSetEqualityPopulationIntersectsRadius(t *testing.T) {
 		}
 		obsRec := recAt(transport.EntityID(n+1), int32(rng.IntN(9000)-4500), int32(rng.IntN(9000)-4500))
 		cfg := JoinConfig{Enter: 3500, Exit: 4200}
-		p := NewPublisher()
-		j := NewJoin(cfg)
+		p := NewPublisher(testG)
+		j := mustJoin(t, testG, cfg)
 		events := stepPair(t, p, j, []Observer{obsOf(obsRec)}, append(recs, obsRec))
 		got := map[transport.EntityID]bool{}
 		for _, ev := range events {
@@ -71,13 +71,13 @@ func TestJoinSetEqualityPopulationIntersectsRadius(t *testing.T) {
 		}
 	}
 	// корнер: пустое население и население из одного наблюдателя
-	p := NewPublisher()
-	j := NewJoin(JoinConfig{Enter: 100, Exit: 200})
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, JoinConfig{Enter: 100, Exit: 200})
 	if evs := stepPair(t, p, j, nil, nil); len(evs) != 0 {
 		t.Fatalf("пустое население: события %v", evs)
 	}
-	p2 := NewPublisher()
-	j2 := NewJoin(JoinConfig{Enter: 100, Exit: 200})
+	p2 := NewPublisher(testG)
+	j2 := mustJoin(t, testG, JoinConfig{Enter: 100, Exit: 200})
 	solo := recAt(1, 0, 0)
 	if evs := stepPair(t, p2, j2, []Observer{obsOf(solo)}, []Record{solo}); len(evs) != 0 {
 		t.Fatalf("одиночный наблюдатель: события %v", evs)
@@ -98,8 +98,8 @@ func TestJoinRadiusBoundariesExact(t *testing.T) {
 	obs := recAt(1, 0, 0)
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("d=%d", c.d), func(t *testing.T) {
-			p := NewPublisher()
-			j := NewJoin(cfg)
+			p := NewPublisher(testG)
+			j := mustJoin(t, testG, cfg)
 			target := recAt(2, c.d, 0)
 			events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
 			intro := false
@@ -118,8 +118,8 @@ func TestJoinRadiusBoundariesExact(t *testing.T) {
 			// проверяем сменой позиции цели (Changed) на ту же дистанцию
 			if c.want == "hold" || c.want == "gone" {
 				// цель уже член (введена с d=enter), позиция меняется на c.d
-				p2 := NewPublisher()
-				j2 := NewJoin(cfg)
+				p2 := NewPublisher(testG)
+				j2 := mustJoin(t, testG, cfg)
 				stepPair(t, p2, j2, []Observer{obsOf(obs)}, []Record{obs, recAt(2, 3500, 0)})
 				moved := recAt(2, c.d, 0)
 				events2 := stepPair(t, p2, j2, []Observer{obsOf(obs)}, []Record{obs, moved})
@@ -146,8 +146,8 @@ func TestJoinHysteresisArcZeroChurn(t *testing.T) {
 	t.Parallel()
 	cfg := JoinConfig{Enter: 3500, Exit: 4200}
 	obs := recAt(1, 0, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	target := recAt(2, 3400, 0)
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
 	// дуга в кольце 3500<3600<4200: позиция меняется, член удерживается
@@ -199,8 +199,8 @@ func TestJoinPropertyCoordinateInt32Edges(t *testing.T) {
 		for _, tx := range edges {
 			obs := recAt(1, ox, 0)
 			target := recAt(2, tx, 0)
-			p := NewPublisher()
-			j := NewJoin(cfg)
+			p := NewPublisher(testG)
+			j := mustJoin(t, testG, cfg)
 			events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
 			got := len(events) >= 1 && events[0].Kind == EventIntroduce
 			dx := int64(ox) - int64(tx)
@@ -219,14 +219,14 @@ func TestJoinPropertyCoordinateInt32Edges(t *testing.T) {
 // без Commit идентичны; Commit продвигает поколения.
 func TestPublisherBuildPureUntilCommit(t *testing.T) {
 	t.Parallel()
-	p := NewPublisher()
+	p := NewPublisher(testG)
 	recs := []Record{recAt(1, 0, 0), recAt(2, 10, 10)}
 	b1 := p.Build(recs)
 	b2 := p.Build(recs)
 	if b1.gen != b2.gen || b1.base != b2.base {
 		t.Fatalf("поколения разошлись без Commit: %d/%d vs %d/%d", b1.gen, b1.base, b2.gen, b2.base)
 	}
-	if len(b1.seg.records) != len(b2.seg.records) || b1.slots[1] != b2.slots[1] {
+	if len(b1.records) != len(b2.records) || b1.slotOf[1] != b2.slotOf[1] {
 		t.Fatalf("слоты разошлись без Commit")
 	}
 	if p.Committed() != nil {
@@ -246,32 +246,32 @@ func TestPublisherBuildPureUntilCommit(t *testing.T) {
 // входного слайса не меняет построенное поколение.
 func TestPublisherCopiesRecordValues(t *testing.T) {
 	t.Parallel()
-	p := NewPublisher()
+	p := NewPublisher(testG)
 	recs := []Record{recAt(1, 0, 0)}
 	b := p.Build(recs)
 	recs[0].X = 99999
 	recs[0].Name = "mutated"
-	if b.seg.records[b.slots[1]].X != 0 || b.seg.records[b.slots[1]].Name != "t" {
-		t.Fatalf("блоб алиасит входной слайс: %+v", b.seg.records[b.slots[1]])
+	if b.records[b.slotPos[b.slotOf[1]]].X != 0 || b.records[b.slotPos[b.slotOf[1]]].Name != "t" {
+		t.Fatalf("блоб алиасит входной слайс: %+v", b.records[b.slotPos[b.slotOf[1]]])
 	}
 }
 
 // TestPublisherCommittedImmutableUnderReaderRace — иммутабельность
 // опубликованного поколения под читателем (держит поколение через 2 шага).
 func TestPublisherCommittedImmutableUnderReaderRace(t *testing.T) {
-	p := NewPublisher()
+	p := NewPublisher(testG)
 	p.Commit(p.Build([]Record{recAt(1, 0, 0), recAt(2, 1, 1)}))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		held := p.Committed()
-		x0, name0 := held.seg.records[held.slots[1]].X, held.seg.records[held.slots[1]].Name
+		x0, name0 := held.records[held.slotPos[held.slotOf[1]]].X, held.records[held.slotPos[held.slotOf[1]]].Name
 		for i := 0; i < 2000; i++ {
-			if _, ok := p.Read(0, 1); !ok {
+			if _, ok := p.Read(testG.CellOf(0, 0), 1); !ok {
 				t.Error("Read(1) потерял запись")
 				return
 			}
-			if held.seg.records[held.slots[1]].X != x0 || held.seg.records[held.slots[1]].Name != name0 {
+			if held.records[held.slotPos[held.slotOf[1]]].X != x0 || held.records[held.slotPos[held.slotOf[1]]].Name != name0 {
 				t.Error("удержанное поколение мутировало")
 				return
 			}
@@ -289,11 +289,11 @@ func TestJoinSlotReuseDetectedByEternalID(t *testing.T) {
 	t.Parallel()
 	cfg := JoinConfig{Enter: 1000, Exit: 1500}
 	obs := recAt(1, 0, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	first := recAt(2, 100, 0)
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, first})
-	slot := p.Committed().slots[2]
+	slot := p.Committed().slotOf[2]
 	next := recAt(3, 120, 0) // займёт младший свободный слот 2
 	events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, next})
 	var removedOld, introducedNew bool
@@ -308,7 +308,7 @@ func TestJoinSlotReuseDetectedByEternalID(t *testing.T) {
 	if !removedOld || !introducedNew {
 		t.Fatalf("реюз слота: removed=%v introduced=%v (события %v)", removedOld, introducedNew, events)
 	}
-	if s := p.Committed().slots[3]; s != slot {
+	if s := p.Committed().slotOf[3]; s != slot {
 		t.Fatalf("слот нового жильца = %d; want реюз %d", s, slot)
 	}
 }
@@ -319,8 +319,8 @@ func TestJoinFlagsFlipReevaluatesPredicate(t *testing.T) {
 	t.Parallel()
 	cfg := JoinConfig{Enter: 1000, Exit: 1500}
 	obs := recAt(1, 0, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	target := recAt(2, 100, 0)
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
 	hidden := target
@@ -346,8 +346,8 @@ func TestJoinGoneWithoutMarkerRemovesImmediately(t *testing.T) {
 	t.Parallel()
 	cfg := JoinConfig{Enter: 1000, Exit: 1500}
 	obs := recAt(1, 0, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	target := recAt(2, 100, 0)
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
 	events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs})
@@ -366,8 +366,8 @@ func TestJoinObserverBirthFillsViewDeathDrops(t *testing.T) {
 	cfg := JoinConfig{Enter: 1000, Exit: 1500}
 	obs := recAt(1, 0, 0)
 	target := recAt(2, 100, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	events := stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, target})
 	if len(events) != 1 || events[0].Obs.Entity != 1 || events[0].Target.Entity != 2 {
 		t.Fatalf("рождение наблюдателя: %v; want Introduce(2→1)", events)
@@ -387,8 +387,8 @@ func TestJoinObserverMoveFullPassDiff(t *testing.T) {
 	obs := recAt(1, 0, 0)
 	near := recAt(2, 500, 0)
 	far := recAt(3, 5000, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, near, far})
 	moved := recAt(1, 5000, 0)
 	events := stepPair(t, p, j, []Observer{obsOf(moved)}, []Record{moved, near, far})
@@ -416,8 +416,8 @@ func TestJoinStepStagesWithoutMutatingView(t *testing.T) {
 	cfg := JoinConfig{Enter: 1000, Exit: 1500}
 	obs := recAt(1, 0, 0)
 	target := recAt(2, 100, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	blob := p.Build([]Record{obs, target})
 	e1 := j.Step([]Observer{obsOf(obs)}, blob)
 	if len(e1) != 1 {
@@ -439,8 +439,8 @@ func TestJoinReconciliationOnBaseGenMismatch(t *testing.T) {
 	t.Parallel()
 	cfg := JoinConfig{Enter: 1000, Exit: 1500}
 	obs := recAt(1, 0, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	// нормальный первый шаг
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, recAt(2, 100, 0)})
 	// шаг с паникой между Apply и Commit: Step и Apply прошли, Commit — нет
@@ -476,8 +476,8 @@ func TestJoinReconciliationPartialApply(t *testing.T) {
 	t.Parallel()
 	cfg := JoinConfig{Enter: 1000, Exit: 1500}
 	obs := recAt(1, 0, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, recAt(2, 100, 0)})
 	// паника внутри Apply на первом же диффе
 	j.ForcePanicInApply.Store(true)
@@ -546,8 +546,8 @@ func TestJoinSlotReuseInFullPassKeepsNewTenant(t *testing.T) {
 	cfg := JoinConfig{Enter: 1000, Exit: 1500}
 	obs := recAt(1, 0, 0)
 	old := recAt(2, 100, 0)
-	p := NewPublisher()
-	j := NewJoin(cfg)
+	p := NewPublisher(testG)
+	j := mustJoin(t, testG, cfg)
 	stepPair(t, p, j, []Observer{obsOf(obs)}, []Record{obs, old})
 	// одним поколением: old ушла, new заняла её слот (младший свободный),
 	// наблюдатель сдвинулся (Changed ⇒ полный проход его пар)
@@ -568,7 +568,7 @@ func TestJoinSlotReuseInFullPassKeepsNewTenant(t *testing.T) {
 	}
 	// view держит нового жильца слота; уход new за exit эмитит Remove
 	v := j.views[1]
-	slot := p.Committed().slots[3]
+	slot := p.Committed().slotOf[3]
 	if v.ids[slot] != 3 {
 		t.Fatalf("view слота = %d; want 3 (новый жилец стёрт Remove'ом старого)", v.ids[slot])
 	}
@@ -590,8 +590,8 @@ func TestJoinSlotReuseInFullPassKeepsNewTenant(t *testing.T) {
 // полного прохода (регресс нагрузочного датчика P3.10: стрим пары терялся,
 // пока двигались оба).
 func TestJoinBothMovingUpdateDelivered(t *testing.T) {
-	pub := NewPublisher()
-	join := NewJoin(CanonJoinConfig())
+	pub := NewPublisher(testG)
+	join := mustJoin(t, testG, CanonJoinConfig())
 	mk := func(x int32) []Record {
 		return []Record{
 			{Entity: 1, X: x, Y: 0, Z: 0, Kind: RecordKindPlayer},

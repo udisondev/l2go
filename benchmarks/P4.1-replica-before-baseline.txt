@@ -1,0 +1,82 @@
+# P4.1 до-базлайн replica (join/publish/read) на ЦЕЛЕВОЙ машине — 2026-09-18 (F9 реестра P4.1:
+# P3.8-файл снят на windows — сверка до/после обязана быть на одном железе, perf.md §0).
+# Методология: b.Loop, -benchmem -count=10; медианы: JoinFullPass 515 мкс, JoinSteadyDirty 190 мкс,
+# PublishBlob N100/1000/10000 = 13.5 мкс / 146 мкс / 1.36 мс, AdvisoryRead N100/10000 = 120 нс / 13.4 нс×1000.
+# До-числа нагрузочной лестницы (BenchmarkRegionPlayerLoad, та же машина): benchmarks/P3.10-player-load-baseline.txt
+# (10000 кластеры50 = 361 мс — цель P4.1 ≤ 60 мс; 20000 = 1414 мс).
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/replica
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkJoinFullPass-16       	    2233	    511873 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2280	    520242 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2404	    517485 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2449	    507518 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2390	    511731 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2248	    519659 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2252	    516635 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2328	    515718 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2059	    526606 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinFullPass-16       	    2461	    510894 ns/op	    2984 B/op	       4 allocs/op
+BenchmarkJoinSteadyDirty-16    	    5742	    201332 ns/op	  274441 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    6052	    189953 ns/op	  274440 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    5888	    189290 ns/op	  274441 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    6082	    189581 ns/op	  274440 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    5829	    190067 ns/op	  274440 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    5557	    189899 ns/op	  274440 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    5584	    189586 ns/op	  274440 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    6252	    203463 ns/op	  274441 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    5472	    201525 ns/op	  274440 B/op	      22 allocs/op
+BenchmarkJoinSteadyDirty-16    	    5800	    200001 ns/op	  274440 B/op	      22 allocs/op
+BenchmarkPublishBlob/N100-16   	   92760	     13529 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   82132	     13935 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   87127	     13751 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   89070	     13844 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   88948	     13516 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   85857	     13560 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   91525	     13203 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   87374	     13532 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   87769	     13670 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N100-16   	   88983	     13333 ns/op	   23568 B/op	      14 allocs/op
+BenchmarkPublishBlob/N1000-16  	    8494	    145770 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    8126	    144562 ns/op	  263200 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    9126	    145726 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    8733	    147807 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    8740	    144636 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    6808	    146938 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    7915	    148615 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    7478	    151014 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    8646	    147332 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N1000-16  	    8941	    146469 ns/op	  263201 B/op	      18 allocs/op
+BenchmarkPublishBlob/N10000-16 	     812	   1379264 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     907	   1368235 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     898	   1323544 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     819	   1377069 ns/op	 2439809 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     888	   1362005 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     852	   1376304 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     914	   1403196 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     892	   1352669 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     877	   1361118 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkPublishBlob/N10000-16 	     928	   1333573 ns/op	 2439808 B/op	      74 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9731584	       121.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9612232	       119.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9943738	       120.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9974145	       121.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9898803	       120.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9571174	       122.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9546318	       121.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9966979	       120.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9915859	       120.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N100-16  	 9952251	       119.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   88476	     13650 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   90318	     13453 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   89168	     13415 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   91831	     13332 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   89800	     13421 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   91430	     13494 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   89802	     13657 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   91202	     13168 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   87883	     13318 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvisoryRead/N10000-16         	   89944	     13428 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/replica	83.776s

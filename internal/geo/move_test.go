@@ -421,7 +421,7 @@ func TestValidLocationVoidMiddle(t *testing.T) {
 
 // isCellCenter — точка совпадает с центром некоторой гео-ячейки.
 func isCellCenter(p Loc) bool {
-	return (p.X-worldMinX-worldCenter)%cellSize == 0 && (p.Y-worldMinY-worldCenter)%cellSize == 0
+	return (p.X-WorldMinX-worldCenter)%cellSize == 0 && (p.Y-WorldMinY-worldCenter)%cellSize == 0
 }
 
 // checkMoveInvariants — машинные инварианты ValidLocation:
@@ -511,10 +511,10 @@ func TestDomainContractPanics(t *testing.T) {
 		// Точка за кромкой на целую ячейку: деление с усечением маппит
 		// малые отрицательные дельты в клетку 0 (как в каноне Java) —
 		// вне сетки оказываются точки от границы минус cellSize.
-		{X: worldMinX - cellSize - 1, Y: 0, Z: 0},
-		{X: worldMinX + regionsX*regionCells*cellSize, Y: 0, Z: 0},
-		{X: 0, Y: worldMinY - cellSize - 1, Z: 0},
-		{X: 0, Y: worldMinY + regionsY*regionCells*cellSize, Z: 0},
+		{X: WorldMinX - cellSize - 1, Y: 0, Z: 0},
+		{X: WorldMinX + regionsX*regionCells*cellSize, Y: 0, Z: 0},
+		{X: 0, Y: WorldMinY - cellSize - 1, Z: 0},
+		{X: 0, Y: WorldMinY + regionsY*regionCells*cellSize, Z: 0},
 		{X: math.MinInt32, Y: math.MinInt32, Z: 0},
 		{X: math.MaxInt32, Y: math.MaxInt32, Z: 0},
 		{X: math.MinInt, Y: 0, Z: 0},
@@ -564,8 +564,8 @@ func tryCall(fn func()) (panicked bool, msg any) {
 // 0..15 от её юго-западного угла (0 и 15 — границы ячейки, 8 — центр).
 func worldPoint(lx, ly, ox, oy, z int) Loc {
 	return Loc{
-		X: worldMinX + geoX(lx)*cellSize + ox,
-		Y: worldMinY + geoY(ly)*cellSize + oy,
+		X: WorldMinX + geoX(lx)*cellSize + ox,
+		Y: WorldMinY + geoY(ly)*cellSize + oy,
 		Z: z,
 	}
 }

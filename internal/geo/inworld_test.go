@@ -14,7 +14,7 @@ func TestInWorldEquivalentToPanicCondition(t *testing.T) {
 	maxX := GeoToWorldX(regionsX*regionCells-1) + cellSize // центр последней ячейки + ячейка
 	maxY := GeoToWorldY(regionsY*regionCells-1) + cellSize
 	points := [][2]int{
-		{worldMinX, worldMinY}, {worldMinX - 1, worldMinY}, {worldMinX, worldMinY - 1},
+		{WorldMinX, WorldMinY}, {WorldMinX - 1, WorldMinY}, {WorldMinX, WorldMinY - 1},
 		{maxX - 1, maxY - 1}, {maxX, maxY}, {maxX - 1, maxY}, {maxX, maxY - 1},
 		{GeoToWorldX(0), GeoToWorldY(0)},
 		{GeoToWorldX(0) - 1, GeoToWorldY(0)}, // полоса целочисленного усечения у кромки

@@ -281,14 +281,14 @@ func TestSizeCeiling(t *testing.T) {
 }
 
 func TestCoordinates(t *testing.T) {
-	if got := WorldToGeoX(worldMinX); got != 0 {
-		t.Errorf("WorldToGeoX(%d) = %d; want 0", worldMinX, got)
+	if got := WorldToGeoX(WorldMinX); got != 0 {
+		t.Errorf("WorldToGeoX(%d) = %d; want 0", WorldMinX, got)
 	}
-	if got := WorldToGeoY(worldMinY); got != 0 {
-		t.Errorf("WorldToGeoY(%d) = %d; want 0", worldMinY, got)
+	if got := WorldToGeoY(WorldMinY); got != 0 {
+		t.Errorf("WorldToGeoY(%d) = %d; want 0", WorldMinY, got)
 	}
-	if got := GeoToWorldX(0); got != worldMinX+worldCenter {
-		t.Errorf("GeoToWorldX(0) = %d; want %d", got, worldMinX+worldCenter)
+	if got := GeoToWorldX(0); got != WorldMinX+worldCenter {
+		t.Errorf("GeoToWorldX(0) = %d; want %d", got, WorldMinX+worldCenter)
 	}
 	// Тайл 16 начинается с мировой X −131072 → гео 32768 → регион 16.
 	if got := WorldToGeoX(-131072); got != 32768 {

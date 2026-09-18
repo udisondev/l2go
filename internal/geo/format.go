@@ -8,9 +8,12 @@ const (
 	regionsX = 32
 	regionsY = 32
 
-	cellSize    = 16 // сторона ячейки в юнитах (COORDINATE_SCALE)
-	worldMinX   = -655360
-	worldMinY   = -589824
+	cellSize = 16 // сторона ячейки в юнитах (COORDINATE_SCALE)
+
+	// WorldMinX и WorldMinY — нижний угол сетки мира (единый источник для
+	// потребителей домена, например сетки ячеек AoI репликации).
+	WorldMinX   = -655360
+	WorldMinY   = -589824
 	worldCenter = 8 // сдвиг к центру ячейки (COORDINATE_OFFSET)
 
 	regionBlocks = 256 * 256 // блоков в регионе (REGION_BLOCKS)
@@ -50,17 +53,17 @@ const (
 
 // WorldToGeoX переводит мировую координату X в гео-координату ячейки
 // (порт GeoEngine.getGeoX).
-func WorldToGeoX(worldX int) int { return (worldX - worldMinX) / cellSize }
+func WorldToGeoX(worldX int) int { return (worldX - WorldMinX) / cellSize }
 
 // WorldToGeoY — то же для оси Y (порт GeoEngine.getGeoY).
-func WorldToGeoY(worldY int) int { return (worldY - worldMinY) / cellSize }
+func WorldToGeoY(worldY int) int { return (worldY - WorldMinY) / cellSize }
 
 // GeoToWorldX возвращает центр ячейки в мировых координатах
 // (порт GeoEngine.getWorldX).
-func GeoToWorldX(geoX int) int { return geoX*cellSize + worldMinX + worldCenter }
+func GeoToWorldX(geoX int) int { return geoX*cellSize + WorldMinX + worldCenter }
 
 // GeoToWorldY — то же для оси Y (порт GeoEngine.getWorldY).
-func GeoToWorldY(geoY int) int { return geoY*cellSize + worldMinY + worldCenter }
+func GeoToWorldY(geoY int) int { return geoY*cellSize + WorldMinY + worldCenter }
 
 // cellHeight — высота из слова complex-ячейки/слоя: биты 4–15 со знаком,
 // шаг 8 юнитов, диапазон −16384..16376 (порт ComplexBlock.getCellHeight).

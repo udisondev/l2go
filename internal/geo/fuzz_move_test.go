@@ -75,13 +75,13 @@ func FuzzValidLocation(f *testing.F) {
 		// любые int32 дают in-grid точки; офсет внутри ячейки выводится
 		// из других бит входа — границы и центры равноправны в корпусе.
 		from := Loc{
-			X: worldMinX + (testRX*regionCells+int(uint32(ax)%regionCells))*cellSize + int(uint32(ax)>>8%cellSize),
-			Y: worldMinY + (testRY*regionCells+int(uint32(ay)%regionCells))*cellSize + int(uint32(ay)>>8%cellSize),
+			X: WorldMinX + (testRX*regionCells+int(uint32(ax)%regionCells))*cellSize + int(uint32(ax)>>8%cellSize),
+			Y: WorldMinY + (testRY*regionCells+int(uint32(ay)%regionCells))*cellSize + int(uint32(ay)>>8%cellSize),
 			Z: int(az),
 		}
 		to := Loc{
-			X: worldMinX + (testRX*regionCells+int(uint32(bx)%(2*regionCells)))*cellSize + int(uint32(bx)>>4%cellSize),
-			Y: worldMinY + (testRY*regionCells+int(uint32(by)%regionCells))*cellSize + int(uint32(by)>>8%cellSize),
+			X: WorldMinX + (testRX*regionCells+int(uint32(bx)%(2*regionCells)))*cellSize + int(uint32(bx)>>4%cellSize),
+			Y: WorldMinY + (testRY*regionCells+int(uint32(by)%regionCells))*cellSize + int(uint32(by)>>8%cellSize),
 			Z: int(bz),
 		}
 		res, ok := m.ValidLocation(from, to)

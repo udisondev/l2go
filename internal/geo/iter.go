@@ -54,14 +54,14 @@ func newStepper(from, to Loc, zFrom, zTo int) stepper {
 		s.sy = -1
 	}
 	if s.sx > 0 {
-		s.ex = worldMinX + (gx+1)*cellSize - from.X
+		s.ex = WorldMinX + (gx+1)*cellSize - from.X
 	} else if s.sx < 0 {
-		s.ex = from.X - (worldMinX + gx*cellSize)
+		s.ex = from.X - (WorldMinX + gx*cellSize)
 	}
 	if s.sy > 0 {
-		s.ey = worldMinY + (gy+1)*cellSize - from.Y
+		s.ey = WorldMinY + (gy+1)*cellSize - from.Y
 	} else if s.sy < 0 {
-		s.ey = from.Y - (worldMinY + gy*cellSize)
+		s.ey = from.Y - (WorldMinY + gy*cellSize)
 	}
 	return s
 }

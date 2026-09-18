@@ -11,11 +11,15 @@ import (
 // предикат пары.
 func Example() {
 	cfg := replica.CanonJoinConfig()
-	p := replica.NewPublisher()
-	j := replica.NewJoin(cfg)
+	grid := replica.NewGrid(-8192, -8192, replica.DefaultCellShift)
+	p := replica.NewPublisher(grid)
+	j, err := replica.NewJoin(grid, cfg)
+	if err != nil {
+		panic("репликация: " + err.Error())
+	}
 
-	obs := replica.Record{Entity: 1, X: 0, Y: 0, Kind: replica.RecordKindPlayer}
-	target := replica.Record{Entity: 2, X: 100, Y: 0, Kind: replica.RecordKindPlayer}
+	obs := replica.Record{Entity: 1, X: -100, Y: -100, Kind: replica.RecordKindPlayer}
+	target := replica.Record{Entity: 2, X: 100, Y: -100, Kind: replica.RecordKindPlayer}
 	blob := p.Build([]replica.Record{obs, target})
 	events := j.Step([]replica.Observer{{Entity: 1, ConnID: 7}}, blob)
 	j.Apply()

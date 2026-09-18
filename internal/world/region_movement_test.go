@@ -167,10 +167,11 @@ func leD32(b []byte) int32 {
 }
 
 func TestRecordOfCarriesLiveHeadingAndDest(t *testing.T) {
+	_, reg := newTestRegion(t, DefaultConfig())
 	e := &Entity{ID: 7, Pos: Position{X: 10, Y: 20, Z: 30}, Dest: Position{X: 110, Y: 20, Z: 30},
 		Heading: 4321, Moving: true, Player: &Player{Rec: mkRec("acc", "hero", 0)}}
 	e.Player.Rec.Heading = 999 // персист-слепок отличается от живого
-	rec := recordOf(e)
+	rec := reg.recordOf(e)
 	if rec.Heading != 4321 || rec.DestX != 110 || rec.DestY != 20 || rec.DestZ != 30 || !rec.Moving {
 		t.Fatalf("recordOf: heading %d dest (%d,%d,%d) moving %v; want живые значения",
 			rec.Heading, rec.DestX, rec.DestY, rec.DestZ, rec.Moving)

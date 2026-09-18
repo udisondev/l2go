@@ -2,6 +2,7 @@ package replica
 
 import (
 	"fmt"
+	"math/bits"
 	"sync/atomic"
 
 	"github.com/udisondev/l2go/internal/transport"
@@ -47,16 +48,22 @@ type Event struct {
 }
 
 // viewSet — view set наблюдателя: плотный слайс вечных id по слотам сегмента
-// (id на слоте — детект реюза слота; 0 — не член). Контракт оси 3: доступ на
-// пару — array-indexed по слоту.
+// (id на слоте — детект реюза слота; 0 — не член) и битмап членства по
+// слотам: чистка хвоста обходит СЛОВА битмапа (нулевые слова скипаются —
+// стоимость O(|view|/64 + |view|), не O(слот-пространства)). Контракт оси 3:
+// доступ на пару — array-indexed по слоту.
 type viewSet struct {
-	ids []transport.EntityID
+	ids  []transport.EntityID
+	bits []uint64
 }
 
-// Join — событийный join у владельца наблюдателя. Step вычисляет и стадирует
-// диффы (view НЕ мутирует), Apply применяет стадинг; порядок у владельца:
-// Step → компоновка кадров → Apply → merge кадров (реестр P3.8, решение 2).
-// Только горутина владельца.
+// Join — событийный join у владельца наблюдателя: окно 3×3 ячейки вокруг
+// наблюдателя вместо всего мира (стоимость детерминирована от толпы вне
+// окна с точностью до бинарного поиска сегментов), событийный dirty-детект
+// в пределах окна и единая чистка хвоста view по сидам слотов. Step
+// вычисляет и стадирует диффы (view НЕ мутирует), Apply применяет стадинг;
+// порядок у владельца: Step → компоновка кадров → Apply → merge кадров
+// (реестр P3.8, решение 2). Только горутина владельца.
 type Join struct {
 	cfg        JoinConfig
 	views      map[transport.EntityID]*viewSet
@@ -71,9 +78,17 @@ type Join struct {
 	ForcePanicInApply atomic.Bool
 }
 
-// NewJoin создаёт join с конфигурацией радиусов.
-func NewJoin(cfg JoinConfig) *Join {
-	return &Join{cfg: cfg, views: make(map[transport.EntityID]*viewSet)}
+// NewJoin создаёт join с конфигурацией радиусов. Фабрик-инвариант
+// cellSize ≥ Exit: гистерезисное кольцо (Enter, Exit] обязано целиком
+// помещаться в окно 3×3 — иначе член за Exit остаётся в окне соседних
+// клеток и осциллирует при тюнинге сетки (фаза 6); нарушение — ошибка
+// конструирования.
+func NewJoin(grid Grid, cfg JoinConfig) (*Join, error) {
+	if size := grid.cellSize(); size < int64(cfg.Exit) {
+		return nil, fmt.Errorf("replica: NewJoin: cellSize %d < Exit %d: гистерезисное кольцо не помещается в окно 3×3",
+			size, cfg.Exit)
+	}
+	return &Join{cfg: cfg, views: make(map[transport.EntityID]*viewSet)}, nil
 }
 
 // Step обрабатывает dirty-манифест блоба × наблюдателей и возвращает события
@@ -118,14 +133,19 @@ func (j *Join) Apply() {
 		for ev.slot >= len(cur.ids) {
 			cur.ids = append(cur.ids, 0)
 		}
+		for words := ev.slot/64 + 1; words > len(cur.bits); {
+			cur.bits = append(cur.bits, 0)
+		}
 		switch ev.Kind {
 		case EventIntroduce:
 			cur.ids[ev.slot] = ev.Target.Entity
+			bitMark(cur.bits, ev.slot)
 		case EventRemove:
 			// сверка вечного id: слот мог быть реюзнут новыми жильцом (эмиты
 			// Remove(старого) и Introduce(нового) в любом порядке)
 			if cur.ids[ev.slot] == ev.Target.Entity {
 				cur.ids[ev.slot] = 0
+				cur.bits[ev.slot/64] &^= 1 << (uint(ev.slot) % 64)
 			}
 		case EventUpdate:
 			// членство не меняется; last-known не хранится — compose фазы 3
@@ -135,15 +155,14 @@ func (j *Join) Apply() {
 	j.staging = j.staging[:0]
 }
 
-// obsRef — разрешение наблюдателя на время шага: слот и запись в сегменте
-// вычисляются РАЗ (хеш-lookup только здесь); доступ на пару далее —
-// array-indexed по слоту (контракт оси 3: хеш на пару запрещён).
+// obsRef — разрешение наблюдателя на время шага: слот и запись вычисляются
+// РАЗ (хеш-lookup только здесь); доступ на пару далее — array-indexed по
+// слоту (контракт оси 3: хеш на пару запрещён).
 type obsRef struct {
-	o       Observer
-	slot    int
-	rec     *Record
-	v       *viewSet
-	covered bool // пара покрыта полным проходом — dirty-цикл пропускает
+	o    Observer
+	slot int
+	rec  *Record
+	v    *viewSet
 }
 
 // resolveObs — разрешение наблюдателей шага: слот, запись и view-указатель
@@ -153,13 +172,13 @@ func resolveObs(j *Join, obs []Observer, blob *Blob) []obsRef {
 	refs := make([]obsRef, len(obs))
 	for i, o := range obs {
 		refs[i] = obsRef{o: o, slot: -1, v: j.views[o.Entity]}
-		slot, ok := blob.slots[o.Entity]
-		if !ok || slot >= len(blob.seg.records) {
+		slot, ok := blob.slotOf[o.Entity]
+		if !ok || slot >= len(blob.slotPos) || blob.slotPos[slot] < 0 {
 			continue
 		}
-		rec := &blob.seg.records[slot]
+		rec := &blob.records[blob.slotPos[slot]]
 		if rec.Entity != o.Entity {
-			continue
+			continue // слот реюзнут другим жильцом
 		}
 		refs[i].slot = slot
 		refs[i].rec = rec
@@ -169,63 +188,33 @@ func resolveObs(j *Join, obs []Observer, blob *Blob) []obsRef {
 
 // stepEvents — событийный путь (базы поколений согласованы). Наблюдатели
 // новорождённые (view нет) и двинувшиеся (слот changed) покрываются ТОЛЬКО
-// своим полным проходом — dirty-цикл их пропускает: каждая пара обрабатывается
-// ровно один раз, дедуп-бухгалтерия не нужна.
+// своим полным проходом окна — dirty-цикл им не нужен: каждая пара
+// обрабатывается ровно один раз, дедуп-бухгалтерия не нужна. Dirty-детект и
+// удержание — по слотам сегментов окна; единая чистка хвоста (в) — для
+// каждого наблюдателя с view: источник Remove по слотовым признакам (вне
+// окна / свободный слот / чужой жилец) — деспавн и реюз ловятся ею на любом
+// пути шага.
 func (j *Join) stepEvents(obs []Observer, blob *Blob) {
-	seg := &blob.seg
 	refs := resolveObs(j, obs, blob)
 	obsSet := make(map[transport.EntityID]struct{}, len(obs))
+	var win [9]CellID
 	for i := range refs {
 		obsSet[obs[i].Entity] = struct{}{}
-		if refs[i].slot < 0 {
+		ref := &refs[i]
+		if ref.slot < 0 {
 			continue // без записи в сегменте пары не разрешаются
 		}
-		// newborn (view нет) и двинувшийся — полный проход; сам view-set
-		// создаётся ТОЛЬКО применением стадинга в Apply: паника между Step и
-		// Apply не оставляет «пустого скелета», слепящего новорождённого
-		// (следующий Step снова видит его новорождённым)
-		if refs[i].v == nil || bitHas(seg.changed, refs[i].slot) {
-			j.fullPass(refs[i], blob, false)
-			refs[i].covered = true
+		// newborn (view нет): сам view-set создаётся ТОЛЬКО применением
+		// стадинга в Apply: паника между Step и Apply не оставляет «пустого
+		// скелета», слепящего новорождённого (следующий Step снова видит его
+		// новорождённым)
+		n := windowInto(ref.rec.Cell, &win)
+		if ref.v == nil || bitHas(blob.changed, ref.slot) {
+			j.fullPass(*ref, blob, win[:n], false)
+		} else {
+			j.dirtyWindow(*ref, blob, win[:n])
 		}
-	}
-	// dirty-слоты × обычные наблюдатели, obs-major (внешний цикл —
-	// наблюдатели, внутренний — слоты): события наблюдателя контигуальны в
-	// staging — Apply резолвит view при смене наблюдателя, без хеша на пару
-	// (ось 3). Порядок битов слота: gone → born → changed (реюз слота:
-	// Remove прежнего жильца раньше ввода нового)
-	for i := range refs {
-		ref := &refs[i]
-		if ref.covered || ref.slot < 0 || ref.v == nil {
-			continue
-		}
-		v := ref.v
-		for slot := range seg.records {
-			gone := bitHas(seg.gone, slot)
-			born := bitHas(seg.born, slot)
-			changed := bitHas(seg.changed, slot)
-			if !gone && !born && !changed {
-				continue
-			}
-			if gone && slot < len(v.ids) && v.ids[slot] != 0 {
-				// ушедший жилец идентифицируется вечным id из view (пейлоад
-				// недоступен — DeleteObject нуждается только в id)
-				j.emit(Event{Obs: ref.o, Target: Record{Entity: v.ids[slot]}, Kind: EventRemove, slot: slot})
-			}
-			rec := seg.records[slot]
-			if rec.Entity == 0 || rec.Entity == ref.o.Entity {
-				continue
-			}
-			member := slot < len(v.ids) && v.ids[slot] == rec.Entity
-			switch {
-			case (born || changed) && !member && inEnter(ref.rec, &rec, j.cfg):
-				j.emit(Event{Obs: ref.o, Target: rec, Kind: EventIntroduce, slot: slot})
-			case changed && member && (beyondExit(ref.rec, &rec, j.cfg) || !Visible(ref.rec.Flags, rec.Flags)):
-				j.emit(Event{Obs: ref.o, Target: rec, Kind: EventRemove, slot: slot})
-			case changed && member:
-				j.emit(Event{Obs: ref.o, Target: rec, Kind: EventUpdate, slot: slot})
-			}
-		}
+		j.cleanupTail(*ref, blob)
 	}
 	// дроп view наблюдателей, отсутствующих и в obs, и в блобе (умерли/ушли);
 	// Leaving-наблюдатель (не в obs, жив в блобе) view удерживает до Retire
@@ -233,58 +222,141 @@ func (j *Join) stepEvents(obs []Observer, blob *Blob) {
 		if _, live := obsSet[ent]; live {
 			continue
 		}
-		if _, inBlob := blob.slots[ent]; !inBlob {
+		if _, inBlob := blob.slotOf[ent]; !inBlob {
 			delete(j.views, ent)
 		}
 	}
 }
 
-// fullPass — полный проход пар наблюдателя: Introduce всем в членстве
-// (при fullEmit — включая уже членов: повторные вводы безвредны по канону —
-// примирение), Remove всем членам, покинувшим членство или сегмент.
-func (j *Join) fullPass(ref obsRef, blob *Blob, fullEmit bool) {
-	if ref.slot < 0 {
-		return
+// dirtyWindow — событийный dirty-цикл по слотам сегментов окна: вводы
+// (Enter/born), удержание (beyondExit/!Visible), апдейты (changed). Слоты
+// вне окна не итерируются — стоимость детерминирована от толпы вне окна.
+func (j *Join) dirtyWindow(ref obsRef, blob *Blob, win []CellID) {
+	v := ref.v
+	for _, c := range win {
+		seg, ok := blob.segmentOf(c)
+		if !ok {
+			continue
+		}
+		for k := seg.slotOff; k < seg.slotOff+seg.slotLen; k++ {
+			slot := blob.slots[k]
+			born := bitHas(blob.born, slot)
+			changed := bitHas(blob.changed, slot)
+			if !born && !changed {
+				continue
+			}
+			rec := &blob.records[k]
+			if rec.Entity == ref.o.Entity {
+				continue
+			}
+			member := slot < len(v.ids) && v.ids[slot] == rec.Entity
+			switch {
+			case !member && inEnter(ref.rec, rec, j.cfg):
+				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot})
+			case member && changed && (beyondExit(ref.rec, rec, j.cfg) || !Visible(ref.rec.Flags, rec.Flags)):
+				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventRemove, slot: slot})
+			case member && changed:
+				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventUpdate, slot: slot})
+			}
+		}
 	}
-	seg := &blob.seg
+}
+
+// fullPass — полный проход пар окна: Introduce всем в членстве (при
+// fullEmit — включая уже членов: повторные вводы безвредны по канону —
+// примирение), Remove членам за Exit/невидимым. Дистанционный выход и
+// невидимость — здесь (гистерезисный случай «обе клетки в окне»); чистка
+// хвоста по слотовым признакам — отдельной проходкой cleanupTail.
+func (j *Join) fullPass(ref obsRef, blob *Blob, win []CellID, fullEmit bool) {
 	empty := viewSet{}
 	v := j.views[ref.o.Entity]
 	if v == nil {
-		v = &empty // newborn: членства нет — ввод всех в enter-радиусе
+		v = &empty // newborn: членства нет — ввод всех в enter-радиусе окна
 	}
-	for slot := range seg.records {
-		rec := &seg.records[slot]
-		if rec.Entity == 0 || rec.Entity == ref.o.Entity {
+	for _, c := range win {
+		seg, ok := blob.segmentOf(c)
+		if !ok {
 			continue
 		}
-		member := slot < len(v.ids) && v.ids[slot] == rec.Entity
-		switch {
-		case member:
-			// удержание: выход только за exit-радиус (гистерезис) или предикат
-			if beyondExit(ref.rec, rec, j.cfg) || !Visible(ref.rec.Flags, rec.Flags) {
-				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventRemove, slot: slot})
-			} else if fullEmit {
-				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot}) // повторный ввод — примирение
-			} else if bitHas(seg.changed, slot) {
-				// изменившаяся цель члена: полный проход — единственная точка
-				// обработки пар covered-наблюдателя (dirty-цикл его скипает) —
-				// апдейт движения здесь, иначе одновременное движение
-				// наблюдателя и цели теряет стрим пары
-				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventUpdate, slot: slot})
+		for k := seg.slotOff; k < seg.slotOff+seg.slotLen; k++ {
+			slot := blob.slots[k]
+			rec := &blob.records[k]
+			if rec.Entity == ref.o.Entity {
+				continue
 			}
-		case inEnter(ref.rec, rec, j.cfg):
-			j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot})
+			member := slot < len(v.ids) && v.ids[slot] == rec.Entity
+			switch {
+			case member:
+				// удержание: выход только за exit-радиус (гистерезис) или предикат
+				if beyondExit(ref.rec, rec, j.cfg) || !Visible(ref.rec.Flags, rec.Flags) {
+					j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventRemove, slot: slot})
+				} else if fullEmit {
+					j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot}) // повторный ввод — примирение
+				} else if bitHas(blob.changed, slot) {
+					// изменившаяся цель члена: полный проход — единственная точка
+					// обработки пар covered-наблюдателя — апдейт движения здесь,
+					// иначе одновременное движение наблюдателя и цели теряет стрим пары
+					j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventUpdate, slot: slot})
+				}
+			case inEnter(ref.rec, rec, j.cfg):
+				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot})
+			}
 		}
 	}
-	// члены view за пределами нового сегмента (слоты усохли/заменены) — Remove
-	for slot := range v.ids {
-		if v.ids[slot] == 0 {
+}
+
+// cleanupTail — единая чистка хвоста view: единственный источник Remove по
+// слотовым признакам. Член view легитимен, пока его слот несёт того же
+// жильца в клетке окна; иначе (вне окна — цель за пределами окна обязана
+// быть за Exit; свободный слот — деспавн; чужой жилец — реюз слота) ровно
+// один Remove по вечному id из view. Обход — по словам битмапа членства
+// (нулевые слова пропущены): стоимость O(|view|), не O(слот-пространства).
+// Двойной Remove за шаг исключён структурно: дистанционные случаи — только
+// в dirty/fullPass по занятым слотам окна, слотовые — только здесь.
+func (j *Join) cleanupTail(ref obsRef, blob *Blob) {
+	v := j.views[ref.o.Entity]
+	if v == nil {
+		return // newborn: хвоста нет
+	}
+	for w, word := range v.bits {
+		if word == 0 {
 			continue
 		}
-		if slot >= len(seg.records) || seg.records[slot].Entity != v.ids[slot] {
+		for word != 0 {
+			b := bits.TrailingZeros64(word)
+			word &^= 1 << uint(b)
+			slot := w*64 + int(b)
+			if seatInWindow(blob, slot, v.ids[slot], ref.rec.Cell) {
+				continue
+			}
 			j.emit(Event{Obs: ref.o, Target: Record{Entity: v.ids[slot]}, Kind: EventRemove, slot: slot})
 		}
 	}
+}
+
+// seatInWindow — легитимность члена: слот занят тем же вечным id в клетке
+// окна наблюдателя (смежность клеток — арифметика декодированных осей,
+// константа).
+func seatInWindow(blob *Blob, slot int, id transport.EntityID, obsCell CellID) bool {
+	if slot >= len(blob.seatBySlot) {
+		return false // слот усох вместе с населением
+	}
+	st := blob.seatBySlot[slot]
+	if st.cell == cellInvalid || st.ent != id {
+		return false // деспавн либо реюз слота новым жильцом
+	}
+	return cellsAdjacent(st.cell, obsCell)
+}
+
+// cellsAdjacent — обе клетки в окне 3×3 друг друга (оси 0..0x7FFF —
+// декодирование без знака).
+func cellsAdjacent(a, b CellID) bool {
+	dx := int32(a>>16) - int32(b>>16)
+	if dx > 1 || dx < -1 {
+		return false
+	}
+	dy := int32(a&0xFFFF) - int32(b&0xFFFF)
+	return dy <= 1 && dy >= -1
 }
 
 // inEnter — правило ввода пары: не self ∧ предикат ∧ d²≤Enter².
@@ -329,7 +401,8 @@ func (j *Join) emit(ev Event) {
 }
 
 // reconcile — примирительный полный проход (детект BaseGen ≠ appliedGen):
-// полный эмит всем наблюдателям (дубли канон-толерантны), дроп view умерших.
+// полный эмит всем наблюдателям (дубли канон-толерантны) + чистка хвоста
+// (в) — примирение обязано доезжать и слотовые удаления, дроп view умерших.
 func (j *Join) reconcile(obs []Observer, blob *Blob) {
 	alive := make(map[transport.EntityID]struct{}, len(obs))
 	for _, o := range obs {
@@ -339,15 +412,18 @@ func (j *Join) reconcile(obs []Observer, blob *Blob) {
 		if _, live := alive[ent]; live {
 			continue
 		}
-		if _, inBlob := blob.slots[ent]; !inBlob {
+		if _, inBlob := blob.slotOf[ent]; !inBlob {
 			delete(j.views, ent)
 		}
 	}
 	refs := resolveObs(j, obs, blob)
+	var win [9]CellID
 	for i := range refs {
 		if refs[i].slot < 0 {
 			continue
 		}
-		j.fullPass(refs[i], blob, true)
+		n := windowInto(refs[i].rec.Cell, &win)
+		j.fullPass(refs[i], blob, win[:n], true)
+		j.cleanupTail(refs[i], blob)
 	}
 }

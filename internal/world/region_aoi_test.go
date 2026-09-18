@@ -305,13 +305,14 @@ func TestRegionAdvisoryReadsLoggedPerPortion(t *testing.T) {
 	resident := spawnResident(t, r, 100)
 	r.step()
 	r.advWindow = true // эмуляция потребителя внутри шага (до LogStep)
+	cell := r.grid.CellOf(0, 0)
 	for range 3 {
-		if _, ok := r.adv.Snapshot(0, resident); !ok {
+		if _, ok := r.adv.Snapshot(cell, resident); !ok {
 			t.Fatalf("чтение резидента %d не состоялось", resident)
 		}
 	}
 	// промах — тоже чтение: логируется наравне с попаданием
-	r.adv.Snapshot(0, resident+999)
+	r.adv.Snapshot(cell, resident+999)
 
 	r.step()
 	if err := r.log.Close(); err != nil { // bufio-буфер: сброс перед перечитанием
@@ -484,12 +485,13 @@ func TestRegionBlobCommitOnlyInPublishPhase(t *testing.T) {
 	h.r.forcePanic.Store(uint32(phaseB))
 	h.enterConnRaw(8, mkRecAt("bob", "Bob", -71338, 258271))
 	waitCond(t, h.r, func(st RegionStats) bool { return st.Failed >= 1 && st.Residents == 2 })
-	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, 8))); ok {
+	harnessCell := h.r.grid.CellOf(-71338, 258271)
+	if _, ok := h.r.pub.Read(harnessCell, transport.EntityID(playerEntity(h, 8))); ok {
 		t.Fatalf("публикация до завершения шага: Bob читается в закоммиченном")
 	}
 	h.r.forcePanic.Store(0)
 	waitTick(t, h.r)
-	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, 8))); !ok {
+	if _, ok := h.r.pub.Read(harnessCell, transport.EntityID(playerEntity(h, 8))); !ok {
 		t.Fatalf("после успешного шага Bob не закоммичен")
 	}
 }
@@ -541,10 +543,11 @@ func TestRegionCompensatingBirthsRetireBlob(t *testing.T) {
 	h.enterConnRaw(9, mkRecAt("carol", "Carol", -71338, 258271))
 	waitCond(t, h.r, func(st RegionStats) bool { return st.Residents == 2 })
 	waitTick(t, h.r)
-	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, 9))); !ok {
+	cell := h.r.grid.CellOf(-71338, 258271)
+	if _, ok := h.r.pub.Read(cell, transport.EntityID(playerEntity(h, 9))); !ok {
 		t.Fatalf("born-состав не виден: carol нет в блобе")
 	}
-	if _, ok := h.r.pub.Read(0, transport.EntityID(playerEntity(h, 8))); ok {
+	if _, ok := h.r.pub.Read(cell, transport.EntityID(playerEntity(h, 8))); ok {
 		t.Fatalf("gone-состав не виден: bob остался в блобе")
 	}
 	_, dels := objIDs(h.pushes)
