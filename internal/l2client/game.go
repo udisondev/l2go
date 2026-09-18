@@ -473,6 +473,7 @@ func (gc *GameClient) handleFrame(f []byte) {
 	case protocol.OpCharSelected:
 		if v, ok := protocol.NewCharSelectedView(f); ok {
 			if _, ok2 := v.Name(); ok2 {
+				//Q: Почему так много строковых литероалов особенно в этом пакете, все это должно быть константами в соответствующих пакетах, например в protocol
 				name, fields, typed = "CHAR_SELECTED", charSelectedFields(v), true
 			}
 		}
@@ -481,6 +482,7 @@ func (gc *GameClient) handleFrame(f []byte) {
 		if v, ok := protocol.NewUserInfoView(f); ok {
 			nm, _ := v.Name()
 			name, typed = "USER_INFO", true
+			//Q: Почему мы тут что-то руками собираем? Это должно собираться в protocol, посмотри как ответы собираются в udison/interlude это должны быть функции.
 			fields = []Field{
 				{K: "name", V: Quote(nm)},
 				{K: "objID", V: num32(v.ObjID())},
