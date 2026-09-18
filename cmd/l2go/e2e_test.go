@@ -142,8 +142,9 @@ type e2eEnv struct {
 	persist string // каталог chars GS
 }
 
-// startE2E — полный контур с ускоренными тиками (hz) и коротким grace.
-func startE2E(t *testing.T, hz, graceTicks int) *e2eEnv {
+// startE2E — полный контур с ускоренными тиками (hz) и коротким grace;
+// npc=true — разворачивание NPC-населения стартовой окрестности (P3.10).
+func startE2E(t *testing.T, hz, graceTicks int, npc ...bool) *e2eEnv {
 	t.Helper()
 
 	// mTLS-материал стыка (ed25519, миллисекунды).
@@ -195,6 +196,7 @@ func startE2E(t *testing.T, hz, graceTicks int) *e2eEnv {
 	t.Cleanup(func() { _ = lsLn.Close() })
 
 	gsPersist := t.TempDir()
+	npcDeploy := len(npc) > 0 && npc[0]
 	srv, err := bootstrap(config{
 		Addr: "127.0.0.1:0", Hz: hz,
 		PersistDir:     gsPersist,
@@ -205,6 +207,10 @@ func startE2E(t *testing.T, hz, graceTicks int) *e2eEnv {
 		MaxConns:       32,
 		GraceTicks:     graceTicks,
 		SaveRetryTicks: 2,
+		NPCCenterX:     int32(persist.HumanFighter.StartX),
+		NPCCenterY:     int32(persist.HumanFighter.StartY),
+		NPCRadius:      20000,
+		NPCDeployOn:    npcDeploy,
 	})
 	if err != nil {
 		t.Fatalf("bootstrap: %v", err)
@@ -1023,5 +1029,108 @@ func TestE2EJoinCarriesLiveHeading(t *testing.T) {
 	line := waitForLine(t, bob.out, "CHAR_INFO name=\"Botturna\"", 3*time.Second)
 	if got := parseCoord(t, line, "heading"); got != want {
 		t.Errorf("join CharInfo heading = %d; want %d (живой поворот записи)", got, want)
+	}
+}
+
+// npcInfoLines — строки трафик-лога с кадрами NPC_INFO (порядок сохранён).
+func npcInfoLines(out *syncBuffer) []string {
+	var lines []string
+	for _, ln := range strings.Split(out.String(), "\n") {
+		if strings.Contains(ln, "NPC_INFO") {
+			lines = append(lines, ln)
+		}
+	}
+	return lines
+}
+
+// npcInfoSet — множество objID из кадров NPC_INFO (t — для parseCoord).
+func npcInfoSet(t *testing.T, lines []string) map[int]bool {
+	set := make(map[int]bool)
+	for _, ln := range lines {
+		if v := parseCoord(t, ln, "objID"); v != 0 {
+			set[v] = true
+		}
+	}
+	return set
+}
+
+// TestE2ENpcInfoRadiusOnly — вход в развёрнутой толпе: NpcInfo приходят
+// ровно NPC стартовой окрестности (6 синтетики), каждый — в enter-радиусе
+// 3500 от стартовой точки; первый NPC_INFO строго после слитка USER_INFO.
+func TestE2ENpcInfoRadiusOnly(t *testing.T) {
+	env := startE2E(t, 10, 4, true)
+	s := enterWorld(t, env, "npcguy")
+	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+	deadline := time.Now().Add(5 * time.Second)
+	var lines []string
+	for {
+		lines = npcInfoLines(s.out)
+		if len(lines) >= 6 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(lines) != 6 {
+		t.Fatalf("NPC_INFO кадров = %d; want 6 (стартовая окрестность синтетики)", len(lines))
+	}
+	const enter = 3500
+	for _, ln := range lines {
+		x, y := parseCoord(t, ln, "x")-persist.HumanFighter.StartX,
+			parseCoord(t, ln, "y")-persist.HumanFighter.StartY
+		if x*x+y*y > enter*enter {
+			t.Errorf("NPC_INFO вне enter-радиуса: x=%d y=%d", x, y)
+		}
+	}
+	// Порядок: первый NPC_INFO строго после слитка USER_INFO.
+	uiIdx, npcIdx := strings.Index(s.out.String(), "USER_INFO"), strings.Index(s.out.String(), "NPC_INFO")
+	if uiIdx < 0 || npcIdx < uiIdx {
+		t.Errorf("первый NPC_INFO (%d) раньше USER_INFO (%d)", npcIdx, uiIdx)
+	}
+}
+
+// TestE2EReenterNpcSetIdenticalById — логаут и повторный вход: набор NpcInfo
+// идентичен по objID (NPC не умирают, ID монотонны — структурная
+// идентичность, сид разворота не участвует).
+func TestE2EReenterNpcSetIdenticalById(t *testing.T) {
+	env := startE2E(t, 10, 4, true)
+	s := enterWorld(t, env, "reenter")
+	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+	deadline := time.Now().Add(5 * time.Second)
+	var first []string
+	for {
+		first = npcInfoLines(s.out)
+		if len(first) >= 6 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(first) != 6 {
+		t.Fatalf("первый набор NPC_INFO = %d; want 6", len(first))
+	}
+	if err := s.gc.Logout(); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	s2 := enterWorld(t, env, "reenter")
+	waitForLine(t, s2.out, "USER_INFO", 3*time.Second)
+	for {
+		if len(npcInfoLines(s2.out)) >= 6 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	second := npcInfoLines(s2.out)
+	if len(second) != 6 {
+		t.Fatalf("второй набор NPC_INFO = %d; want 6", len(second))
+	}
+	f, sec := npcInfoSet(t, first), npcInfoSet(t, second)
+	for id := range f {
+		if !sec[id] {
+			t.Errorf("NPC %d пропал из набора повторного входа", id)
+		}
+	}
+	for id := range sec {
+		if !f[id] {
+			t.Errorf("NPC %d появился в повторном входе (фантом)", id)
+		}
 	}
 }

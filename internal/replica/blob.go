@@ -18,8 +18,8 @@ const (
 
 // Record — полный пейлоад AoI-записи (значение): вечный ID, ячейка позиции,
 // кинематика (включая клампнутую цель движения — кадры P3.9 самодостаточны
-// пейлоадом события) и поля потребителя CharInfo. Поля по потребителю;
-// NpcInfo-поля дополнит P3.10.
+// пейлоадом события) и поля потребителей CharInfo/NpcInfo (примитивы:
+// ребро replica←data не открывается). Поля по потребителю.
 type Record struct {
 	Entity    transport.EntityID
 	Cell      CellID
@@ -40,6 +40,23 @@ type Record struct {
 	HairStyle int32
 	HairColor int32
 	Face      int32
+
+	// Поля NPC (NpcInfo, P3.10; нули у игроков — как Race у NPC):
+	// TemplateID — id шаблона датапака (display), скоростной блок и
+	// коллизии — из скина рождения.
+	TemplateID            int32
+	Title                 string
+	Attackable            bool
+	CollisionRadius       float64
+	CollisionHeight       float64
+	RunSpd                int32
+	WalkSpd               int32
+	SwimRunSpd            int32
+	SwimWalkSpd           int32
+	PAtkSpd               int32
+	MAtkSpd               int32
+	MoveMultiplier        float64
+	AttackSpeedMultiplier float64
 }
 
 // segment — SoA-сегмент одной ячейки: записи по плотным слотам (слот = индекс,

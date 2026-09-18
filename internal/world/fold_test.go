@@ -41,7 +41,7 @@ func TestFoldDeterministicBitExact(t *testing.T) {
 			13: nil,
 		}
 		for _, n := range ticks {
-			Fold(n, 1, stepRNG(1, n), st, ents, portions[n], nil, testRules(), emptyGeo)
+			Fold(n, 1, stepRNG(1, n), st, ents, portions[n], nil, testEnv(nil))
 		}
 		return st.Dump(ents)
 	}
@@ -56,14 +56,14 @@ func TestFoldDeterministicBitExact(t *testing.T) {
 func TestFoldSeedSensitivity(t *testing.T) {
 	st1, ents1 := &State{}, synthEntities(2)
 	st2, ents2 := &State{}, synthEntities(2)
-	Fold(100, 1, stepRNG(1, 100), st1, ents1, nil, nil, testRules(), emptyGeo)
-	Fold(100, 1, stepRNG(2, 100), st2, ents2, nil, nil, testRules(), emptyGeo)
+	Fold(100, 1, stepRNG(1, 100), st1, ents1, nil, nil, testEnv(nil))
+	Fold(100, 1, stepRNG(2, 100), st2, ents2, nil, nil, testEnv(nil))
 	if bytes.Equal(st1.Dump(ents1), st2.Dump(ents2)) {
 		t.Fatalf("другой (regionID, tick) дал тот же дамп: RNG не влияет на состояние")
 	}
 	// тот же регион, другой тик — тоже отличается
 	st3, ents3 := &State{}, synthEntities(2)
-	Fold(101, 1, stepRNG(1, 101), st3, ents3, nil, nil, testRules(), emptyGeo)
+	Fold(101, 1, stepRNG(1, 101), st3, ents3, nil, nil, testEnv(nil))
 	if bytes.Equal(st1.Dump(ents1), st3.Dump(ents3)) {
 		t.Fatalf("другой tick дал тот же дамп")
 	}
@@ -73,9 +73,9 @@ func TestFoldSeedSensitivity(t *testing.T) {
 // самопогашается (wrapping-add), Beat/Steps растут на каждый шаг.
 func TestFoldRepeatedTickDeltaZero(t *testing.T) {
 	st, ents := &State{}, synthEntities(1)
-	Fold(50, 1, stepRNG(1, 50), st, ents, nil, nil, testRules(), emptyGeo)
+	Fold(50, 1, stepRNG(1, 50), st, ents, nil, nil, testEnv(nil))
 	one := st.Noise
-	Fold(50, 0, stepRNG(1, 50), st, ents, nil, nil, testRules(), emptyGeo)
+	Fold(50, 0, stepRNG(1, 50), st, ents, nil, nil, testEnv(nil))
 	if st.Steps != 2 {
 		t.Errorf("Steps = %d; want 2", st.Steps)
 	}
@@ -97,7 +97,7 @@ func TestFoldCountsAndHeartbeat(t *testing.T) {
 		transport.Envelope{Kind: transport.KindAggro},
 		transport.Envelope{Kind: transport.KindAggro},
 		transport.Envelope{Kind: transport.KindEnterWorld},
-	), []AdvisoryIn{{Cell: 5, Entity: 11}}, testRules(), emptyGeo)
+	), []AdvisoryIn{{Cell: 5, Entity: 11}}, testEnv(nil))
 	if st.Letters != 3 {
 		t.Errorf("Letters = %d; want 3", st.Letters)
 	}

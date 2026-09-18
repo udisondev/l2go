@@ -106,6 +106,10 @@ const (
 	KindConnClose  // регион→шлюз «закрыть коннект»
 	KindConnBind   // регион→шлюз «игрок вошёл»: {connID, EntityID} — адрес ящика игрока
 
+	// Разворачивание NPC-населения из спавнов статики при старте региона
+	// (P3.10): отправитель и адресат — ctrl-ящик региона, payload — NPCDeployMsg.
+	KindDeployNPCs
+
 	kindSentinel // маркер конца реестра (не тип письма)
 )
 
@@ -123,7 +127,8 @@ func (k Kind) Class() Class {
 	case KindAggro, KindKillCredit, KindXP, KindControlEffect,
 		KindMemberStatus, KindServiceMsg, KindInstallAck, KindConfirmAck,
 		KindRetire, KindSeed, KindPersistRequest, KindPersistReply,
-		KindEnterWorld, KindLinkDead, KindConnClose, KindConnBind:
+		KindEnterWorld, KindLinkDead, KindConnClose, KindConnBind,
+		KindDeployNPCs:
 		return ClassReliable
 	case KindReserve, KindCommit, KindAbort, KindLootPickup, KindSpoil,
 		KindSweep, KindSuitcase:
@@ -137,7 +142,7 @@ func (k Kind) Class() Class {
 func (k Kind) Regional() bool {
 	switch k {
 	case KindSuitcase, KindInstallAck, KindConfirmAck, KindRetire, KindSeed,
-		KindEnterWorld, KindLinkDead:
+		KindEnterWorld, KindLinkDead, KindDeployNPCs:
 		return true
 	}
 	return false

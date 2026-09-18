@@ -27,6 +27,14 @@ type ConnRefMsg struct {
 	Conn uint64 `json:"conn"`
 }
 
+// NPCDeployMsg — контрольное письмо разворачивания NPC-населения
+// (KindDeployNPCs): срез спавнов статики — центр и радиус.
+type NPCDeployMsg struct {
+	CenterX int32 `json:"cx"`
+	CenterY int32 `json:"cy"`
+	Radius  int32 `json:"radius"`
+}
+
 // EncodeLetter кодирует контрольное письмо в байты конверта.
 func EncodeLetter(v any) ([]byte, error) {
 	return json.Marshal(v)

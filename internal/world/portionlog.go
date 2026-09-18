@@ -20,7 +20,7 @@ import (
 
 const (
 	portionMagic   = "PL32"
-	portionVersion = 3 // v3: сущность несёт отрезок движения и бакет игрока (P3.9)
+	portionVersion = 4 // v4: сущность несёт NPC-скин разворачивания населения (P3.10); v3 — отрезок движения и бакет игрока (P3.9)
 	flagPayloads   = 1
 
 	recStep  = 1
@@ -713,11 +713,36 @@ func parseEntity(c *parseCursor) (Entity, error) {
 			e.Transfers = append(e.Transfers, tr)
 		}
 	}
-	if c.byte() == 0 {
-		return e, c.err
+	if c.byte() != 0 {
+		e.Player, c.err = parsePlayer(c)
+		if c.err != nil {
+			return e, c.err
+		}
 	}
-	e.Player, c.err = parsePlayer(c)
+	if c.byte() != 0 {
+		e.Npc, c.err = parseNpc(c)
+	}
 	return e, c.err
+}
+
+// parseNpc — зеркало appendNpc.
+func parseNpc(c *parseCursor) (*NpcSkin, error) {
+	n := &NpcSkin{}
+	n.TemplateID = int32(int64(c.uvarint()))
+	n.Name = c.str()
+	n.Title = c.str()
+	n.Attackable = c.byte() != 0
+	n.CollisionRadius = math.Float64frombits(c.uvarint())
+	n.CollisionHeight = math.Float64frombits(c.uvarint())
+	n.RunSpd = int32(int64(c.uvarint()))
+	n.WalkSpd = int32(int64(c.uvarint()))
+	n.SwimRunSpd = int32(int64(c.uvarint()))
+	n.SwimWalkSpd = int32(int64(c.uvarint()))
+	n.PAtkSpd = int32(int64(c.uvarint()))
+	n.MAtkSpd = int32(int64(c.uvarint()))
+	n.MoveMultiplier = math.Float64frombits(c.uvarint())
+	n.AttackSpeedMultiplier = math.Float64frombits(c.uvarint())
+	return n, c.err
 }
 
 // parsePlayer — зеркало appendPlayer.

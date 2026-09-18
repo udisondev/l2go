@@ -8,12 +8,12 @@ import (
 
 func TestSpawnGolden(t *testing.T) {
 	st, rep := loadSynth(t)
-	if rep.Spawns != 6 {
-		t.Fatalf("Spawns = %d; want 6", rep.Spawns)
+	if rep.Spawns != 10 {
+		t.Fatalf("Spawns = %d; want 10", rep.Spawns)
 	}
 	sp := st.Spawns()
 	// Порядок детерминирован: путь файла, затем позиция.
-	wantNPC := []NpcID{30080, 20550, 20551, 20550, 29019, 80000}
+	wantNPC := []NpcID{30080, 20550, 20551, 20550, 29019, 80000, 30080, 20550, 20551, 20550}
 	for i, id := range wantNPC {
 		if sp[i].NpcID != id {
 			t.Errorf("spawns[%d].NpcID = %d; want %d (порядок файла)", i, sp[i].NpcID, id)
@@ -66,15 +66,15 @@ func TestSpawnGolden(t *testing.T) {
 
 func TestSpawnCounters(t *testing.T) {
 	_, rep := loadSynth(t)
-	if rep.Territories != 2 || rep.Spawns != 6 {
-		t.Errorf("Territories=%d Spawns=%d; want 2/6", rep.Territories, rep.Spawns)
+	if rep.Territories != 3 || rep.Spawns != 10 {
+		t.Errorf("Territories=%d Spawns=%d; want 3/10", rep.Territories, rep.Spawns)
 	}
-	if rep.NamedBlocks != 2 || rep.TerrOwnName != 1 || rep.DisabledFiles != 1 {
-		t.Errorf("NamedBlocks=%d TerrOwnName=%d DisabledFiles=%d; want 2/1/1",
+	if rep.NamedBlocks != 4 || rep.TerrOwnName != 1 || rep.DisabledFiles != 1 {
+		t.Errorf("NamedBlocks=%d TerrOwnName=%d DisabledFiles=%d; want 4/1/1",
 			rep.NamedBlocks, rep.TerrOwnName, rep.DisabledFiles)
 	}
-	if rep.WithoutHeading != 1 || rep.WithoutRespawnDelay != 1 {
-		t.Errorf("WithoutHeading=%d WithoutRespawnDelay=%d; want 1/1", rep.WithoutHeading, rep.WithoutRespawnDelay)
+	if rep.WithoutHeading != 3 || rep.WithoutRespawnDelay != 1 {
+		t.Errorf("WithoutHeading=%d WithoutRespawnDelay=%d; want 3/1", rep.WithoutHeading, rep.WithoutRespawnDelay)
 	}
 	if rep.FakePlayersSkipped != 1 {
 		t.Errorf("FakePlayersSkipped = %d; want 1 (npc 80000 без определения)", rep.FakePlayersSkipped)

@@ -29,4 +29,22 @@
 	<spawn name="FakePlayers">
 		<npc id="80000" x="83485" y="147998" z="-3407" heading="23509" respawnDelay="60" /> <!-- fake player: счётчик, не ошибка -->
 	</spawn>
+	<!-- Окрестность стартовой точки новичка (−71338, 258271): потребитель —
+	     e2e P3.10 (срез NPC дефолтного центра; полигоны целиком внутри enter
+	     3500 / целиком вне). -->
+	<spawn name="StartNear">
+		<npc id="30080" x="-70000" y="258000" z="-3104" heading="16384" respawnDelay="60" />
+		<npc id="20550" x="-70800" y="259000" z="-3104" count="2" respawnDelay="60" />
+	</spawn>
+	<spawn zone="start_terr">
+		<territory minZ="-3600" maxZ="-2800">
+			<node x="-72000" y="257000" />
+			<node x="-70000" y="257000" />
+			<node x="-70000" y="259000" />
+		</territory>
+		<npc id="20551" count="3" respawnDelay="22" />
+	</spawn>
+	<spawn name="StartFar">
+		<npc id="20550" x="150000" y="10000" z="-3000" respawnDelay="60" />
+	</spawn>
 </list>

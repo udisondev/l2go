@@ -93,6 +93,9 @@ type Entity struct {
 	Servants  [4]ServantSlot
 	Transfers []TransferRecord
 	Player    *Player
+	// Npc — скин NPC-шаблона (nil у игроков): снимок статики при рождении,
+	// после не меняется — потребитель NpcInfo (P3.10).
+	Npc *NpcSkin
 }
 
 // Suitcase — чемодан переезда: всё, что передаётся при смене владельца.

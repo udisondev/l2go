@@ -484,6 +484,11 @@ func (gc *GameClient) handleFrame(f []byte) {
 		if v, ok := protocol.NewCharInfoView(f); ok {
 			name, fields, typed = protocol.NameCharInfo, v.Fields(), true
 		}
+	case protocol.OpNpcInfo:
+		// NpcInfo — ввод NPC в известность (join AoI, P3.10).
+		if v, ok := protocol.NewNpcInfoView(f); ok {
+			name, fields, typed = protocol.NameNpcInfo, v.Fields(), true
+		}
 	case protocol.OpDeleteObject:
 		// DeleteObject — уход из известности (join AoI, P3.8).
 		if v, ok := protocol.NewDeleteObjectView(f); ok {

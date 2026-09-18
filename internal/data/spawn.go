@@ -44,6 +44,22 @@ func (t Territory) Set(key string) (string, bool) {
 	return v, ok
 }
 
+// Contains — принадлежность точки территории-исключению: NPoly-семантика
+// канона (NpcSpawnTerritory → ZoneNPoly) с нормализацией z; потребитель —
+// разворачивание спавнов (world), сверка по вычисленной гео-высоте.
+func (b BannedTerritory) Contains(x, y, z int32) bool {
+	if len(b.Nodes) < 3 {
+		return false
+	}
+	zlo, zhi := b.MinZ, b.MaxZ
+	if zlo > zhi {
+		zlo, zhi = zhi, zlo
+	}
+	minX, maxX, minY, maxY := polyBounds(b.Nodes)
+	return z >= zlo && z <= zhi &&
+		npolyContains(b.Nodes, minX, maxX, minY, maxY, x, y)
+}
+
 // Point — точка спавна; Heading −1 — «нет» (семантика канона).
 type Point struct {
 	X       int32

@@ -64,7 +64,7 @@ func portion(envs ...transport.Envelope) []Portion {
 }
 
 func fold1(tick Tick, st *State, ents []*Entity, envs ...transport.Envelope) StepResult {
-	return Fold(tick, 1, rand.New(rand.NewPCG(1, uint64(tick))), st, ents, portion(envs...), nil, testRules(), emptyGeo)
+	return Fold(tick, 1, rand.New(rand.NewPCG(1, uint64(tick))), st, ents, portion(envs...), nil, testEnv(nil))
 }
 
 func applyBirth(st *State, res StepResult) []*Entity {
@@ -544,7 +544,7 @@ func TestFoldEnterWorldBrokenCharJSON(t *testing.T) {
 		Kind:    transport.KindEnterWorld,
 		Payload: append([]byte(`{"conn":7,"account":"acc","char":`), []byte("{bad")...),
 	}
-	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, nil, portion(env), nil, testRules(), emptyGeo)
+	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, nil, portion(env), nil, testEnv(nil))
 	if len(res.Births) != 0 || st.DeadLetters != 1 {
 		t.Fatalf("битый Char: births=%d deadLetters=%d", len(res.Births), st.DeadLetters)
 	}
@@ -553,7 +553,7 @@ func TestFoldEnterWorldBrokenCharJSON(t *testing.T) {
 		Conn: 7, Account: "acc", Char: mustJSONChar(mkRec("other", "Vasya", 0))})
 	res2 := Fold(11, 1, rand.New(rand.NewPCG(1, 11)), st, nil,
 		portion(transport.Envelope{To: transport.Addr{Entity: 1}, FromID: 901,
-			Kind: transport.KindEnterWorld, Payload: body}), nil, testRules(), emptyGeo)
+			Kind: transport.KindEnterWorld, Payload: body}), nil, testEnv(nil))
 	if len(res2.Births) != 0 || st.DeadLetters != 2 {
 		t.Fatalf("чужой аккаунт записи: births=%d deadLetters=%d", len(res2.Births), st.DeadLetters)
 	}

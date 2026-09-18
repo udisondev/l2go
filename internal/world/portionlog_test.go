@@ -440,7 +440,7 @@ func TestPortionLogReplayMovementDigest(t *testing.T) {
 				portions[i] = Portion{Region: r.id, Tick: s.Tick, Envs: envs}
 			}
 			rng := rand.New(rand.NewPCG(uint64(r.id), uint64(s.Tick)))
-			Fold(s.Tick, s.Delta, rng, st, ents, portions, s.Advisory, rules, r.gm)
+			Fold(s.Tick, s.Delta, rng, st, ents, portions, s.Advisory, Env{Region: r.id, Rules: rules, GM: r.gm})
 			for _, br := range s.Births {
 				e := br.Ent
 				e.Owner = r.id // Spawn актора ставит владельца — зеркалим

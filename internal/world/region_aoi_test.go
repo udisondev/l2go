@@ -342,33 +342,63 @@ func TestAdvisorySeamPanicsAfterLogStep(t *testing.T) {
 	r.adv.Snapshot(0, transport.EntityID(1))
 }
 
-// Компоновка событий: игроку CharInfo (Crypt, objID=Base+Entity), NPC — счётчик
-// без кадров, Remove → DeleteObject, Update стоячей записи → StopMove (P3.9).
+// Компоновка событий: игроку CharInfo (Crypt, objID=Base+Entity), NPC —
+// NpcInfo (P3.10), Remove → DeleteObject, Update стоячей записи → StopMove.
 func TestComposeJoinEventKinds(t *testing.T) {
 	r := &Region{}
 	longName := strings.Repeat("Щ", 4096) // корнер: максимальное имя — размер кадра растёт, не паникует
 	player := replica.Record{Entity: 5, Kind: replica.RecordKindPlayer, Name: longName}
-	npc := replica.Record{Entity: 6, Kind: replica.RecordKindNPC}
+	npc := replica.Record{Entity: 6, Kind: replica.RecordKindNPC, TemplateID: 20550,
+		Name: "Орк", Title: "Разбойник", Attackable: true,
+		RunSpd: 140, WalkSpd: 60, SwimRunSpd: 140, SwimWalkSpd: 60,
+		PAtkSpd: 253, MAtkSpd: 333, MoveMultiplier: 1.0, AttackSpeedMultiplier: 1.1,
+		CollisionRadius: 13, CollisionHeight: 22.5}
 	pushes := r.composeJoin([]replica.Event{
 		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventIntroduce},
 		{Obs: replica.Observer{ConnID: 9}, Target: npc, Kind: replica.EventIntroduce},
 		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventRemove},
 		{Obs: replica.Observer{ConnID: 9}, Target: player, Kind: replica.EventUpdate},
 	})
-	if len(pushes) != 3 {
-		t.Fatalf("кадров = %d; want 3 (CharInfo + DeleteObject + StopMove)", len(pushes))
+	if len(pushes) != 4 {
+		t.Fatalf("кадров = %d; want 4 (CharInfo + NpcInfo + DeleteObject + StopMove)", len(pushes))
 	}
 	if pushes[0].Frame[0] != 0x03 || !pushes[0].Crypt || pushes[0].Client != 9 {
 		t.Fatalf("CharInfo-кадр: %+v", pushes[0])
 	}
-	if pushes[1].Frame[0] != 0x12 || !pushes[1].Crypt {
-		t.Fatalf("DeleteObject-кадр: %+v", pushes[1])
+	// NpcInfo: опкод, поля через View, Running-байт 118 == 0 (канон: не бежит).
+	if pushes[1].Frame[0] != 0x16 || !pushes[1].Crypt || pushes[1].Client != 9 {
+		t.Fatalf("NpcInfo-кадр: %+v", pushes[1])
 	}
-	if pushes[2].Frame[0] != 0x47 || pushes[2].Client != 9 || !pushes[2].Crypt {
-		t.Fatalf("StopMove-кадр стоячего апдейта: %+v", pushes[2])
+	view, ok := protocol.NewNpcInfoView(pushes[1].Frame)
+	if !ok {
+		t.Fatalf("NpcInfo-кадр не навигируется")
 	}
-	if r.npcIntroduceSkipped.Load() != 1 {
+	if got, want := view.ObjID(), int32(encode.ObjectIDBase+6); got != want {
+		t.Errorf("ObjID = %d; want %d", got, want)
+	}
+	if got, want := view.DisplayID(), int32(20550+1000000); got != want {
+		t.Errorf("DisplayID = %d; want %d", got, want)
+	}
+	if !view.Attackable() {
+		t.Errorf("Attackable = false; want true")
+	}
+	if got, ok := view.Name(); !ok || got != "Орк" {
+		t.Errorf("Name = %q, ok=%v; want Орк", got, ok)
+	}
+	if got, ok := view.Title(); !ok || got != "Разбойник" {
+		t.Errorf("Title = %q, ok=%v; want Разбойник", got, ok)
+	}
+	if pushes[1].Frame[118] != 0 {
+		t.Errorf("Running-байт = %d; want 0 (NPC не бежит, канон)", pushes[1].Frame[118])
+	}
+	if r.npcIntroduced.Load() != 1 {
 		t.Fatalf("NPC-ввод не посчитан")
+	}
+	if pushes[2].Frame[0] != 0x12 || !pushes[2].Crypt {
+		t.Fatalf("DeleteObject-кадр: %+v", pushes[2])
+	}
+	if pushes[3].Frame[0] != 0x47 || pushes[3].Client != 9 || !pushes[3].Crypt {
+		t.Fatalf("StopMove-кадр стоячего апдейта: %+v", pushes[3])
 	}
 }
 

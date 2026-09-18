@@ -9,6 +9,12 @@ package protocol
 // Опкод (связь с каталогом — TestConstantsMatchCatalog).
 const npcInfo = 0x16
 
+// OpNpcInfo — публичный опкод GS→C NpcInfo (лог l2client, e2e-ассерты).
+const OpNpcInfo = npcInfo
+
+// NameNpcInfo — имя кадра NpcInfo для трафик-лога.
+const NameNpcInfo = "NPC_INFO"
+
 // npcDisplayOffset — константа канона: wire displayId = шаблонный + 1 000 000.
 const npcDisplayOffset int32 = 1000000
 

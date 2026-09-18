@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync/atomic"
 
+	"github.com/udisondev/l2go/internal/data"
 	"github.com/udisondev/l2go/internal/encode"
 	"github.com/udisondev/l2go/internal/geo"
 	"github.com/udisondev/l2go/internal/persist"
@@ -61,6 +62,7 @@ type Region struct {
 	log     *PortionLog
 	pusher  FramePusher
 	gm      *geo.Map // гео мира: read-only статики, аргумент свёртки
+	static  *data.Static
 	rules   Rules
 	started atomic.Bool
 
@@ -115,7 +117,7 @@ type Region struct {
 	// атомик: пишется тест-горутиной при живом Run).
 	forcePanicPostApply atomic.Bool
 
-	npcIntroduceSkipped atomic.Uint64
+	npcIntroduced atomic.Uint64
 
 	// Буферы дрена — поля региона, переиспользуемые между шагами.
 	ctrlBatch []transport.Envelope
@@ -198,6 +200,38 @@ func (r *Region) Wire(gateway, pers transport.EntityID) error {
 		Gateway:        gateway,
 		From:           r.ctrlID,
 	}
+	return nil
+}
+
+// DeployNPCs — разворачивание NPC-населения при старте региона: сохраняет
+// статику (аргумент свёртки) и кладёт контрольное письмо разворота сам себе
+// слепым push через транспорт (И12). Однократно и строго до старта Run;
+// применение — первым шагом региона (drain контрольного ящика первым),
+// сид разворота — (regionID, tick шага). cfg среза — часть письма: реплей
+// воспроизводит разворот из лога порций (логи для реплея пишутся с
+// LogPayloads=true).
+func (r *Region) DeployNPCs(static *data.Static, cfg transport.NPCDeployMsg) error {
+	if r.started.Load() {
+		return fmt.Errorf("world: DeployNPCs после старта Run")
+	}
+	if r.static != nil {
+		return fmt.Errorf("world: DeployNPCs повторно")
+	}
+	if static == nil {
+		return fmt.Errorf("world: DeployNPCs без статики")
+	}
+	if cfg.Radius <= 0 {
+		return fmt.Errorf("world: DeployNPCs: радиус среза %d; want > 0", cfg.Radius)
+	}
+	body, err := transport.EncodeLetter(cfg)
+	if err != nil {
+		return fmt.Errorf("world: DeployNPCs: кодирование письма: %w", err)
+	}
+	r.static = static
+	r.reg.Send(transport.Envelope{
+		To: transport.Addr{Entity: r.ctrlID}, FromID: r.ctrlID,
+		Kind: transport.KindDeployNPCs, Payload: body,
+	})
 	return nil
 }
 
@@ -468,6 +502,18 @@ func (r *Region) recovered(p any) {
 	}
 	r.adviseBuf = r.adviseBuf[:0]
 	r.advWindow = false
+	// Письмо разворота однократно: паника после его дрена уничтожила пачку
+	// классово — население не развёрнуто навсегда, живой регион без NPC
+	// молчать не должен (F27 реестра P3.10).
+	if phase > phaseDrain && r.static != nil && !r.state.NPCDeployedOnce {
+		for _, env := range r.ctrlBatch {
+			if env.Kind == transport.KindDeployNPCs {
+				slog.Error("world: письмо разворота NPC потеряно паникой шага — население не развёрнуто (рестарт процесса)",
+					"region", r.id, "tick", r.stepTick)
+				break
+			}
+		}
+	}
 	if err := r.log.LogPanic(r.stepTick, phase); err != nil {
 		slog.Error("world: маркер паники не записан", "region", r.id, "err", err)
 	}
@@ -540,7 +586,8 @@ func (r *Region) step() {
 	r.curPhase = phaseFold
 	r.injectPanic(phaseFold)
 	rng := rand.New(rand.NewPCG(uint64(r.id), uint64(n)))
-	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf, r.rules, r.gm)
+	res := Fold(n, delta, rng, r.state, r.entsProj(), r.portions, r.adviseBuf,
+		Env{Region: r.id, Rules: r.rules, GM: r.gm, Static: r.static})
 	r.pendingPushes = append(r.pendingPushes, res.Pushes...)
 	// письма свёртки — в outbox сразу после Fold: переживают панику любой
 	// позднейшей фазы (надёжный класс, доставляются phaseB/backlog-ом)

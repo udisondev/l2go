@@ -14,6 +14,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -70,6 +72,13 @@ type config struct {
 	MaxConns       int
 	GraceTicks     int
 	SaveRetryTicks int
+	// NPCCenterX/Y, NPCRadius — срез разворачивания NPC-населения P3.10:
+	// центр по умолчанию — стартовая точка новичка (КТ-1: географию среза
+	// владелец утверждает по гео-покрытию).
+	NPCCenterX  int32
+	NPCCenterY  int32
+	NPCRadius   int32
+	NPCDeployOn bool
 	// RegisterTimeout — бюджет регистрации на LS (харнесс ускоряет).
 	RegisterTimeout time.Duration
 }
@@ -118,7 +127,7 @@ func bootstrap(cfg config) (*server, error) {
 	}
 
 	// Статика — только артефактом: XML-исходников на рантайм-пути нет.
-	_, gm, meta, _, err := artifact.LoadFile(cfg.ArtifactPath)
+	static, gm, meta, _, err := artifact.LoadFile(cfg.ArtifactPath)
 	if err != nil {
 		return nil, fmt.Errorf("l2go: артефакт %s: %w", cfg.ArtifactPath, err)
 	}
@@ -242,6 +251,21 @@ func bootstrap(cfg config) (*server, error) {
 		return nil, fmt.Errorf("l2go: whitelist персиста: %w", err)
 	}
 
+	// Разворачивание NPC-населения (P3.10): письмо кладётся до старта Run —
+	// применение первым шагом региона; конфиг среза едет в письме (реплей
+	// воспроизводит разворот из лога порций).
+	if cfg.NPCDeployOn {
+		if err := region.DeployNPCs(static, transport.NPCDeployMsg{
+			CenterX: cfg.NPCCenterX, CenterY: cfg.NPCCenterY, Radius: cfg.NPCRadius,
+		}); err != nil {
+			_ = link.Close()
+			_ = ln.Close()
+			un1()
+			un2()
+			return nil, fmt.Errorf("l2go: разворот NPC: %w", err)
+		}
+	}
+
 	s := &server{
 		cfg: cfg, reg: reg, metro: metro, region: region, actor: actor,
 		stage: stage, connS: connS, gw: gw, link: link,
@@ -349,8 +373,27 @@ func run(args []string) error {
 	link := fs.String("link", "127.0.0.1:9011", "адрес gRPC-стыка LoginServer (mTLS)")
 	tlsDir := fs.String("tls", "var/tls", "каталог mTLS-материала стыка")
 	maxConns := fs.Int("max-conns", 20000, "лимит одновременных коннектов")
+	npcCenter := fs.String("npc-center", "", "центр среза NPC \"x,y\" (пусто — стартовая точка новичка)")
+	npcRadius := fs.Int("npc-radius", 20000, "радиус среза NPC вокруг центра; 0 — без NPC-населения")
 	fs.Parse(args)
 	setupLog()
+
+	cx, cy := int32(persist.HumanFighter.StartX), int32(persist.HumanFighter.StartY)
+	if *npcCenter != "" {
+		parts := strings.SplitN(*npcCenter, ",", 2)
+		x, errX := strconv.ParseInt(parts[0], 10, 32)
+		y, errY := int64(0), error(nil)
+		if len(parts) == 2 {
+			y, errY = strconv.ParseInt(parts[1], 10, 32)
+		}
+		if len(parts) != 2 || errX != nil || errY != nil {
+			return fmt.Errorf("l2go: -npc-center %q: нужен формат \"x,y\" int32", *npcCenter)
+		}
+		cx, cy = int32(x), int32(y)
+	}
+	if *npcRadius < 0 {
+		return fmt.Errorf("l2go: -npc-radius %d: отрицательный радиус запрещён", *npcRadius)
+	}
 
 	srv, err := bootstrap(config{
 		Addr: *addr, Host: *host, Hz: *hz,
@@ -359,6 +402,10 @@ func run(args []string) error {
 		MaxConns:       *maxConns,
 		GraceTicks:     world.DefaultGraceTicks,
 		SaveRetryTicks: world.DefaultSaveRetryTicks,
+		NPCCenterX:     cx,
+		NPCCenterY:     cy,
+		NPCRadius:      int32(*npcRadius),
+		NPCDeployOn:    *npcRadius > 0,
 	})
 	if err != nil {
 		return err

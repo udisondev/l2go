@@ -4,9 +4,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"sort"
 
+	"github.com/udisondev/l2go/internal/data"
 	"github.com/udisondev/l2go/internal/geo"
 	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/protocol"
@@ -63,6 +65,16 @@ func (r Rules) valid() bool {
 		r.Persist != 0 && r.Gateway != 0 && r.From != 0
 }
 
+// Env — иммутабельное окружение шага (аргумент свёртки, как гео; заполняется
+// актором в Wire и DeployNPCs): регион, правила, гео и статика статики для
+// разворачивания NPC-населения (nil — письмо разворота уходит в dead-letter).
+type Env struct {
+	Region RegionID
+	Rules  Rules
+	GM     *geo.Map
+	Static *data.Static
+}
+
 // shadowEntity — материализованное актором рождение игрока: тень для решений
 // свёртки следующих шагов (ID присваивает Spawn; fold их не знает).
 type shadowEntity struct {
@@ -109,6 +121,10 @@ type State struct {
 	SpeedFlags         uint64 // флаги спидхака (токен-бакет ниже −SLACK)
 	SnapBacks          uint64 // коррекции ValidateLocation (дрейф/спидхак/телепорт)
 	CannotMoveStanding uint64 // CannotMoveAnymore вне движения: применён как стоячий поворот (метрика)
+
+	NPCDeployedOnce bool   // письмо разворота населения принято (однократность)
+	NPCDeployed     uint64 // развёрнутых записей спавнов (не сущностей: count внутри записи)
+	NPCSkipped      uint64 // пропущенные записи (без шаблона/территории, менеджерные типы, лимит попыток)
 }
 
 // newState — состояние с инициализированными картами.
@@ -146,9 +162,9 @@ func (st *State) CleanBirth(account string, conn uint64, id transport.EntityID) 
 // запись-отклонение от ADR-0002 §5 (A→B) ради латентности старта: канон
 // начинает движение при обработке письма, A→B добавил бы 100 мс; кредит ≤1
 // тика детерминирован и одинаков в прогоне и реплее. Чистота: fold не читает
-// ничего, кроме аргументов (гео — аргумент, глобал запрещён); мутация
-// state/ents — владение актора.
-func Fold(tick Tick, delta uint64, rng *rand.Rand, st *State, ents []*Entity, portions []Portion, adv []AdvisoryIn, rules Rules, gm *geo.Map) StepResult {
+// ничего, кроме аргументов (гео и статика — аргументы, глобал запрещён);
+// мутация state/ents — владение актора.
+func Fold(tick Tick, delta uint64, rng *rand.Rand, st *State, ents []*Entity, portions []Portion, adv []AdvisoryIn, env Env) StepResult {
 	st.Steps++
 	st.LastDelta = delta
 	st.Noise += rng.Uint64()
@@ -167,16 +183,16 @@ func Fold(tick Tick, delta uint64, rng *rand.Rand, st *State, ents []*Entity, po
 	// Письма применяются в порядке дрена; рождения этого шага — локально:
 	// LinkDead/повторный вход того же аккаунта в той же пачке находят своё
 	// нерождённое рождение (тени Accounts материализуются актором позже).
-	mov := &movement{gm: gm, budget: moveLettersCap}
+	mov := &movement{gm: env.GM, budget: moveLettersCap}
 	pending := newPendingEnters()
 	for i := range portions {
 		for j := range portions[i].Envs {
-			foldLetter(tick, st, ents, &portions[i].Envs[j], rules, &res, pending, mov)
+			foldLetter(tick, st, ents, &portions[i].Envs[j], env, &res, pending, mov)
 		}
 	}
-	foldAdvance(delta, rules, ents, &res)
-	foldExpiries(tick, st, ents, rules, &res)
-	foldRetries(tick, st, rules, &res)
+	foldAdvance(delta, env.Rules, ents, &res)
+	foldExpiries(tick, st, ents, env.Rules, &res)
+	foldRetries(tick, st, env.Rules, &res)
 	for _, e := range ents {
 		e.Beat = tick
 	}
@@ -209,22 +225,28 @@ func newPendingEnters() *pendingEnters {
 }
 
 // foldLetter — одно письмо шага по типу. Отправитель зеркально сверяется с
-// адресами Rules (валидация на применении у владельца: KindPersistReply —
-// только персист, контрольные шлюза — только шлюз).
-func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, rules Rules, res *StepResult, pending *pendingEnters, mov *movement) {
+// адресами Env.Rules (валидация на применении у владельца: KindPersistReply —
+// только персист, контрольные шлюза — только шлюз, разворот населения —
+// только сам регион).
+func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, e Env, res *StepResult, pending *pendingEnters, mov *movement) {
 	switch env.Kind {
 	case transport.KindEnterWorld, transport.KindLinkDead:
-		if env.FromID != rules.Gateway {
+		if env.FromID != e.Rules.Gateway {
+			st.DeadLetters++
+			return
+		}
+	case transport.KindDeployNPCs:
+		if env.FromID != e.Rules.From {
 			st.DeadLetters++
 			return
 		}
 	case transport.KindPersistReply:
-		if env.FromID != rules.Persist {
+		if env.FromID != e.Rules.Persist {
 			st.DeadLetters++
 			return
 		}
 	case transport.KindClientFrame:
-		if env.FromID != rules.Gateway {
+		if env.FromID != e.Rules.Gateway {
 			st.DroppedFrames++
 			return
 		}
@@ -243,14 +265,39 @@ func foldLetter(tick Tick, st *State, ents []*Entity, env *transport.Envelope, r
 			st.DeadLetters++
 			return
 		}
-		foldLinkDead(tick, st, msg.Conn, rules, res, pending)
+		foldLinkDead(tick, st, msg.Conn, e.Rules, res, pending)
+	case transport.KindDeployNPCs:
+		foldDeployNPCs(tick, st, env, e, res)
 	case transport.KindPersistReply:
-		foldPersistReply(tick, st, rules, env.Payload)
+		foldPersistReply(tick, st, e.Rules, env.Payload)
 	case transport.KindClientFrame:
-		foldClientFrame(tick, st, ents, env, rules, res, mov)
+		foldClientFrame(tick, st, ents, env, e.Rules, res, mov)
 	default:
 		// Прочие типы — вне свёртки входа/выхода (фазы 4+); счёт учтён.
 	}
+}
+
+// foldDeployNPCs — письмо разворачивания населения: однократное (повторное —
+// dead-letter), валидация конфига среза на применении; статики нет —
+// dead-letter (диагноз «нулевые NPC» наблюдаем счётчиком и журналом).
+func foldDeployNPCs(tick Tick, st *State, env *transport.Envelope, e Env, res *StepResult) {
+	msg, err := transport.DecodeLetter[transport.NPCDeployMsg](env.Payload)
+	if err != nil || msg.Radius <= 0 {
+		st.DeadLetters++
+		return
+	}
+	if st.NPCDeployedOnce {
+		st.DeadLetters++
+		return
+	}
+	st.NPCDeployedOnce = true
+	if e.Static == nil {
+		slog.Error("world: письмо разворота NPC без статики — население не развёрнуто",
+			"region", e.Region, "tick", tick)
+		st.DeadLetters++
+		return
+	}
+	deploySpawns(e.Region, tick, st, e.Static, msg, e.GM, res)
 }
 
 // foldEnterWorld — вход: вытеснение живой сущности аккаунта (без её
@@ -556,6 +603,13 @@ func (st *State) Dump(ents []*Entity) []byte {
 	buf = binary.AppendUvarint(buf, st.SpeedFlags)
 	buf = binary.AppendUvarint(buf, st.SnapBacks)
 	buf = binary.AppendUvarint(buf, st.CannotMoveStanding)
+	buf = binary.AppendUvarint(buf, st.NPCDeployed)
+	buf = binary.AppendUvarint(buf, st.NPCSkipped)
+	if st.NPCDeployedOnce {
+		buf = append(buf, 1)
+	} else {
+		buf = append(buf, 0)
+	}
 	buf = binary.AppendUvarint(buf, uint64(len(ents)))
 	for _, e := range ents {
 		buf = appendEntity(buf, e)
@@ -654,11 +708,38 @@ func appendEntity(buf []byte, e *Entity) []byte {
 	}
 	if e.Player == nil {
 		buf = append(buf, 0)
+	} else {
+		buf = append(buf, 1)
+		buf = appendPlayer(buf, e.Player)
+	}
+	if e.Npc == nil {
+		buf = append(buf, 0)
 		return buf
 	}
 	buf = append(buf, 1)
-	buf = appendPlayer(buf, e.Player)
-	return buf
+	return appendNpc(buf, e.Npc)
+}
+
+// appendNpc — сериализация NPC-скина (репликация NpcInfo).
+func appendNpc(buf []byte, n *NpcSkin) []byte {
+	buf = binary.AppendUvarint(buf, uint64(n.TemplateID))
+	buf = appendStr(buf, n.Name)
+	buf = appendStr(buf, n.Title)
+	if n.Attackable {
+		buf = append(buf, 1)
+	} else {
+		buf = append(buf, 0)
+	}
+	buf = binary.AppendUvarint(buf, math.Float64bits(n.CollisionRadius))
+	buf = binary.AppendUvarint(buf, math.Float64bits(n.CollisionHeight))
+	buf = binary.AppendUvarint(buf, uint64(n.RunSpd))
+	buf = binary.AppendUvarint(buf, uint64(n.WalkSpd))
+	buf = binary.AppendUvarint(buf, uint64(n.SwimRunSpd))
+	buf = binary.AppendUvarint(buf, uint64(n.SwimWalkSpd))
+	buf = binary.AppendUvarint(buf, uint64(n.PAtkSpd))
+	buf = binary.AppendUvarint(buf, uint64(n.MAtkSpd))
+	buf = binary.AppendUvarint(buf, math.Float64bits(n.MoveMultiplier))
+	return binary.AppendUvarint(buf, math.Float64bits(n.AttackSpeedMultiplier))
 }
 
 // appendPlayer — сериализация игрока: int64-поля записи — varint (uvarint

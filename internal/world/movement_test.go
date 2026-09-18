@@ -56,7 +56,7 @@ func cannotMoveLetter(id transport.EntityID, x, y, z, heading int32) transport.E
 // foldM — шаг свёртки с картой и delta (движение требует и то и другое).
 func foldM(tick Tick, delta uint64, st *State, ents []*Entity, gm *geo.Map, envs ...transport.Envelope) StepResult {
 	return Fold(tick, delta, rand.New(rand.NewPCG(1, uint64(tick))), st, ents,
-		portion(envs...), nil, testRules(), gm)
+		portion(envs...), nil, testEnvGM(gm))
 }
 
 // playerEnt — житель-игрок на заданной позиции.
@@ -132,7 +132,7 @@ func TestFoldBirthSpeedBucketAtCAP(t *testing.T) {
 	st := newState()
 	rec := mkRecAt("bca", "Hero", int(syncPos.X), int(syncPos.Y))
 	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, []*Entity{},
-		portion(enterMsg(1, "bca", rec)), nil, testRules(), emptyGeo)
+		portion(enterMsg(1, "bca", rec)), nil, testEnv(nil))
 	if len(res.Births) != 1 {
 		t.Fatalf("рождение: %d", len(res.Births))
 	}
@@ -153,7 +153,7 @@ func TestFoldHeadingDomainAtBirth(t *testing.T) {
 	rec := mkRecAt("bcb", "Hero", int(syncPos.X), int(syncPos.Y))
 	rec.Heading = -70000
 	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, []*Entity{},
-		portion(enterMsg(1, "bcb", rec)), nil, testRules(), emptyGeo)
+		portion(enterMsg(1, "bcb", rec)), nil, testEnv(nil))
 	ents := applyBirth(st, res)
 	if ents[0].Heading != 61072 {
 		t.Fatalf("heading рождения = %d; want 61072 (маска домена)", ents[0].Heading)
@@ -254,7 +254,7 @@ func TestFoldAdvanceFollowsPeriodNotTickCount(t *testing.T) {
 			startMove(ents[0], 115, 0, 0)
 			rules := testRules()
 			rules.PeriodNS = tc.periodNS
-			Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, ents, portion(), nil, rules, emptyGeo)
+			Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, ents, portion(), nil, Env{Region: 1, Rules: rules, GM: emptyGeo})
 			if got := ents[0].MoveDone; got != tc.want {
 				t.Errorf("MoveDone при периоде %d нс = %d; want %d (дистанция следует периоду, не числу тиков)",
 					tc.periodNS, got, tc.want)
@@ -678,7 +678,7 @@ func TestFoldEnterWorldRecordOutOfGridDeadLetter(t *testing.T) {
 			rec := mkRec("acc", "hero", 0)
 			rec.X, rec.Y, rec.Z = tc.x, int(syncPos.Y), 0
 			res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, []*Entity{},
-				portion(enterMsg(1, "acc", rec)), nil, testRules(), emptyGeo)
+				portion(enterMsg(1, "acc", rec)), nil, testEnv(nil))
 			if len(res.Births) != 0 || st.DeadLetters != 1 {
 				t.Fatalf("вход вне сетки: births %d dead %d; want 0, 1", len(res.Births), st.DeadLetters)
 			}
@@ -797,7 +797,7 @@ func TestUserInfoSpeedsNonZero(t *testing.T) {
 	st := newState()
 	rec := mkRecAt("uiz", "Hero", int(syncPos.X), int(syncPos.Y))
 	res := Fold(10, 1, rand.New(rand.NewPCG(1, 10)), st, []*Entity{},
-		portion(enterMsg(1, "uiz", rec)), nil, testRules(), emptyGeo)
+		portion(enterMsg(1, "uiz", rec)), nil, testEnv(nil))
 	ents := applyBirth(st, res)
 	d := userInfoOf(ents[0].Player)
 	if d.RunSpd != int32(persist.HumanFighter.RunSpd) || d.WalkSpd != int32(persist.HumanFighter.WalkSpd) {

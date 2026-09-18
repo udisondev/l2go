@@ -36,6 +36,10 @@ func TestReplicaExportedAPISurface(t *testing.T) {
 		"BaseClass": true, "ClassID": true, "HairStyle": true, "HairColor": true,
 		"Face": true, "Enter": true, "Exit": true, "Obs": true, "Target": true,
 		"ID": true, "TemplateID": true, "Count": true, "Generation": true, "ConnID": true,
+		// поля NPC-записи (P3.10; примитивы — data-типов нет)
+		"Title": true, "Attackable": true, "CollisionRadius": true, "CollisionHeight": true,
+		"RunSpd": true, "WalkSpd": true, "SwimRunSpd": true, "SwimWalkSpd": true,
+		"PAtkSpd": true, "MAtkSpd": true, "MoveMultiplier": true, "AttackSpeedMultiplier": true,
 	}
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(".")

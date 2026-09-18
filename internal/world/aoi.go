@@ -19,9 +19,9 @@ type AdvisoryIn = replica.AdvisoryInput
 // aoiCell — вырожденная сетка фазы 3: одна ячейка на регион.
 const aoiCell replica.CellID = 0
 
-// recordOf — сущность → AoI-запись (поля по потребителю CharInfo; живой
-// Heading и клампнутая Dest — источники кадров движения P3.9; NpcInfo-поля
-// дополнит P3.10; Flags фаза 3 не порождает — синтетика тестов).
+// recordOf — сущность → AoI-запись (поля по потребителям CharInfo/NpcInfo;
+// живой Heading и клампнутая Dest — источники кадров движения P3.9; NPC-поля
+// — из скина рождения P3.10; Flags фаза 3 не порождает — синтетика тестов).
 func recordOf(ent *Entity) replica.Record {
 	rec := replica.Record{
 		Entity:  ent.ID,
@@ -37,6 +37,22 @@ func recordOf(ent *Entity) replica.Record {
 	}
 	if ent.Player == nil {
 		rec.Kind = replica.RecordKindNPC
+		if s := ent.Npc; s != nil {
+			rec.TemplateID = s.TemplateID
+			rec.Name = s.Name
+			rec.Title = s.Title
+			rec.Attackable = s.Attackable
+			rec.CollisionRadius = s.CollisionRadius
+			rec.CollisionHeight = s.CollisionHeight
+			rec.RunSpd = s.RunSpd
+			rec.WalkSpd = s.WalkSpd
+			rec.SwimRunSpd = s.SwimRunSpd
+			rec.SwimWalkSpd = s.SwimWalkSpd
+			rec.PAtkSpd = s.PAtkSpd
+			rec.MAtkSpd = s.MAtkSpd
+			rec.MoveMultiplier = s.MoveMultiplier
+			rec.AttackSpeedMultiplier = s.AttackSpeedMultiplier
+		}
 		return rec
 	}
 	rec.Kind = replica.RecordKindPlayer
@@ -103,17 +119,48 @@ func composeStopFrame(rec replica.Record) []byte {
 	return dst
 }
 
+// npcInfoOf — AoI-запись NPC → NpcInfo (полный скоростной блок из скина
+// рождения; константы канона — displayId+10⁶, nameAbove и хвост — писатель
+// protocol; Running=false — NPC фазы 3 не бежит при спавне, канон).
+func npcInfoOf(rec replica.Record) protocol.NpcInfoData {
+	return protocol.NpcInfoData{
+		ObjID:                 int32(encode.ObjectIDBase + uint64(rec.Entity)),
+		DisplayID:             rec.TemplateID,
+		Attackable:            rec.Attackable,
+		X:                     rec.X,
+		Y:                     rec.Y,
+		Z:                     rec.Z,
+		Heading:               rec.Heading,
+		MAtkSpd:               rec.MAtkSpd,
+		PAtkSpd:               rec.PAtkSpd,
+		RunSpd:                rec.RunSpd,
+		WalkSpd:               rec.WalkSpd,
+		SwimRunSpd:            rec.SwimRunSpd,
+		SwimWalkSpd:           rec.SwimWalkSpd,
+		MoveMultiplier:        rec.MoveMultiplier,
+		AttackSpeedMultiplier: rec.AttackSpeedMultiplier,
+		CollisionRadius:       rec.CollisionRadius,
+		CollisionHeight:       rec.CollisionHeight,
+		Name:                  rec.Name,
+		Title:                 rec.Title,
+	}
+}
+
 // composeJoin — события join → кадры (пушится регионом в pendingPushes ПОСЛЕ
 // Apply — слив только применённого стадинга). Ввод движущегося — CharInfo +
 // CharMoveToLocation (describeState канона); апдейт — стрим/стоп; NPC-ввод —
-// счётчик-метрика до P3.10.
+// NpcInfo (P3.10; счётчик вводов — метрика живого прогона).
 func (r *Region) composeJoin(events []replica.Event) []FramePush {
 	pushes := make([]FramePush, 0, len(events))
 	for _, ev := range events {
 		switch ev.Kind {
 		case replica.EventIntroduce:
 			if ev.Target.Kind != replica.RecordKindPlayer {
-				r.npcIntroduceSkipped.Add(1)
+				d := npcInfoOf(ev.Target)
+				dst := make([]byte, protocol.NpcInfoSize(d))
+				protocol.WriteNpcInfo(dst, d)
+				pushes = append(pushes, FramePush{Client: ev.Obs.ConnID, Frame: dst, Crypt: true})
+				r.npcIntroduced.Add(1)
 				continue
 			}
 			d := charInfoOf(ev.Target)

@@ -70,6 +70,15 @@ func newEnterHarness(t *testing.T, cfg Config) *enterHarness {
 // Run (подмена pusher при живой горутине региона — гонка харнесса).
 func newEnterHarnessPusher(t *testing.T, cfg Config, pc FramePusher) *enterHarness {
 	t.Helper()
+	h := buildEnterHarness(t, cfg, pc)
+	h.startRun(t)
+	return h
+}
+
+// buildEnterHarness — харнесс без запуска горутин: точка вмешательства до
+// старта Run (DeployNPCs разворота населения).
+func buildEnterHarness(t *testing.T, cfg Config, pc FramePusher) *enterHarness {
+	t.Helper()
 	base := DefaultConfig()
 	base.Hz = cfg.Hz
 	base.GraceTicks = cfg.GraceTicks
@@ -117,15 +126,20 @@ func newEnterHarnessPusher(t *testing.T, cfg Config, pc FramePusher) *enterHarne
 	if err := r.Wire(h.gwID, h.pID); err != nil {
 		t.Fatal(err)
 	}
+	return h
+}
+
+// startRun запускает метроном и регион (однократно).
+func (h *enterHarness) startRun(t *testing.T) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	rctx, rCancel := context.WithCancel(t.Context())
 	h.rCancel = rCancel
 	h.rDone = make(chan struct{})
 	t.Cleanup(cancel)
 	t.Cleanup(rCancel)
-	go m.Run(ctx)
-	go func() { defer close(h.rDone); r.Run(rctx) }()
-	return h
+	go h.metro.Run(ctx)
+	go func() { defer close(h.rDone); h.r.Run(rctx) }()
 }
 
 // send — письмо в ctrl-ящик региона + ожидание шага.

@@ -131,7 +131,7 @@ func ExampleFold() {
 	ents := []*Entity{{ID: 1, Owner: 1}}
 	rng := rand.New(rand.NewPCG(1, 100))
 	res := Fold(100, 2, rng, st, ents,
-		[]Portion{{Region: 1, Tick: 100, Envs: []transport.Envelope{{Kind: transport.KindXP}}}}, nil, testRules(), emptyGeo)
+		[]Portion{{Region: 1, Tick: 100, Envs: []transport.Envelope{{Kind: transport.KindXP}}}}, nil, testEnv(nil))
 	fmt.Println(len(res.Out), st.Steps, st.Letters, st.LastDelta, ents[0].Beat)
 	// Output: 0 1 1 2 100
 }

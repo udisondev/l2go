@@ -64,3 +64,16 @@ func (v NpcInfoView) Title() (string, bool) {
 	s, _, ok := ReadS(v, npcInfoHead+n)
 	return s, ok
 }
+
+// Fields — строка трафик-лога l2client (поля живого интереса P3.10).
+func (v NpcInfoView) Fields() []Field {
+	name, _ := v.Name()
+	return []Field{
+		{K: "name", V: Quote(name)},
+		{K: "objID", V: num32(v.ObjID())},
+		{K: "displayID", V: num32(v.DisplayID())},
+		{K: "attackable", V: num32(leD(v, 9))},
+		{K: "x", V: num32(v.X())},
+		{K: "y", V: num32(v.Y())},
+	}
+}

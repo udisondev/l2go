@@ -1,0 +1,293 @@
+# P3.10 world-baseline — NPC-население (датчики: obs×N-скан join, пик ввода, разворот 12k)
+# машина: локальная разработческая, 16 ядер, go1.27.1, 2026-09-18
+# методика: benchtime 100ms × count 10 (послабление против perf.md §0 20×3с — осознанное: фаза 3 фиксирует порядок и аллокации, не микросекунды; прецедент P3.9)
+# сопоставимость: только внутри этой машины (межмашинное сравнение запрещено, прецедент P3.2)
+# фазовые доли (стационарный шаг 12k/100): полный шаг ≈3.6 мс, aoi-only ≈3.4 мс ⇒ фаза AoI (Build+join+compose) — доминирующая доля шага (~95%), drain+fold+log ≈0.2 мс; obs×N-скан join 100 наблюдателей ≈ +1.4 мс к базе 2.0 мс (12k/0)
+2026/09/18 13:28:56 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/world
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	      32	   3661652 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:56 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      37	   3869384 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:57 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      31	   3369142 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:57 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      37	   3229275 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:57 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      31	   3393672 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:58 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      37	   3347298 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:58 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      39	   3656899 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:58 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      36	   3277009 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:58 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      37	   3172866 ns/op	 2734776 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100-16         	2026/09/18 13:28:59 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      40	   3388547 ns/op	 2734776 B/op	      79 allocs/op
+2026/09/18 13:28:59 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	      36	   3032180 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:28:59 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      38	   3288980 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:29:00 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      33	   3103058 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:29:00 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      36	   3278777 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:29:00 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      34	   3397029 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:29:01 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      39	   3422376 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:29:01 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      34	   3387526 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:29:01 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      37	   3579076 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:29:01 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      33	   3595978 ns/op	 2734760 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=100/aoi-only-16         	2026/09/18 13:29:02 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      37	   3598054 ns/op	 2734760 B/op	      78 allocs/op
+2026/09/18 13:29:02 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	      54	   2256061 ns/op	 2720184 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:02 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      45	   2253352 ns/op	 2720186 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:02 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      54	   2157216 ns/op	 2720186 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:03 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      51	   2043826 ns/op	 2720184 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:03 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      56	   2127322 ns/op	 2720184 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:03 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      66	   2067985 ns/op	 2720185 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:03 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      55	   2099752 ns/op	 2720184 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:03 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      58	   2046414 ns/op	 2720184 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:03 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      50	   2088009 ns/op	 2720184 B/op	      79 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10-16                   	2026/09/18 13:29:03 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      56	   2071033 ns/op	 2720184 B/op	      79 allocs/op
+2026/09/18 13:29:04 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	      78	   2073714 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:04 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      72	   2057536 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:04 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      57	   2039578 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:04 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      56	   2068713 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:04 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      50	   2048901 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:04 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      57	   2130596 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:04 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      54	   2000995 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:05 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      54	   2054106 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:05 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      73	   2059659 ns/op	 2720168 B/op	      78 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=10/aoi-only-16          	2026/09/18 13:29:05 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      45	   2384275 ns/op	 2720168 B/op	      78 allocs/op
+2026/09/18 13:29:05 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	      37	   2990239 ns/op	 2711184 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:05 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      46	   2446659 ns/op	 2711184 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:05 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      43	   2798789 ns/op	 2711189 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:05 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      45	   2533130 ns/op	 2711186 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:06 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      51	   2249029 ns/op	 2711184 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:06 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      48	   2165744 ns/op	 2711184 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:06 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      51	   2257751 ns/op	 2711184 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:06 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      52	   1967270 ns/op	 2711184 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:06 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      52	   1991249 ns/op	 2711184 B/op	      75 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0-16                    	2026/09/18 13:29:06 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      50	   2056954 ns/op	 2711184 B/op	      75 allocs/op
+2026/09/18 13:29:06 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	      61	   1903088 ns/op	 2711168 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:07 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      56	   2026174 ns/op	 2711168 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:07 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      58	   1963536 ns/op	 2711168 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:07 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      60	   1895959 ns/op	 2711168 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:07 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      58	   2017900 ns/op	 2711168 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:07 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      61	   1898627 ns/op	 2711168 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:07 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      57	   1976046 ns/op	 2711169 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:07 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      61	   1955411 ns/op	 2711169 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:07 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      60	   1912078 ns/op	 2711169 B/op	      74 allocs/op
+BenchmarkRegionNPCStep/npcs=12000/observers=0/aoi-only-16           	2026/09/18 13:29:08 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      62	   1866255 ns/op	 2711169 B/op	      74 allocs/op
+2026/09/18 13:29:08 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkNpcIntroDensity/npcs=100-16                                	    2042	   1954730 ns/op	  940100 B/op	     685 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:12 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1468	   1145316 ns/op	  760011 B/op	     658 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:13 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1275	    940924 ns/op	  703045 B/op	     645 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:15 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1759	   1510531 ns/op	  849409 B/op	     673 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:17 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1539	   1273723 ns/op	  779916 B/op	     662 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:19 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1479	   1457032 ns/op	  763123 B/op	     658 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:21 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1561	   1350365 ns/op	  786132 B/op	     663 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:23 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1369	   1035260 ns/op	  731314 B/op	     651 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:25 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1702	   1468094 ns/op	  830890 B/op	     670 allocs/op
+BenchmarkNpcIntroDensity/npcs=100-16                                	2026/09/18 13:29:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+    1238	    917767 ns/op	  691671 B/op	     642 allocs/op
+2026/09/18 13:29:29 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkNpcIntroDensity/npcs=1000-16                               	     352	    579631 ns/op	  786844 B/op	     395 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:29 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     313	    560450 ns/op	  762393 B/op	     356 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:29 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     400	    622495 ns/op	  815363 B/op	     436 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:29 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     358	    596009 ns/op	  790600 B/op	     400 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:29 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     326	    575924 ns/op	  770641 B/op	     369 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:30 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     381	    606146 ns/op	  804127 B/op	     421 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:30 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     360	    586336 ns/op	  791828 B/op	     402 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:30 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     338	    569838 ns/op	  778050 B/op	     381 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:30 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     384	    592437 ns/op	  805819 B/op	     424 allocs/op
+BenchmarkNpcIntroDensity/npcs=1000-16                               	2026/09/18 13:29:30 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+     301	    565785 ns/op	  754506 B/op	     344 allocs/op
+2026/09/18 13:29:31 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+BenchmarkFirstDeployStep-16                                         	      12	   9302446 ns/op	19505929 B/op	   48208 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:31 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+      12	   9570191 ns/op	19506041 B/op	   48209 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:31 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+      12	   9358376 ns/op	19506128 B/op	   48209 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:31 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:31 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+      12	   9093004 ns/op	19505978 B/op	   48209 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:32 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+      13	   8889969 ns/op	19438975 B/op	   48197 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:32 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+      10	  12371248 ns/op	19651490 B/op	   48240 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:32 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:32 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+       5	  22199817 ns/op	19736801 B/op	   48328 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:33 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+       8	  12986334 ns/op	19352137 B/op	   48220 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:33 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+       9	  11617819 ns/op	19272062 B/op	   48200 allocs/op
+BenchmarkFirstDeployStep-16                                         	2026/09/18 13:29:33 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+2026/09/18 13:29:33 INFO world: разворот NPC-населения region=1 tick=100 deployed=12000 point=12000 territorial=0 skipped=0
+       9	  11940879 ns/op	19272062 B/op	   48200 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/world	37.284s
