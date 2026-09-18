@@ -1,40 +1,41 @@
 # Baseline P3.11 internal/world: fan-out рассылки чата (benchstat-совместимо: -count=10)
 # Окружение: AMD Ryzen 9 PRO 8945HS, linux/amd64, go1.27.1
 # Живость: N+1 кадр за шаг (анти-твин мёртвого бенча). Один слайс кадра на всех
-# получателей (Stage.Push копирует в слэб). Каркас — F10 реестра P3.11.
+# получателей (Stage.Push копирует в слэб). RNG/порция/Env — вне измеряемого цикла
+# (F10/F26 реестра P3.11). Каркас — F10 реестра P3.11.
 goos: linux
 goarch: amd64
 pkg: github.com/udisondev/l2go/internal/world
 cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
-BenchmarkSay2FanOut/10-16 	  142412	       842.9 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  135902	       819.5 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  125292	       849.0 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  159360	       875.4 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  142712	       821.7 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  145802	       825.2 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  141285	       836.7 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  148028	       870.3 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  140853	       862.6 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/10-16 	  157250	       856.1 ns/op	    1440 B/op	       9 allocs/op
-BenchmarkSay2FanOut/100-16         	   37484	      3000 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   37101	      3034 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   35799	      3108 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   46318	      2864 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   39525	      2996 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   39547	      3035 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   41516	      3118 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   33627	      3180 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   37630	      2897 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/100-16         	   41997	      3031 ns/op	   12064 B/op	      12 allocs/op
-BenchmarkSay2FanOut/1000-16        	    6146	     19463 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    6237	     19118 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    7276	     18913 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    6966	     20221 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    5659	     20645 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    5556	     20716 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    5665	     19905 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    7550	     19464 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    5425	     20706 ns/op	   89888 B/op	      15 allocs/op
-BenchmarkSay2FanOut/1000-16        	    6938	     19150 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/10-16 	  144206	       818.4 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  147874	       860.6 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  156796	       858.6 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  166654	       826.4 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  153282	       792.0 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  132176	       871.8 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  149450	       811.5 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  174414	       775.7 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  196117	       809.3 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/10-16 	  137960	       813.1 ns/op	    1424 B/op	       8 allocs/op
+BenchmarkSay2FanOut/100-16         	   39028	      2961 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   40048	      3077 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   41623	      3045 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   41373	      2980 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   45210	      2848 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   37453	      2986 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   39442	      2897 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   40437	      2779 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   44023	      2995 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/100-16         	   42644	      2846 ns/op	   12048 B/op	      11 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6039	     18629 ns/op	   89872 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6108	     19402 ns/op	   89872 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6924	     18963 ns/op	   89872 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6388	     19401 ns/op	   89872 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    5035	     20002 ns/op	   89872 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6440	     19065 ns/op	   89872 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    5463	     18883 ns/op	   89872 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6244	     19229 ns/op	   89873 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6129	     19170 ns/op	   89872 B/op	      14 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6594	     19841 ns/op	   89872 B/op	      14 allocs/op
 PASS
-ok  	github.com/udisondev/l2go/internal/world	3.669s
+ok  	github.com/udisondev/l2go/internal/world	3.688s

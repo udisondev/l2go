@@ -7,6 +7,8 @@
 package world
 
 import (
+	"strings"
+
 	"github.com/udisondev/l2go/internal/encode"
 	"github.com/udisondev/l2go/internal/protocol"
 	"github.com/udisondev/l2go/internal/transport"
@@ -59,8 +61,10 @@ func foldSay2(tick Tick, st *State, ents []*Entity, ent *Entity, env *transport.
 		foldLogout(tick, st, ent, rules, res)
 		return
 	}
+	// \b (0x08) — item-link канона (Say2.java parseAndPublishItem): предметов
+	// в фазе 3 нет — дроп с метрикой.
 	units, clean := v.TextMeasure()
-	if units > chatSayMaxUnits || !clean || containsBS(text) {
+	if units > chatSayMaxUnits || !clean || strings.ContainsRune(text, '\b') {
 		// Канон отвечает SystemMessage keyboard-warning и рвёт item-link;
 		// фаза 3 — дроп с метрикой по букве критерия приёмки, коннект жив
 		// (записи-отклонения, реестр P3.11).
@@ -95,20 +99,11 @@ func foldSay2(tick Tick, st *State, ents []*Entity, ent *Entity, env *transport.
 	res.Pushes = append(res.Pushes, FramePush{Client: p.ConnID, Frame: frame, Crypt: true})
 }
 
-// containsBS — item-link-маркер \b (0x08): канон разбирает публикацию
-// предмета (Say2.java parseAndPublishItem); фаза 3 предметов нет — дроп.
-func containsBS(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0x08 {
-			return true
-		}
-	}
-	return false
-}
-
 // withinSayRadius — 3D-дистанция ≤ радиуса речи: сравнение квадратов в
 // int64 (int32-квадрат переполняется на дельтах мира ±655360 — домен
-// geo.InWorld), без sqrt.
+// geo.InWorld), без sqrt. Позиции прод-домена всегда в сетке мира: суммы
+// квадратов int64 не переполняются; литеральные края int32 (вне домена)
+// не паникуют — wrap даёт ложный «вне радиуса», безопасно.
 func withinSayRadius(a, b Position) bool {
 	dx := int64(a.X) - int64(b.X)
 	dy := int64(a.Y) - int64(b.Y)

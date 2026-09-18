@@ -5,7 +5,9 @@ package world
 
 import (
 	"encoding/binary"
+	"math"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,8 +15,10 @@ import (
 	"github.com/udisondev/l2go/internal/transport"
 )
 
-// opCreatureSay — опкод кадра CreatureSay (пиннут golden-тестами P3.5).
-const opCreatureSay = 0x4A
+const (
+	opCreatureSay = 0x4A // CreatureSay (пиннут golden-тестами P3.5)
+	opLeaveWorld  = 0x7E // LeaveWorld (финал разрыва канона)
+)
 
 // sayLetter — клиентский кадр Say2 в конверте ящика сущности.
 func sayLetter(id transport.EntityID, text string, chatType protocol.ChatType) transport.Envelope {
@@ -126,17 +130,20 @@ func TestFoldSay2Radius3DBoundaryTable(t *testing.T) {
 		{"dy=1251", 0, 1251, 0, false},
 		{"dz=1251", 0, 0, 1251, false},
 		{"далёкий dx=50000 (int64-охрана)", 50000, 0, 0, false},
+		// край int32: вне домена мира, но без паники (wrap даёт «вне радиуса»).
+		{"край int32 dx=MaxInt32", math.MaxInt32, 0, 0, false},
 	} {
-		st := newState()
-		ents := []*Entity{
-			chatEnt(301, 7, syncPos.X, syncPos.Y, syncPos.Z),
-			chatEnt(302, 8, syncPos.X+tc.dx, syncPos.Y+tc.dy, syncPos.Z+tc.dz),
-		}
-		res := foldChat(10, 0, st, ents, sayLetter(301, "anyone?", protocol.ChatGeneral))
-		if got := len(sayPushes(res, 8)); (got == 1) != tc.deliver {
-			t.Errorf("%s: получатель %s получил %d кадров; want доставку=%v",
-				tc.name, "302", got, tc.deliver)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			st := newState()
+			ents := []*Entity{
+				chatEnt(301, 7, syncPos.X, syncPos.Y, syncPos.Z),
+				chatEnt(302, 8, syncPos.X+tc.dx, syncPos.Y+tc.dy, syncPos.Z+tc.dz),
+			}
+			res := foldChat(10, 0, st, ents, sayLetter(301, "anyone?", protocol.ChatGeneral))
+			if got := len(sayPushes(res, 8)); (got == 1) != tc.deliver {
+				t.Errorf("получатель получил %d кадров; want доставку=%v", got, tc.deliver)
+			}
+		})
 	}
 }
 
@@ -203,31 +210,33 @@ func TestFoldSay2EchoLastInBranch(t *testing.T) {
 func TestFoldSay2GarbageTypeDisconnects(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []int32{-1, 22, 0x7FFFFFFF} {
-		st := newState()
-		ents := []*Entity{chatEnt(601, 7, syncPos.X, syncPos.Y, syncPos.Z)}
-		b := make([]byte, 0, 16)
-		b = append(b, protocol.OpCSay2)
-		b = append(b, 0, 0) // пустая строка-терминатор
-		b = binary.LittleEndian.AppendUint32(b, uint32(raw))
-		res := foldChat(10, 0, st, ents, sayRawLetter(601, b))
-		if _, ok := findPush(res, 7, opActionFailed); !ok {
-			t.Errorf("тип %d: ActionFailed не отправлен", raw)
-		}
-		if len(res.Retires) != 1 || res.Retires[0].ID != 601 {
-			t.Errorf("тип %d: Retires = %+v; want [601]", raw, res.Retires)
-		}
-		if _, ok := findPush(res, 7, 0x7E); !ok { // LeaveWorld
-			t.Errorf("тип %d: LeaveWorld не отправлен", raw)
-		}
-		if len(st.SaveQ) != 1 {
-			t.Errorf("тип %d: SaveQ = %d; want 1", raw, len(st.SaveQ))
-		}
-		if len(st.Conns) != 0 || len(st.Accounts) != 0 {
-			t.Errorf("тип %d: тени не развязаны: conns=%d accounts=%d", raw, len(st.Conns), len(st.Accounts))
-		}
-		if st.ChatDropped != 0 {
-			t.Errorf("тип %d: ChatDropped = %d; want 0 (разрыв, не дроп-класс)", raw, st.ChatDropped)
-		}
+		t.Run(strconv.FormatInt(int64(raw), 10), func(t *testing.T) {
+			st := newState()
+			ents := []*Entity{chatEnt(601, 7, syncPos.X, syncPos.Y, syncPos.Z)}
+			b := make([]byte, 0, 16)
+			b = append(b, protocol.OpCSay2)
+			b = append(b, 0, 0) // пустая строка-терминатор
+			b = binary.LittleEndian.AppendUint32(b, uint32(raw))
+			res := foldChat(10, 0, st, ents, sayRawLetter(601, b))
+			if _, ok := findPush(res, 7, opActionFailed); !ok {
+				t.Error("ActionFailed не отправлен")
+			}
+			if len(res.Retires) != 1 || res.Retires[0].ID != 601 {
+				t.Errorf("Retires = %+v; want [601]", res.Retires)
+			}
+			if _, ok := findPush(res, 7, opLeaveWorld); !ok {
+				t.Error("LeaveWorld не отправлен")
+			}
+			if len(st.SaveQ) != 1 {
+				t.Errorf("SaveQ = %d; want 1", len(st.SaveQ))
+			}
+			if len(st.Conns) != 0 || len(st.Accounts) != 0 {
+				t.Errorf("тени не развязаны: conns=%d accounts=%d", len(st.Conns), len(st.Accounts))
+			}
+			if st.ChatDropped != 0 {
+				t.Errorf("ChatDropped = %d; want 0 (разрыв, не дроп-класс)", st.ChatDropped)
+			}
+		})
 	}
 }
 
@@ -260,18 +269,37 @@ func TestFoldSay2ContentDropsTable(t *testing.T) {
 		{"литеральный U+FFFD", "bad \uFFFD text"},
 		{"106 ASCII", strings.Repeat("a", 106)},
 	} {
-		st := newState()
-		ents := []*Entity{chatEnt(801, 7, syncPos.X, syncPos.Y, syncPos.Z)}
-		res := foldChat(10, 0, st, ents, sayLetter(801, tc.text, protocol.ChatGeneral))
-		if st.ChatDropped != 1 {
-			t.Errorf("%s: ChatDropped = %d; want 1", tc.name, st.ChatDropped)
-		}
-		if len(res.Retires) != 0 {
-			t.Errorf("%s: коннект порван (Retires=%d); want жив", tc.name, len(res.Retires))
-		}
-		if got := len(sayPushes(res, 7)); got != 0 {
-			t.Errorf("%s: кадров = %d; want 0", tc.name, got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			st := newState()
+			ents := []*Entity{chatEnt(801, 7, syncPos.X, syncPos.Y, syncPos.Z)}
+			res := foldChat(10, 0, st, ents, sayLetter(801, tc.text, protocol.ChatGeneral))
+			if st.ChatDropped != 1 {
+				t.Errorf("ChatDropped = %d; want 1", st.ChatDropped)
+			}
+			if len(res.Retires) != 0 {
+				t.Errorf("коннект порван (Retires=%d); want жив", len(res.Retires))
+			}
+			if got := len(sayPushes(res, 7)); got != 0 {
+				t.Errorf("кадров = %d; want 0", got)
+			}
+		})
+	}
+}
+
+// Рождение = CAP: первая реплика новичка доставлена без ожидания рефилла
+// (arrange chatEnt заряжает бакет руками — здесь сверяется источник).
+func TestFoldSay2BirthBudgetCAP(t *testing.T) {
+	t.Parallel()
+	st := newState()
+	res := foldChat(10, 0, st, nil, transport.Envelope{
+		To: transport.Addr{Entity: 1}, FromID: testRules().Gateway,
+		Kind:    transport.KindEnterWorld,
+		Payload: mustJSONEnter(7, mkRecAt("newbie", "Newbie", int(syncPos.X), int(syncPos.Y)))})
+	if len(res.Births) != 1 || res.Births[0].Ent.Player == nil {
+		t.Fatal("рождение не построено")
+	}
+	if got := res.Births[0].Ent.Player.ChatBudget; got != chatSayCapMS {
+		t.Errorf("ChatBudget рождения = %d; want CAP %d", got, chatSayCapMS)
 	}
 }
 
@@ -290,12 +318,14 @@ func TestFoldSay2LengthRawUnitsTable(t *testing.T) {
 		{"105 астральных рун (210 юнитов)", astral, false},
 		{"52 пары + 1 BMP (105 юнитов)", mixed, true},
 	} {
-		st := newState()
-		ents := []*Entity{chatEnt(901, 7, syncPos.X, syncPos.Y, syncPos.Z)}
-		res := foldChat(10, 0, st, ents, sayLetter(901, tc.text, protocol.ChatGeneral))
-		if got := len(sayPushes(res, 7)); (got == 1) != tc.deliver {
-			t.Errorf("%s: доставлено %d; want %v", tc.name, got, tc.deliver)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			st := newState()
+			ents := []*Entity{chatEnt(901, 7, syncPos.X, syncPos.Y, syncPos.Z)}
+			res := foldChat(10, 0, st, ents, sayLetter(901, tc.text, protocol.ChatGeneral))
+			if got := len(sayPushes(res, 7)); (got == 1) != tc.deliver {
+				t.Errorf("доставлено %d; want %v", got, tc.deliver)
+			}
+		})
 	}
 }
 
@@ -354,18 +384,20 @@ func TestFoldSay2NonAllChannelIgnoredTable(t *testing.T) {
 		{"party", protocol.ChatParty},
 		{"shout", protocol.ChatShout},
 	} {
-		st := newState()
-		ents := []*Entity{chatEnt(1201, 7, syncPos.X, syncPos.Y, syncPos.Z)}
-		res := foldChat(10, 0, st, ents, sayLetter(1201, "psst", tc.t))
-		if st.ChatIgnored != 1 {
-			t.Errorf("%s: ChatIgnored = %d; want 1", tc.name, st.ChatIgnored)
-		}
-		if len(res.Retires) != 0 {
-			t.Errorf("%s: коннект порван; want жив", tc.name)
-		}
-		if got := len(sayPushes(res, 7)); got != 0 {
-			t.Errorf("%s: кадров = %d; want 0", tc.name, got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			st := newState()
+			ents := []*Entity{chatEnt(1201, 7, syncPos.X, syncPos.Y, syncPos.Z)}
+			res := foldChat(10, 0, st, ents, sayLetter(1201, "psst", tc.t))
+			if st.ChatIgnored != 1 {
+				t.Errorf("ChatIgnored = %d; want 1", st.ChatIgnored)
+			}
+			if len(res.Retires) != 0 {
+				t.Error("коннект порван; want жив")
+			}
+			if got := len(sayPushes(res, 7)); got != 0 {
+				t.Errorf("кадров = %d; want 0", got)
+			}
+		})
 	}
 }
 
@@ -569,6 +601,48 @@ func TestFoldSay2BatchInterleavingsTable(t *testing.T) {
 		}
 		if len(st.Leaving) != 1 || st.Leaving[0].Entity != 1901 {
 			t.Errorf(" grace-удержание: %+v; want entity 1901", st.Leaving)
+		}
+	})
+	t.Run("Logout затем Say2 той же пачкой", func(t *testing.T) {
+		st := newState()
+		a := chatEnt(1903, 7, syncPos.X, syncPos.Y, syncPos.Z)
+		st.Conns[7] = 1903
+		st.Accounts[a.Player.Rec.Account] = shadowEntity{ID: 1903, Conn: 7}
+		res := foldChat(10, 0, st, []*Entity{a},
+			transport.Envelope{To: transport.Addr{Entity: 1903}, FromID: testRules().Gateway,
+				Kind: transport.KindClientFrame, Payload: []byte{protocol.OpLogout}},
+			sayLetter(1903, "last gasp", protocol.ChatGeneral))
+		// Фактическое поведение: уход свёрткой + безвредная дообработка
+		// письма вслед уходу (Retire применяется актором после всей пачки —
+		// гварда «ушедшего этой пачкой» нет, прецедент двойного Logout;
+		// запись-отклонение в реестре P3.11/F23).
+		if len(res.Retires) != 1 {
+			t.Fatalf("Retires = %d; want 1 (один уход)", len(res.Retires))
+		}
+		if len(st.SaveQ) != 1 {
+			t.Errorf("SaveQ = %d; want 1", len(st.SaveQ))
+		}
+	})
+	t.Run("мусорный Say2 затем валидный той же пачкой", func(t *testing.T) {
+		st := newState()
+		a := chatEnt(1904, 7, syncPos.X, syncPos.Y, syncPos.Z)
+		b := chatEnt(1905, 8, syncPos.X+100, syncPos.Y, syncPos.Z)
+		st.Conns[7] = 1904
+		st.Accounts[a.Player.Rec.Account] = shadowEntity{ID: 1904, Conn: 7}
+		g := make([]byte, 0, 12)
+		g = append(g, protocol.OpCSay2, 0, 0)
+		g = binary.LittleEndian.AppendUint32(g, 999)
+		res := foldChat(10, 0, st, []*Entity{a, b},
+			sayRawLetter(1904, g),
+			sayLetter(1904, "ghost says", protocol.ChatGeneral))
+		// Разрыв состоялся; вторая реплика дообрабатывается безвредно — кадры
+		// уходят в закрывающийся коннект (no-op стейджа), мир не портится:
+		// один уход, одна SaveQ-запись, паник нет (F23).
+		if len(res.Retires) != 1 {
+			t.Fatalf("Retires = %d; want 1 (один уход)", len(res.Retires))
+		}
+		if len(st.SaveQ) != 1 {
+			t.Errorf("SaveQ = %d; want 1", len(st.SaveQ))
 		}
 	})
 	t.Run("мусорный Say2 дважды одной пачкой", func(t *testing.T) {

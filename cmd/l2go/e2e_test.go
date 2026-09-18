@@ -1336,7 +1336,10 @@ func TestE2EChatSpamIsolation(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	time.Sleep(400 * time.Millisecond) // ≥3 тика: доставка первой и душение остальных
+	// Доставка первой реплики — детерминированно (waitForLine); далее только
+	// инвариант молчания соном (≥3 тика: задушенные не приходят никогда).
+	waitForLine(t, neighbor.out, `CREATURE_SAY`, 3*time.Second)
+	time.Sleep(400 * time.Millisecond)
 	if got := len(creatureSayLines(neighbor.out, "Botspammer")); got != 1 {
 		t.Errorf("сосед получил реплик спамера = %d; want ровно 1", got)
 	}
