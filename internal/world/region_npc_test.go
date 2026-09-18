@@ -274,6 +274,9 @@ func TestRegionDeployPanicWindows(t *testing.T) {
 		}
 		h.startRun(t)
 		waitForResidents(t, h.r, wantNPCResidents)
+		// барьер: шаг разворота обязан завершиться (Store в окне его фаз
+		// перенёс бы панику на разворот — вырождение подкейса)
+		waitCond(t, h.r, func(s RegionStats) bool { return s.PhaseAck >= 1 })
 		// Паника фазы B на шаге рождения наблюдателя: слиток и joinPushes
 		// (вводы NPC) уже в pendingPushes — recovered доставляет выживший
 		// хвост кадров немедленно, известность не теряется.

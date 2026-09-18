@@ -710,14 +710,23 @@ func TestFoldDeployNPCsBannedZRange(t *testing.T) {
 	st, res := &State{}, StepResult{}
 	deploySpawns(1, 100, st, static, transport.NPCDeployMsg{CenterX: 1000, CenterY: 1000, Radius: 10000}, emptyGeo, &res)
 	// Пустая гео: гео-Z = midZ = -500 — вне banned-полосы [-100,100]: весь
-	// banned-полигон прозрачен, все 16 рождений живут. Узость полосы —
-	// оракул 3D-семантики: 2D-фильтр вырезал бы полполилона.
+	// banned-полигон прозрачен по Z, рождения живут ВНУТРИ его 2D-площади —
+	// 2D-деградация фильтра (Contains(x,y,0)) выжила бы точки только
+	// смещённым перебросом за пределы banned-полигона (y>1000).
 	if len(res.Births) != 16 {
 		t.Fatalf("births=%d; want 16 (banned с чужим Z-диапазоном не режет)", len(res.Births))
 	}
+	insideBanned2D := 0
 	for i := range res.Births {
-		if p := res.Births[i].Ent.Pos; p.Z < -1000 || p.Z > 0 {
+		p := res.Births[i].Ent.Pos
+		if p.Z < -1000 || p.Z > 0 {
 			t.Fatalf("Z %d вне территории", p.Z)
 		}
+		if p.X >= 0 && p.X <= 2000 && p.Y >= 0 && p.Y <= 1000 {
+			insideBanned2D++
+		}
+	}
+	if insideBanned2D == 0 {
+		t.Fatalf("ни одного рождения в 2D-площади banned — 3D-семантика не фальсифицирована (переброс выместил точки)")
 	}
 }

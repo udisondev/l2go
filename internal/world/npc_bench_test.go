@@ -40,8 +40,6 @@ func npcCrowd(b *testing.B, r *Region, k int) {
 	}
 }
 
-// spawnObserver — игрок-наблюдатель (живой Player — F36: наблюдатели без
-// Player не исполняют obs×N-скан); pos — точка рождения.
 func spawnObserverAt(b *testing.B, r *Region, conn uint64, pos Position) transport.EntityID {
 	b.Helper()
 	id, err := r.Spawn(Entity{Owner: r.id, HP: 100,
@@ -86,7 +84,7 @@ func BenchmarkRegionNPCStep(b *testing.B) {
 				r.metro.tick.Add(1)
 				r.step()
 			}
-			// живость (урок F36): наблюдатели шага разрешены, скан не выродился
+			// живость (урок F5 реестра): наблюдатели шага разрешены, скан не выродился
 			if len(r.aoiObs) != tc.observers {
 				b.Fatalf("живость: aoiObs=%d; want %d (obs×N-скан мёртв)", len(r.aoiObs), tc.observers)
 			}
