@@ -30,21 +30,8 @@ jobs:
         run: make check
 
       - name: Fuzz-смоук (фаза 1+)
-        run: |
-          for t in FuzzRoundtripFixed FuzzRoundtripS FuzzReadOffsets FuzzNextFrame FuzzWorldViews; do
-            go test -fuzz="^${t}$" -fuzztime=10s ./internal/protocol/
-          done
-          for t in FuzzLoginDecrypt FuzzGameDecrypt; do
-            go test -fuzz="^${t}$" -fuzztime=10s ./internal/crypto/
-          done
-          for t in FuzzLoadItems FuzzLoadNpcSpawns FuzzLoadZones FuzzLoadSkills; do
-            go test -fuzz="^${t}$" -fuzztime=10s ./internal/data/
-          done
-          for t in FuzzDecodeRegion FuzzValidLocation; do
-            go test -fuzz="^${t}$" -fuzztime=10s ./internal/geo/
-          done
-          go test -fuzz='^FuzzArtifactDecode$' -fuzztime=10s ./internal/artifact/
-          go test -fuzz='^FuzzGatewayFrames$' -fuzztime=10s ./internal/gateway/
+        # Список целей — единый источник в Makefile (рассинхрон списков устранён в P3.12).
+        run: make fuzz-smoke
 
       # Embed-транспорт (фаза 2): шаг 1 обязан идти до записи артефакта.
       - name: Embed-транспорт (фаза 2)
@@ -60,6 +47,32 @@ jobs:
           go run ./cmd/l2data build internal/data/testdata/synth "$RUNNER_TEMP/geosynth"
           go vet -tags embedded ./internal/artifact/
           go test -tags embedded ./internal/artifact/
+          # Оба поставочных бинараря в embedded-конфигурации на синт-артефакте
+          # (для l2login тег инертен — артефакт не импортируется; сборка
+          # доказывает компиляцию поставочной конфигурации; прецедент P2.7).
+          go build -tags embedded ./cmd/...
+
+      # Реплей-гейт D6 (фаза 3): закоммиченная фикстура DoD-сессии × текущий
+      # код свёртки — ловит дрейф детерминизма между коммитами. Артефакт —
+      # построенный embed-шагом синт (тот же конвейер, что у записи);
+      # отпечаток отличается — сначала перезаписать фикстуру.
+      - name: Реплей-гейт (фаза 3)
+        run: |
+          set -e
+          art=internal/artifact/embedded/artifact.l2a
+          want_sha="$(cat cmd/l2go/testdata/replay-dod/artifact.sha256)"
+          got_sha="$(sha256sum "$art" | cut -d' ' -f1)"
+          if [ "$want_sha" != "$got_sha" ]; then
+            echo "FAIL: артефакт реплея разошёлся с отпечатком записи ($got_sha ≠ $want_sha); перезапись фикстуры: L2GO_RECORD_FIXTURE=1 go test -run TestReplayRecordFixture ./cmd/l2go"; exit 1
+          fi
+          go run ./cmd/l2go -replay cmd/l2go/testdata/replay-dod \
+            -artifact "$art" \
+            -expect cmd/l2go/testdata/replay-dod/final.dump
+
+      # E2E-смоук DoD (фаза 3): повторный прогон без -race ради времени смоука
+      # в журнале шага (буква p3.md §P3.12); -race-прогон — в make check.
+      - name: E2E-смоук DoD (фаза 3)
+        run: go test -count=1 -v -run '^TestE2EFullDodScenario$' ./cmd/l2go
 
       # Фаза 4: go test -bench=. -benchmem + benchstat-бюджет p99 тика (red при регрессе)
       # Фаза 4: нагрузочный смоук с ботами (headless-клиенты из фазы 1)

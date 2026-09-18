@@ -1,0 +1,29 @@
+# Baseline P3.12 internal/world: реплей сессии D6 (benchstat-совместимо: -count=10, benchtime=100ms)
+# Окружение: AMD Ryzen 9 PRO 8945HS, linux/amd64, go1.27.1
+# Смесь закреплена (T2): вход + чат каждый 10-й + движение каждый 5-й + пустые
+# шаги; живость — машинным ассертом теста (Steps/Letters/дамп). Крафт сессии —
+# вне измеряемого пути; аллокации — свойство пакета (реплей пакетный, не тик).
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/world
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkReplay/steps-100-16         	    4632	     25691 ns/op	    7992 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    5486	     25158 ns/op	    7991 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    4864	     24608 ns/op	    7987 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    4713	     25851 ns/op	    7990 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    5514	     25426 ns/op	    7989 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    4862	     25573 ns/op	    7987 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    5208	     24459 ns/op	    7987 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    4687	     26626 ns/op	    7986 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    5526	     26740 ns/op	    7990 B/op	     215 allocs/op
+BenchmarkReplay/steps-100-16         	    4588	     24789 ns/op	    7992 B/op	     215 allocs/op
+BenchmarkReplay/steps-1000-16        	     986	    127675 ns/op	   53686 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	     910	    125636 ns/op	   53676 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	     978	    126019 ns/op	   53686 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	     918	    132099 ns/op	   53687 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	    1044	    132143 ns/op	   53695 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	     771	    135792 ns/op	   53710 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	     997	    126327 ns/op	   53691 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	     850	    130923 ns/op	   53688 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	    1002	    129367 ns/op	   53671 B/op	    2001 allocs/op
+BenchmarkReplay/steps-1000-16        	     937	    122958 ns/op	   53687 B/op	    2001 allocs/op

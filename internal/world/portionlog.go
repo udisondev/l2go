@@ -7,20 +7,23 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/udisondev/l2go/internal/replica"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
 const (
-	portionMagic   = "PL32"
-	portionVersion = 5 // v5: спам-бакет чата игрока (P3.11); v4 — NPC-скин (P3.10); v3 — отрезок движения и бакет (P3.9)
+	portionMagic = "PL32"
+	// v6: заголовок несёт реплей-контракт — sessionID (различает прогоны
+	// процесса в одном каталоге), правила свёртки и адресаты контрольных
+	// писем (P3.12); v5 — NPC-скин (P3.10); v4 — отрезок движения (P3.9).
+	portionVersion = 6
 	flagPayloads   = 1
 
 	recStep  = 1
@@ -40,14 +43,22 @@ var ErrTruncated = errors.New("world: лог порций оборван (неп
 // (один отказ, не цикл), регион обязан заморозиться по первой ошибке.
 var errLogDead = errors.New("world: писатель лога порций отказал")
 
-// FileHeader — заголовок файла лога. Период метронома нужен читателю: тики
-// переводятся во время потребителем (движение), реплей с другим дефолтом Hz
-// разошёлся бы молча.
+// FileHeader — заголовок файла лога: полный реплей-контракт сессии. Правила
+// свёртки и адресаты контрольных писем влияют на дамп (окна grace/ретраев,
+// валидация отправителей) — реплей с чужими дефолтами расходился бы молча.
+// Session различает прогоны процесса в одном каталоге (рестарт продолжает
+// цепочку seq, а тик метронома стартует с нуля — склейка сессий недостоверна).
 type FileHeader struct {
-	Version  uint64
-	Payloads bool
-	Region   RegionID
-	PeriodNS uint64
+	Version        uint64
+	Payloads       bool
+	Region         RegionID
+	Session        uint64
+	PeriodNS       uint64
+	GraceTicks     uint64
+	SaveRetryTicks uint64
+	Persist        transport.EntityID
+	Gateway        transport.EntityID
+	CtrlFrom       transport.EntityID
 }
 
 // AppliedBirth — рождение с присвоенным реестром ID: запись лога несёт ID
@@ -103,33 +114,37 @@ type PanicRecord struct {
 // PortionLog — писатель лога порций D5: файл на регион, ротация по размеру,
 // seq на старте = max существующих + 1 (рестарт не затирает и не смешивает
 // сессии). Буферизованная запись, fsync не требуется; закрытие — только из
-// горутины региона (контракт: единственный писатель). Каждая запись — кадр
+// горутине региона (контракт: единственный писатель). Каждая запись — кадр
 // {длина, crc32, тело}: ридер отличает оборванный хвост от валидных данных.
 type PortionLog struct {
 	dir      string
 	region   RegionID
-	period   time.Duration
+	session  uint64
 	payloads bool
 	maxFile  int64
 
-	seq       int
-	file      *os.File
-	w         *bufio.Writer
-	written   int64
-	dead      bool
-	headerLen int64 // размер заголовка файла (маркер «файл без кадров»)
+	rules    Rules
+	rulesSet bool
+
+	seq          int
+	file         *os.File
+	w            *bufio.Writer
+	written      int64
+	dead         bool
+	headerLen    int64 // размер заголовка (0 — ещё не написан: ленивая запись при первом кадре)
+	framesOpened bool  // был ли записан хотя бы один кадр (SetRules после кадров запрещена)
 
 	enc    []byte // переиспользуемый буфер тела кадра
 	prefix []byte // переиспользуемый префикс кадра (длина + crc32)
 }
 
 // NewPortionLog создаёт писателя в каталоге dir (создаётся при отсутствии).
-func NewPortionLog(dir string, region RegionID, period time.Duration, payloads bool, maxFileBytes int64) (*PortionLog, error) {
+// Реплей-контракт (правила, адресаты) устанавливается SetRules до первой
+// записи кадра — заголовок кодируется из него лениво; период единственным
+// источником живёт в Rules.PeriodNS.
+func NewPortionLog(dir string, region RegionID, payloads bool, maxFileBytes int64) (*PortionLog, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("world: каталог лога порций пуст")
-	}
-	if period <= 0 {
-		return nil, fmt.Errorf("world: период метронома для лога порций = %v; want > 0", period)
 	}
 	if maxFileBytes < 0 {
 		return nil, fmt.Errorf("world: размер файла лога порций = %d; want ≥ 0", maxFileBytes)
@@ -143,7 +158,7 @@ func NewPortionLog(dir string, region RegionID, period time.Duration, payloads b
 	l := &PortionLog{
 		dir:      dir,
 		region:   region,
-		period:   period,
+		session:  rand.Uint64(), // вне свёртки: только различает прогоны процесса
 		payloads: payloads,
 		maxFile:  maxFileBytes,
 		seq:      scanMaxSeq(dir, region) + 1,
@@ -165,17 +180,30 @@ func (l *PortionLog) openFile() error {
 	}
 	l.file = f
 	l.w = bufio.NewWriterSize(f, writeBufSize)
-	hdr := l.encodeHeader()
-	l.headerLen = int64(len(hdr))
-	l.written = l.headerLen
-	if _, err := l.w.Write(hdr); err != nil {
-		return fmt.Errorf("world: заголовок лога порций: %w", err)
+	l.headerLen = 0 // заголовок ленивый: пишется при первом кадре из правил
+	l.written = 0
+	return nil
+}
+
+// SetRules устанавливает реплей-контракт сессии (период, окна и адресаты
+// контрольных писем). Вызывается регионом из Wire до старта Run и обязана
+// пройти до первой записи кадра: заголовок кодируется из правил при первом
+// кадре и при каждой ротации. Повторный вызов — ошибка (контракт сессии
+// неизменен).
+func (l *PortionLog) SetRules(r Rules) error {
+	if l.framesOpened {
+		return fmt.Errorf("world: SetRules после записанных кадров лога порций")
 	}
+	if !r.valid() {
+		return fmt.Errorf("world: правила лога порций невалидны: %+v", r)
+	}
+	l.rules = r
+	l.rulesSet = true
 	return nil
 }
 
 func (l *PortionLog) encodeHeader() []byte {
-	buf := make([]byte, 0, 32)
+	buf := make([]byte, 0, 48)
 	buf = append(buf, portionMagic...)
 	buf = binary.AppendUvarint(buf, portionVersion)
 	if l.payloads {
@@ -184,7 +212,13 @@ func (l *PortionLog) encodeHeader() []byte {
 		buf = append(buf, 0)
 	}
 	buf = binary.AppendUvarint(buf, uint64(l.region))
-	buf = binary.AppendUvarint(buf, uint64(l.period))
+	buf = binary.AppendUvarint(buf, l.session)
+	buf = binary.AppendUvarint(buf, uint64(l.rules.PeriodNS))
+	buf = binary.AppendUvarint(buf, uint64(l.rules.GraceTicks))
+	buf = binary.AppendUvarint(buf, uint64(l.rules.SaveRetryTicks))
+	buf = binary.AppendUvarint(buf, uint64(l.rules.Persist))
+	buf = binary.AppendUvarint(buf, uint64(l.rules.Gateway))
+	buf = binary.AppendUvarint(buf, uint64(l.rules.From))
 	return buf
 }
 
@@ -215,6 +249,11 @@ func (l *PortionLog) writeFrame(body []byte) error {
 	if l.dead {
 		return errLogDead
 	}
+	if !l.rulesSet {
+		// программная ошибка жизненного цикла: Wire обязан пройти до шагов;
+		// ошибка записи замораживает регион действующим механизмом
+		return fmt.Errorf("world: кадр лога порций без реплей-контракта (SetRules/Wire не пройдены)")
+	}
 	frameLen := uvarintLen(uint64(len(body))) + 4 + len(body)
 	// файл из одного заголовка не ротачивается: иначе негабаритный кадр
 	// (крупнее maxFile) давал бы «файл на кадр» — один негабарит допустим
@@ -224,6 +263,16 @@ func (l *PortionLog) writeFrame(body []byte) error {
 			return err
 		}
 	}
+	if l.headerLen == 0 {
+		hdr := l.encodeHeader()
+		l.headerLen = int64(len(hdr))
+		l.written = l.headerLen
+		if _, err := l.w.Write(hdr); err != nil {
+			l.dead = true
+			return fmt.Errorf("world: заголовок лога порций: %w", err)
+		}
+	}
+	l.framesOpened = true
 	crc := crc32.ChecksumIEEE(body)
 	l.prefix = binary.AppendUvarint(l.prefix[:0], uint64(len(body)))
 	l.prefix = append(l.prefix,
@@ -380,96 +429,160 @@ func scanMaxSeq(dir string, region RegionID) int {
 	return seq
 }
 
-// ReadPortionLogDir читает сессию региона: цепочку файлов по возрастанию seq.
-// Заголовки файлов обязаны совпадать; оборванный хвост даёт ErrTruncated
-// после валидных записей.
-func ReadPortionLogDir(dir string, region RegionID) (FileHeader, []StepRecord, []PanicRecord, error) {
+// LogFrame — кадр лога в порядке записи: шаг или маркер паники (ровно один
+// из указателей не nil). Порядок кадров = порядок применения свёрткой;
+// реплей обрывается на маркере паники.
+type LogFrame struct {
+	Step  *StepRecord
+	Panic *PanicRecord
+}
+
+// ReadPortionFrames читает сессию региона кадрами в порядке записи: цепочка
+// файлов по возрастанию seq, заголовки файлов (включая sessionID) обязаны
+// совпадать; заголовочный регион — с запрошенным (файл выбран по имени, а
+// сид RNG реплей берёт из заголовка). Оборванный хвост даёт ErrTruncated
+// после валидных кадров.
+func ReadPortionFrames(dir string, region RegionID) (FileHeader, []LogFrame, error) {
 	files := listSeqFiles(dir, region)
 	var hdr FileHeader
-	var steps []StepRecord
-	var panics []PanicRecord
+	var frames []LogFrame
 	first := true
 	for _, path := range files {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return hdr, steps, panics, fmt.Errorf("world: чтение лога порций: %w", err)
+			return hdr, frames, fmt.Errorf("world: чтение лога порций: %w", err)
 		}
 		if len(data) == 0 {
 			continue // пустой файл: kill -9 между созданием и первым сбросом буфера
 		}
-		seq := fileSeq(path)
-		fh, fs, fp, err := parseFile(data)
+		fh, fs, err := parseFile(data)
 		if first {
 			hdr = fh
 			first = false
 		} else if err == nil || errors.Is(err, ErrTruncated) {
 			if fh != hdr {
-				return hdr, steps, panics, fmt.Errorf("world: заголовок файла seq=%d расходится с началом цепочки: %+v против %+v", seq, fh, hdr)
+				return hdr, frames, fmt.Errorf("world: заголовок файла seq=%d расходится с началом цепочки: %+v против %+v", fileSeq(path), fh, hdr)
 			}
 		}
-		steps = append(steps, fs...)
-		panics = append(panics, fp...)
+		if err == nil && fh.Region != region {
+			return hdr, frames, fmt.Errorf("world: лог порций: заголовочный регион %d ≠ запрошенному %d", fh.Region, region)
+		}
+		frames = append(frames, fs...)
 		if err != nil {
-			return hdr, steps, panics, err
+			return hdr, frames, err
 		}
 	}
-	return hdr, steps, panics, nil
+	return hdr, frames, nil
+}
+
+// ReadPortionLogDir читает сессию региона: цепочку файлов по возрастанию seq.
+// Заголовки файлов обязаны совпадать; оборванный хвост даёт ErrTruncated
+// после валидных записей. Порядок кадров восстанавливается ридером кадров;
+// шаги и маркеры паник возвращаются раздельными слайсами (интерливинг не
+// нужен — потребитель P3.2).
+func ReadPortionLogDir(dir string, region RegionID) (FileHeader, []StepRecord, []PanicRecord, error) {
+	hdr, frames, err := ReadPortionFrames(dir, region)
+	var steps []StepRecord
+	var panics []PanicRecord
+	for i := range frames {
+		if frames[i].Step != nil {
+			steps = append(steps, *frames[i].Step)
+		} else {
+			panics = append(panics, *frames[i].Panic)
+		}
+	}
+	return hdr, steps, panics, err
 }
 
 // parseFile разбирает один файл: заголовок + кадры до обрыва.
-func parseFile(data []byte) (FileHeader, []StepRecord, []PanicRecord, error) {
+func parseFile(data []byte) (FileHeader, []LogFrame, error) {
 	var hdr FileHeader
 	if len(data) < len(portionMagic) || string(data[:len(portionMagic)]) != portionMagic {
-		return hdr, nil, nil, fmt.Errorf("world: лог порций без магической сигнатуры")
+		return hdr, nil, fmt.Errorf("world: лог порций без магической сигнатуры")
 	}
 	pos := len(portionMagic)
 	ver, n := binary.Uvarint(data[pos:])
 	if n <= 0 {
-		return hdr, nil, nil, fmt.Errorf("world: лог порций: версия не читается")
+		return hdr, nil, fmt.Errorf("world: лог порций: версия не читается")
 	}
 	pos += n
 	hdr.Version = ver
 	if ver != portionVersion {
-		return hdr, nil, nil, fmt.Errorf("world: лог порций версии %d не поддерживается (ожидается %d)",
+		return hdr, nil, fmt.Errorf("world: лог порций версии %d не поддерживается (ожидается %d)",
 			ver, portionVersion)
 	}
 	if pos >= len(data) {
-		return hdr, nil, nil, fmt.Errorf("world: лог порций: флаги не читаются")
+		return hdr, nil, fmt.Errorf("world: лог порций: флаги не читаются")
 	}
 	hdr.Payloads = data[pos]&flagPayloads != 0
 	pos++
 	region, n := binary.Uvarint(data[pos:])
 	if n <= 0 {
-		return hdr, nil, nil, fmt.Errorf("world: лог порций: регион не читается")
+		return hdr, nil, fmt.Errorf("world: лог порций: регион не читается")
 	}
 	pos += n
 	hdr.Region = RegionID(region)
+	session, n := binary.Uvarint(data[pos:])
+	if n <= 0 {
+		return hdr, nil, fmt.Errorf("world: лог порций: sessionID не читается")
+	}
+	pos += n
+	hdr.Session = session
 	period, n := binary.Uvarint(data[pos:])
 	if n <= 0 {
-		return hdr, nil, nil, fmt.Errorf("world: лог порций: период не читается")
+		return hdr, nil, fmt.Errorf("world: лог порций: период не читается")
 	}
 	pos += n
 	hdr.PeriodNS = period
+	grace, n := binary.Uvarint(data[pos:])
+	if n <= 0 {
+		return hdr, nil, fmt.Errorf("world: лог порций: grace не читается")
+	}
+	pos += n
+	hdr.GraceTicks = grace
+	saveRetry, n := binary.Uvarint(data[pos:])
+	if n <= 0 {
+		return hdr, nil, fmt.Errorf("world: лог порций: каденс сохранений не читается")
+	}
+	pos += n
+	hdr.SaveRetryTicks = saveRetry
+	persist, n := binary.Uvarint(data[pos:])
+	if n <= 0 {
+		return hdr, nil, fmt.Errorf("world: лог порций: адрес персиста не читается")
+	}
+	pos += n
+	hdr.Persist = transport.EntityID(persist)
+	gateway, n := binary.Uvarint(data[pos:])
+	if n <= 0 {
+		return hdr, nil, fmt.Errorf("world: лог порций: адрес шлюза не читается")
+	}
+	pos += n
+	hdr.Gateway = transport.EntityID(gateway)
+	ctrl, n := binary.Uvarint(data[pos:])
+	if n <= 0 {
+		return hdr, nil, fmt.Errorf("world: лог порций: ctrl-адрес региона не читается")
+	}
+	pos += n
+	hdr.CtrlFrom = transport.EntityID(ctrl)
 
-	var steps []StepRecord
-	var panics []PanicRecord
+	var frames []LogFrame
 	for pos < len(data) {
 		bodyLen, n := binary.Uvarint(data[pos:])
 		if n <= 0 || bodyLen > uint64(len(data)) {
-			return hdr, steps, panics, ErrTruncated
+			return hdr, frames, ErrTruncated
 		}
 		pos += n
 		if pos+4 > len(data) {
-			return hdr, steps, panics, ErrTruncated
+			return hdr, frames, ErrTruncated
 		}
 		want := binary.LittleEndian.Uint32(data[pos : pos+4])
 		pos += 4
 		if pos+int(bodyLen) > len(data) {
-			return hdr, steps, panics, ErrTruncated
+			return hdr, frames, ErrTruncated
 		}
 		body := data[pos : pos+int(bodyLen)]
 		if crc32.ChecksumIEEE(body) != want {
-			return hdr, steps, panics, ErrTruncated
+			return hdr, frames, ErrTruncated
 		}
 		pos += int(bodyLen)
 		if len(body) == 0 {
@@ -479,20 +592,22 @@ func parseFile(data []byte) (FileHeader, []StepRecord, []PanicRecord, error) {
 		case recStep:
 			st, err := parseStep(body[1:], hdr.Payloads)
 			if err != nil {
-				return hdr, steps, panics, err
+				return hdr, frames, err
 			}
-			steps = append(steps, st)
+			stCopy := st
+			frames = append(frames, LogFrame{Step: &stCopy})
 		case recPanic:
 			p, err := parsePanic(body[1:])
 			if err != nil {
-				return hdr, steps, panics, err
+				return hdr, frames, err
 			}
-			panics = append(panics, p)
+			pCopy := p
+			frames = append(frames, LogFrame{Panic: &pCopy})
 		default:
-			return hdr, steps, panics, fmt.Errorf("world: лог порций: неизвестный тип записи %d", body[0])
+			return hdr, frames, fmt.Errorf("world: лог порций: неизвестный тип записи %d", body[0])
 		}
 	}
-	return hdr, steps, panics, nil
+	return hdr, frames, nil
 }
 
 type parseCursor struct {

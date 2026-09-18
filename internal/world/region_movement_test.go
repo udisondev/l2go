@@ -24,7 +24,7 @@ func moveRegion(t *testing.T) (*Region, *pushCollector) {
 		t.Fatalf("NewMetronome: %v", err)
 	}
 	reg := transport.NewRegistry(0)
-	log, err := NewPortionLog(t.TempDir(), 1, m.period, true, 1<<20) // payloads: реплей-тесту нужны тела писем
+	log, err := NewPortionLog(t.TempDir(), 1, true, 1<<20) // payloads: реплей-тесту нужны тела писем
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestRegionRequiresGeoMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := transport.NewRegistry(0)
-	log, err := NewPortionLog(t.TempDir(), 1, m.period, false, 1<<20)
+	log, err := NewPortionLog(t.TempDir(), 1, false, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

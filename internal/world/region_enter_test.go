@@ -99,7 +99,7 @@ func buildEnterHarness(t *testing.T, cfg Config, pc FramePusher) *enterHarness {
 		t.Fatalf("метроном: %v", err)
 	}
 	reg := transport.NewRegistry(64)
-	log, err := NewPortionLog(t.TempDir(), 1, m.period, false, cfg.LogMaxFileBytes)
+	log, err := NewPortionLog(t.TempDir(), 1, false, cfg.LogMaxFileBytes)
 	if err != nil {
 		t.Fatalf("лог: %v", err)
 	}

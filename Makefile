@@ -30,7 +30,8 @@ tidy:
 
 check: build lint checkdeps race
 
-# Fuzz-смоук: короткий прогон всех целей (CI гоняет тот же список).
+# Fuzz-смоук: короткий прогон всех целей — единый список для локального прогона и CI
+# (CI зовёт make fuzz-smoke; рассинхрон списков устранён в P3.12).
 fuzz-smoke:
 	$(GO) test -fuzz='^FuzzRoundtripFixed$$' -fuzztime=10s ./internal/protocol/
 	$(GO) test -fuzz='^FuzzRoundtripS$$' -fuzztime=10s ./internal/protocol/
@@ -41,9 +42,12 @@ fuzz-smoke:
 	$(GO) test -fuzz='^FuzzGameDecrypt$$' -fuzztime=10s ./internal/crypto/
 	$(GO) test -fuzz='^FuzzLoadItems$$' -fuzztime=10s ./internal/data/
 	$(GO) test -fuzz='^FuzzLoadNpcSpawns$$' -fuzztime=10s ./internal/data/
+	$(GO) test -fuzz='^FuzzLoadZones$$' -fuzztime=10s ./internal/data/
+	$(GO) test -fuzz='^FuzzLoadSkills$$' -fuzztime=10s ./internal/data/
 	$(GO) test -fuzz='^FuzzDecodeRegion$$' -fuzztime=10s ./internal/geo/
 	$(GO) test -fuzz='^FuzzValidLocation$$' -fuzztime=10s ./internal/geo/
 	$(GO) test -fuzz='^FuzzGatewayFrames$$' -fuzztime=10s ./internal/gateway/
+	$(GO) test -fuzz='^FuzzFoldSay2$$' -fuzztime=10s ./internal/world/
 	$(GO) test -fuzz='^FuzzArtifactDecode$$' -fuzztime=10s ./internal/artifact/
 
 # Длинный локальный фаззинг: make fuzz-long FUZZTIME=30m (находки — в testdata/fuzz).
@@ -57,8 +61,12 @@ fuzz-long:
 	$(GO) test -fuzz='^FuzzGameDecrypt$$' -fuzztime=$(FUZZTIME) ./internal/crypto/
 	$(GO) test -fuzz='^FuzzLoadItems$$' -fuzztime=$(FUZZTIME) ./internal/data/
 	$(GO) test -fuzz='^FuzzLoadNpcSpawns$$' -fuzztime=$(FUZZTIME) ./internal/data/
+	$(GO) test -fuzz='^FuzzLoadZones$$' -fuzztime=$(FUZZTIME) ./internal/data/
+	$(GO) test -fuzz='^FuzzLoadSkills$$' -fuzztime=$(FUZZTIME) ./internal/data/
 	$(GO) test -fuzz='^FuzzDecodeRegion$$' -fuzztime=$(FUZZTIME) ./internal/geo/
 	$(GO) test -fuzz='^FuzzValidLocation$$' -fuzztime=$(FUZZTIME) ./internal/geo/
+	$(GO) test -fuzz='^FuzzGatewayFrames$$' -fuzztime=$(FUZZTIME) ./internal/gateway/
+	$(GO) test -fuzz='^FuzzFoldSay2$$' -fuzztime=$(FUZZTIME) ./internal/world/
 	$(GO) test -fuzz='^FuzzArtifactDecode$$' -fuzztime=$(FUZZTIME) ./internal/artifact/
 
 # Сборка сервера одним файлом: статики вшивается артефактом (идемпотентная

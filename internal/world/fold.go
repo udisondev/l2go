@@ -147,6 +147,16 @@ func (st *State) ResolveBirth(account string, conn uint64, id transport.EntityID
 	st.Conns[conn] = id
 }
 
+// stateBirth — связки State при рождении игрока: тень аккаунта/коннекта и
+// немедленное grace-удержание входа, оборванного тем же шагом. Общий для
+// актора и реплея — дрейф логики исключён.
+func stateBirth(st *State, ent *Entity, tick Tick, grace int) {
+	st.ResolveBirth(ent.Player.Rec.Account, ent.Player.ConnID, ent.ID)
+	if ent.Player.EnterLeaving {
+		addLeaving(st, leaveState{Entity: ent.ID, Deadline: tick + Tick(grace)})
+	}
+}
+
 // CleanBirth — условная развязка тени ухода: безусловный delete стёр бы бинд
 // новой сущности того же аккаунта, вошедшей этим же шагом (S6-М2).
 func (st *State) CleanBirth(account string, conn uint64, id transport.EntityID) {

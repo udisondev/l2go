@@ -21,7 +21,7 @@ func TestRegionStressSenders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMetronome: %v", err)
 	}
-	log, err := NewPortionLog(t.TempDir(), 1, m.period, false, 1<<20)
+	log, err := NewPortionLog(t.TempDir(), 1, false, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}

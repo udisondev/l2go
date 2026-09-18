@@ -72,6 +72,10 @@ type Region struct {
 	adv       *logAdviser
 	advWindow bool // окно advisory-чтений: от начала шага до LogStep
 
+	// finalDump — дамп состояния и населения на выходе Run (считается в
+	// горутине региона; чтение — только после её завершения).
+	finalDump []byte
+
 	ctrl      transport.Mailbox
 	ctrlID    transport.EntityID
 	ctrlToken uint64
@@ -192,9 +196,18 @@ func NewRegion(metro *Metronome, reg *transport.Registry, id RegionID, cfg Confi
 // CtrlID — адрес контрольного ящика региона (получатели контрольных писем).
 func (r *Region) CtrlID() transport.EntityID { return r.ctrlID }
 
+// FinalDump — дамп состояния и населения на выходе Run. Вычисляется в
+// горутине региона (defer, зарегистрированным первым — исполнится последним,
+// после финального сохранителя и закрытия лога); до запуска Run — nil.
+// Контракт: читать только после остановки региона — happens-before даёт
+// закрытие канала завершения контуром (regionDone), конкурентный вызов при
+// живом Run — вне контракта (single-writer).
+func (r *Region) FinalDump() []byte { return r.finalDump }
+
 // Wire — адресаты контрольных писем свёртки (шлюз, персист) и период
 // метронома (движение переводит тики во время). Вызов обязателен до старта
-// Run: регион рождается раньше шлюза, адрес при New неизвестен.
+// Run: регион рождается раньше шлюза, адрес при New неизвестен. Заодно
+// устанавливает реплей-контракт лога порций (заголовок кодируется из правил).
 func (r *Region) Wire(gateway, pers transport.EntityID) error {
 	if r.started.Load() {
 		return fmt.Errorf("world: Wire после старта Run")
@@ -206,6 +219,9 @@ func (r *Region) Wire(gateway, pers transport.EntityID) error {
 		Persist:        pers,
 		Gateway:        gateway,
 		From:           r.ctrlID,
+	}
+	if err := r.log.SetRules(r.rules); err != nil {
+		return fmt.Errorf("world: Wire(%d): реплей-контракт лога порций: %w", r.id, err)
 	}
 	return nil
 }
@@ -339,6 +355,10 @@ func (r *Region) Remove(id transport.EntityID) {
 // сама закрывает лог порций.
 func (r *Region) Run(ctx context.Context) {
 	r.started.Store(true)
+	// defer первым = исполнится последним (после финального сохранителя и
+	// закрытия лога) и покрывает ранний возврат без Wire: дамп есть на любом
+	// пути выхода
+	defer func() { r.finalDump = r.state.Dump(r.entsProj()) }()
 	defer r.shutdown()
 	defer r.closeLog()
 	defer r.finalSave()
@@ -793,13 +813,13 @@ func (r *Region) applyEffects(res StepResult, tick Tick) []AppliedBirth {
 			continue
 		}
 		ent.ID = id
+		ent.Owner = r.id // Spawn ставит владельца своей копии; лог несёт полную сущность (реплей вставляет как есть)
 		births = append(births, AppliedBirth{ID: id, Ent: &ent})
 		if ent.Player == nil {
 			continue
 		}
-		r.state.ResolveBirth(ent.Player.Rec.Account, ent.Player.ConnID, id)
+		stateBirth(r.state, &ent, tick, r.cfg.GraceTicks)
 		if ent.Player.EnterLeaving {
-			addLeaving(r.state, leaveState{Entity: id, Deadline: tick + Tick(r.cfg.GraceTicks)})
 			continue
 		}
 		r.sendBind(ent.Player.ConnID, id)

@@ -6,7 +6,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -62,17 +64,18 @@ var gameHexID = []byte("l2go-interlude-gs")
 
 // config — конфигурация контура: флаги run() или харнесс тестов (package main).
 type config struct {
-	Addr           string // слушатель игровой ноги (":0" — тесты)
-	Host           string // адрес игры для ServerList; пусто — хост слушателя
-	Hz             int
-	PersistDir     string
-	ArtifactPath   string
-	PortionsDir    string
-	LinkAddr       string // gRPC-стык LoginServer (mTLS)
-	TLSDir         string
-	MaxConns       int
-	GraceTicks     int
-	SaveRetryTicks int
+	Addr             string // слушатель игровой ноги (":0" — тесты)
+	Host             string // адрес игры для ServerList; пусто — хост слушателя
+	Hz               int
+	PersistDir       string
+	ArtifactPath     string
+	PortionsDir      string
+	PortionsPayloads bool   // запись тел писем в лог порций (реплей D6 требует payloads)
+	LinkAddr         string // gRPC-стык LoginServer (mTLS)
+	TLSDir           string
+	MaxConns         int
+	GraceTicks       int
+	SaveRetryTicks   int
 	// NPCCenterX/Y, NPCRadius — срез разворачивания NPC-населения P3.10:
 	// центр по умолчанию — стартовая точка новичка (КТ-1: географию среза
 	// владелец утверждает по гео-покрытию).
@@ -154,7 +157,7 @@ func bootstrap(cfg config) (*server, error) {
 		return nil, fmt.Errorf("l2go: персист: %w", err)
 	}
 	plog, err := world.NewPortionLog(cfg.PortionsDir, regionID,
-		time.Second/time.Duration(cfg.Hz), false, portionMaxFile)
+		cfg.PortionsPayloads, portionMaxFile)
 	if err != nil {
 		un1()
 		return nil, fmt.Errorf("l2go: лог порций: %w", err)
@@ -370,6 +373,10 @@ func run(args []string) error {
 	persistDir := fs.String("persist", "var/persist", "каталог персиста")
 	artifactPath := fs.String("artifact", "", "путь к артефакту статики (обязателен)")
 	portionsDir := fs.String("portions", "var/portions", "каталог лога порций")
+	portionsPayloads := fs.Bool("portions-payloads", false, "записывать тела писем в лог порций (требование реплея D6; дефолт — заголовки)")
+	replayDir := fs.String("replay", "", "режим реплея: каталог сессии лога порций (контур не поднимается)")
+	replayRegion := fs.Int("region", 1, "регион сессии для -replay")
+	replayExpect := fs.String("expect", "", "файл эталонного дампа для сверки -replay (бит-в-бит)")
 	link := fs.String("link", "127.0.0.1:9011", "адрес gRPC-стыка LoginServer (mTLS)")
 	tlsDir := fs.String("tls", "var/tls", "каталог mTLS-материала стыка")
 	maxConns := fs.Int("max-conns", 20000, "лимит одновременных коннектов")
@@ -377,6 +384,10 @@ func run(args []string) error {
 	npcRadius := fs.Int("npc-radius", 20000, "радиус среза NPC вокруг центра; 0 — без NPC-населения")
 	fs.Parse(args)
 	setupLog()
+
+	if *replayDir != "" {
+		return replayRun(*replayDir, *replayRegion, *artifactPath, *replayExpect)
+	}
 
 	cx, cy := int32(persist.HumanFighter.StartX), int32(persist.HumanFighter.StartY)
 	if *npcCenter != "" {
@@ -398,7 +409,8 @@ func run(args []string) error {
 	srv, err := bootstrap(config{
 		Addr: *addr, Host: *host, Hz: *hz,
 		PersistDir: *persistDir, ArtifactPath: *artifactPath,
-		PortionsDir: *portionsDir, LinkAddr: *link, TLSDir: *tlsDir,
+		PortionsDir: *portionsDir, PortionsPayloads: *portionsPayloads,
+		LinkAddr: *link, TLSDir: *tlsDir,
 		MaxConns:       *maxConns,
 		GraceTicks:     world.DefaultGraceTicks,
 		SaveRetryTicks: world.DefaultSaveRetryTicks,
@@ -419,4 +431,69 @@ func run(args []string) error {
 
 func setupLog() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+}
+
+// replayRun — режим -replay: записанная сессия лога порций прогоняется
+// через ту же свёртку (D6) без подъёма контура. Неполный результат (маркер
+// паники, оборванный хвост) — ненулевой выход без сверки: частичный дамп не
+// выдаётся за полный. Полный: с -expect — бит-в-бит сверка (диагностика
+// первого расхождения + команда перезаписи фикстуры), без — дамп в stdout.
+func replayRun(dir string, region int, artifactPath, expect string) error {
+	if artifactPath == "" {
+		return fmt.Errorf("l2go: -replay требует -artifact (тот же, которым записана сессия)")
+	}
+	static, gm, _, _, err := artifact.LoadFile(artifactPath)
+	if err != nil {
+		return fmt.Errorf("l2go: артефакт %s: %w", artifactPath, err)
+	}
+	hdr, frames, err := world.ReadPortionFrames(dir, world.RegionID(region))
+	truncated := errors.Is(err, world.ErrTruncated)
+	if err != nil && !truncated {
+		return fmt.Errorf("l2go: чтение лога порций %s: %w", dir, err)
+	}
+	if hdr.Version == 0 {
+		return fmt.Errorf("l2go: -replay %s: сессия региона %d не найдена или без шагов", dir, region)
+	}
+	res, err := world.Replay(hdr, frames, static, gm)
+	if err != nil {
+		return fmt.Errorf("l2go: реплей: %w", err)
+	}
+	slog.Info("l2go: реплей",
+		"region", hdr.Region, "session", hdr.Session,
+		"steps", res.Steps, "letters", res.Letters,
+		"stoppedAtPanic", res.StoppedAtPanic, "truncated", truncated)
+	if res.StoppedAtPanic || truncated {
+		return fmt.Errorf("l2go: реплей неполный (stoppedAtPanic=%v, truncated=%v): дамп недостоверен, сверка не выполняется",
+			res.StoppedAtPanic, truncated)
+	}
+	if expect == "" {
+		if _, err := os.Stdout.Write(res.Dump); err != nil {
+			return fmt.Errorf("l2go: вывод дампа: %w", err)
+		}
+		return nil
+	}
+	want, err := os.ReadFile(expect)
+	if err != nil {
+		return fmt.Errorf("l2go: -expect %s: %w", expect, err)
+	}
+	if !bytes.Equal(res.Dump, want) {
+		return fmt.Errorf("l2go: дамп реплея разошлся с %s на офсете %d (got %d байт, want %d); перезапись фикстуры: L2GO_RECORD_FIXTURE=1 go test -run TestReplayRecordFixture ./cmd/l2go",
+			expect, firstDiff(res.Dump, want), len(res.Dump), len(want))
+	}
+	slog.Info("l2go: реплей: дамп совпал бит-в-бит", "bytes", len(res.Dump))
+	return nil
+}
+
+// firstDiff — первый различающийся офсет (длины могут отличаться).
+func firstDiff(a, b []byte) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return n
 }

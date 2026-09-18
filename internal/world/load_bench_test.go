@@ -64,7 +64,7 @@ func BenchmarkRegionPlayerLoad(b *testing.B) {
 						b.Fatal(err)
 					}
 					reg := transport.NewRegistry(0)
-					log, err := NewPortionLog(b.TempDir(), 1, m.period, false, 1<<20)
+					log, err := NewPortionLog(b.TempDir(), 1, false, 1<<20)
 					if err != nil {
 						b.Fatal(err)
 					}

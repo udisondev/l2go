@@ -136,17 +136,42 @@ func waitForLine(t *testing.T, out *syncBuffer, substr string, budget time.Durat
 
 // e2eEnv — поднятый контур: LS (login-нога + стык) и GS (bootstrap).
 type e2eEnv struct {
-	t       *testing.T
-	lsAddr  string
-	gsAddr  string
-	gs      *server
-	persist string // каталог chars GS
+	t         *testing.T
+	lsAddr    string
+	gsAddr    string
+	gs        *server
+	persist   string // каталог chars GS
+	portions  string // каталог лога порций GS
+	withNPC   bool
+	payloads  bool // запись тел писем в лог порций (реплей D6)
+	staticSet bool
+}
+
+// e2eOpts — параметры старта контура сверх hz/grace (P3.12).
+type e2eOpts struct {
+	npc              bool
+	portionsPayloads bool
+	portionsDir      string
 }
 
 // startE2E — полный контур с ускоренными тиками (hz) и коротким grace;
 // npc=true — разворачивание NPC-населения стартовой окрестности (P3.10).
 func startE2E(t *testing.T, hz, graceTicks int, npc ...bool) *e2eEnv {
 	t.Helper()
+	opts := e2eOpts{}
+	if len(npc) > 0 && npc[0] {
+		opts.npc = true
+	}
+	return startE2EOpts(t, hz, graceTicks, opts)
+}
+
+// startE2EOpts — старт контура с полными опциями (payloads-запись лога
+// порций и явный каталог — потребители реплей-гейта P3.12).
+func startE2EOpts(t *testing.T, hz, graceTicks int, opts e2eOpts) *e2eEnv {
+	t.Helper()
+	if opts.portionsDir == "" {
+		opts.portionsDir = t.TempDir()
+	}
 
 	// mTLS-материал стыка (ed25519, миллисекунды).
 	tlsDir := t.TempDir()
@@ -198,29 +223,31 @@ func startE2E(t *testing.T, hz, graceTicks int, npc ...bool) *e2eEnv {
 
 	gsPersist := t.TempDir()
 	radius := 0
-	if len(npc) > 0 && npc[0] {
+	if opts.npc {
 		radius = 20000
 	}
 	srv, err := bootstrap(config{
 		Addr: "127.0.0.1:0", Hz: hz,
-		PersistDir:     gsPersist,
-		ArtifactPath:   synthArtifact,
-		PortionsDir:    t.TempDir(),
-		LinkAddr:       linkLn.Addr().String(),
-		TLSDir:         tlsDir,
-		MaxConns:       32,
-		GraceTicks:     graceTicks,
-		SaveRetryTicks: 2,
-		NPCCenterX:     int32(persist.HumanFighter.StartX),
-		NPCCenterY:     int32(persist.HumanFighter.StartY),
-		NPCRadius:      int32(radius),
+		PersistDir:       gsPersist,
+		ArtifactPath:     synthArtifact,
+		PortionsDir:      opts.portionsDir,
+		PortionsPayloads: opts.portionsPayloads,
+		LinkAddr:         linkLn.Addr().String(),
+		TLSDir:           tlsDir,
+		MaxConns:         32,
+		GraceTicks:       graceTicks,
+		SaveRetryTicks:   2,
+		NPCCenterX:       int32(persist.HumanFighter.StartX),
+		NPCCenterY:       int32(persist.HumanFighter.StartY),
+		NPCRadius:        int32(radius),
 	})
 	if err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
 	t.Cleanup(srv.shutdown)
 	return &e2eEnv{t: t, lsAddr: lsLn.Addr().String(), gsAddr: srv.gameAddr(),
-		gs: srv, persist: gsPersist}
+		gs: srv, persist: gsPersist, portions: opts.portionsDir,
+		withNPC: opts.npc, payloads: opts.portionsPayloads, staticSet: opts.npc}
 }
 
 // session — одна клиентская сессия до стационара (создание персонажа, вход).
@@ -1224,6 +1251,14 @@ func creatureSayLines(out *syncBuffer, name string) []string {
 func TestE2EFullDodScenario(t *testing.T) {
 	start := time.Now()
 	env := startE2E(t, 10, 4, true)
+	dodScenario(t, env)
+	t.Logf("DoD-смоук: %s", time.Since(start))
+}
+
+// dodScenario — полный DoD-сценарий фазы 3 (он же e2e-смоук CI): потребители
+// — смоук-тест и записыватель фикстуры реплея (P3.12), asserts по трафик-логу.
+func dodScenario(t *testing.T, env *e2eEnv) {
+	t.Helper()
 	alice := enterWorld(t, env, "doda")
 	lineUI := waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
 	ax, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
@@ -1273,7 +1308,6 @@ func TestE2EFullDodScenario(t *testing.T) {
 	if got := parseCoord(t, line2, "x"); got != ax+120 {
 		t.Errorf("перезаход x = %d; want %d (сохранённая позиция прибытия)", got, ax+120)
 	}
-	t.Logf("DoD-смоук: %s", time.Since(start))
 }
 
 // Реплика вне радиуса речи (в известности): третий на dx=3000 — интервал

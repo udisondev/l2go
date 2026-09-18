@@ -1,0 +1,5 @@
+session=10281571505395776710
+region=1 payloads=true period_ns=100000000 grace=4 save_retry=2 persist=1 gateway=3 ctrl=2
+steps=19 letters=8
+final.dump sha256=058d2b8a54b44ff052949cc8bdb94735f744fca26f462ab8e251b4847c23b9fa
+portion-1-1.log 2509 байт

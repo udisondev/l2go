@@ -2,22 +2,23 @@ package world
 
 import (
 	"errors"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
-	"time"
 
+	"github.com/udisondev/l2go/internal/geo"
 	"github.com/udisondev/l2go/internal/persist"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
 func newTestLog(t *testing.T, payloads bool, maxFile int64) *PortionLog {
 	t.Helper()
-	l, err := NewPortionLog(t.TempDir(), 7, 100*time.Millisecond, payloads, maxFile)
+	l, err := NewPortionLog(t.TempDir(), 7, payloads, maxFile)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := l.Close(); err != nil {
@@ -27,27 +28,100 @@ func newTestLog(t *testing.T, payloads bool, maxFile int64) *PortionLog {
 	return l
 }
 
-// Злые входы конструктора: пустой каталог, неположительный период и
-// отрицательный размер файла отклоняются валидацией.
+// Злые входы конструктора: пустой каталог и отрицательный размер файла
+// отклоняются валидацией (правила — в SetRules, см. отдельную таблицу).
 func TestPortionLogConfigValidation(t *testing.T) {
 	dir := t.TempDir()
 	bad := []struct {
 		name    string
 		dir     string
-		period  time.Duration
 		maxFile int64
 	}{
-		{name: "dir пустой", dir: "", period: time.Second, maxFile: 1 << 20},
-		{name: "period=0", dir: dir, period: 0, maxFile: 1 << 20},
-		{name: "period<0", dir: dir, period: -time.Second, maxFile: 1 << 20},
-		{name: "maxFileBytes<0", dir: dir, period: time.Second, maxFile: -1},
+		{name: "dir пустой", dir: "", maxFile: 1 << 20},
+		{name: "maxFileBytes<0", dir: dir, maxFile: -1},
 	}
 	for _, c := range bad {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := NewPortionLog(c.dir, 7, c.period, false, c.maxFile); err == nil {
-				t.Errorf("NewPortionLog(%q, %v, %d) прошёл валидацию; want ошибка", c.dir, c.period, c.maxFile)
+			if _, err := NewPortionLog(c.dir, 7, false, c.maxFile); err == nil {
+				t.Errorf("NewPortionLog(%q, %d) прошёл валидацию; want ошибка", c.dir, c.maxFile)
 			}
 		})
+	}
+}
+
+// SetRules — до первой записи кадра: нулевые период/окна/адресаты
+// отвергаются именованными ошибками (реплей с такими правилами недостоверен).
+func TestPortionLogSetRulesRejectsNonPositive(t *testing.T) {
+	good := testRules()
+	for _, c := range []struct {
+		name  string
+		mut   func(*Rules)
+		field string
+	}{
+		{"PeriodNS=0", func(r *Rules) { r.PeriodNS = 0 }, "PeriodNS"},
+		{"GraceTicks=0", func(r *Rules) { r.GraceTicks = 0 }, "GraceTicks"},
+		{"SaveRetryTicks=0", func(r *Rules) { r.SaveRetryTicks = 0 }, "SaveRetryTicks"},
+		{"Persist=0", func(r *Rules) { r.Persist = 0 }, "Persist"},
+		{"Gateway=0", func(r *Rules) { r.Gateway = 0 }, "Gateway"},
+		{"From=0", func(r *Rules) { r.From = 0 }, "From"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l, err := NewPortionLog(t.TempDir(), 7, false, 1<<20)
+			if err != nil {
+				t.Fatalf("NewPortionLog: %v", err)
+			}
+			r := good
+			c.mut(&r)
+			if err := l.SetRules(r); err == nil {
+				t.Errorf("SetRules(%s=0) прошёл валидацию; want ошибка", c.field)
+			}
+		})
+	}
+}
+
+// Кадр без реплей-контракта (SetRules/Wire не пройдены) — ошибка записи:
+// регион обязан заморозиться действующим механизмом, файл остаётся пуст.
+func TestPortionLogRequiresSetRulesBeforeFrame(t *testing.T) {
+	l, err := NewPortionLog(t.TempDir(), 7, true, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.LogStep(StepInput{Tick: 1, Delta: 1}); err == nil {
+		t.Fatal("LogStep без SetRules прошёл молча; want ошибка")
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	hdr, frames, err := ReadPortionFrames(l.dir, 7)
+	if err != nil || hdr.Version != 0 || len(frames) != 0 {
+		t.Fatalf("после отказа: hdr=%+v frames=%d err=%v; want пустая сессия", hdr, len(frames), err)
+	}
+}
+
+// Заголовок ленивый: сессия без шагов не пишет заголовка вовсе — файл 0 байт,
+// чтение цепочки не ломается (ридер пропускает пустые файлы).
+func TestPortionLogHeaderLazyEmptySession(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewPortionLog(dir, 7, true, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "portion-7-1.log"))
+	if err != nil {
+		t.Fatalf("os.Stat: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("файл сессии без шагов = %d байт; want 0 (заголовок ленивый)", info.Size())
+	}
+	hdr, frames, err := ReadPortionFrames(dir, 7)
+	if err != nil || hdr.Version != 0 || len(frames) != 0 {
+		t.Fatalf("пустая сессия: hdr=%+v frames=%d err=%v", hdr, len(frames), err)
 	}
 }
 
@@ -83,9 +157,14 @@ func TestPortionLogRoundtrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
-		// версия — литералом: откат bump должен краснеть, а не следовать константе
-		if hdr.Region != 7 || hdr.Version != 5 || hdr.Payloads != payloads || hdr.PeriodNS == 0 {
-			t.Fatalf("заголовок %+v", hdr)
+		// версия — литералом: откат bump должен краснеть, а не следовать константе;
+		// v6 несёт реплей-контракт: sessionID и правила свёртки
+		wantRules := testRules()
+		if hdr.Region != 7 || hdr.Version != 6 || hdr.Payloads != payloads || hdr.Session == 0 ||
+			hdr.PeriodNS != uint64(wantRules.PeriodNS) || hdr.GraceTicks != uint64(wantRules.GraceTicks) ||
+			hdr.SaveRetryTicks != uint64(wantRules.SaveRetryTicks) || hdr.Persist != wantRules.Persist ||
+			hdr.Gateway != wantRules.Gateway || hdr.CtrlFrom != wantRules.From {
+			t.Fatalf("заголовок %+v; want контракт %+v", hdr, wantRules)
 		}
 		if len(steps) != 1 || len(panics) != 1 {
 			t.Fatalf("записей: steps=%d panics=%d; want 1 и 1", len(steps), len(panics))
@@ -150,12 +229,16 @@ func TestPortionLogEveryStepWritten(t *testing.T) {
 	}
 }
 
-// Ротация по размеру: следующий файл, цепочка читается по seq.
+// Ротация по размеру: следующий файл, цепочка читается по seq; заголовок
+// ротированного файла несёт тот же sessionID и те же правила (бит-в-бит).
 func TestPortionLogRotationAndChain(t *testing.T) {
 	dir := t.TempDir()
-	l, err := NewPortionLog(dir, 3, 100*time.Millisecond, false, 64)
+	l, err := NewPortionLog(dir, 3, false, 64)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
 	}
 	for i := range 20 {
 		s := StepInput{Tick: Tick(i), Delta: 1,
@@ -171,26 +254,50 @@ func TestPortionLogRotationAndChain(t *testing.T) {
 	if err != nil || len(files) < 2 {
 		t.Fatalf("ротация не создала цепочку: %v (%v)", files, err)
 	}
-	_, steps, _, err := ReadPortionLogDir(dir, 3)
+	var firstHdr FileHeader
+	for fi, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		fh, _, err := parseFile(raw)
+		if err != nil {
+			t.Fatalf("parseFile %s: %v", path, err)
+		}
+		if fi == 0 {
+			firstHdr = fh
+		} else if fh != firstHdr {
+			t.Fatalf("заголовок ротации разошёлся: %+v против %+v", fh, firstHdr)
+		}
+	}
+	hdr, frames, err := ReadPortionFrames(dir, 3)
 	if err != nil {
-		t.Fatalf("ReadPortionLogDir: %v", err)
+		t.Fatalf("ReadPortionFrames: %v", err)
 	}
-	if len(steps) != 20 {
-		t.Fatalf("цепочка вернула %d шагов; want 20", len(steps))
+	if hdr != firstHdr {
+		t.Fatalf("заголовок цепочки %+v ≠ первого файла %+v", hdr, firstHdr)
 	}
-	for i, st := range steps {
-		if st.Tick != Tick(i) {
-			t.Fatalf("порядок цепочки нарушен: steps[%d].Tick = %d", i, st.Tick)
+	if len(frames) != 20 {
+		t.Fatalf("цепочка вернула %d кадров; want 20", len(frames))
+	}
+	for i, f := range frames {
+		if f.Step == nil || f.Step.Tick != Tick(i) {
+			t.Fatalf("порядок цепочки нарушен: frames[%d] = %+v", i, f)
 		}
 	}
 }
 
-// seq на рестарте: max существующих + 1 — сессии не смешиваются, старый файл цел.
-func TestPortionLogRestartSeq(t *testing.T) {
+// seq на рестарте: max существующих + 1 — файлы не затираются; вторая сессия
+// в каталоге читается ГРОМКОЙ ошибкой (sessionID различает прогоны: тик
+// метронома рестартует с нуля, склейка дала бы недостоверный дамп).
+func TestPortionLogSecondSessionSameDirRejected(t *testing.T) {
 	dir := t.TempDir()
-	first, err := NewPortionLog(dir, 7, 100*time.Millisecond, false, 1<<20)
+	first, err := NewPortionLog(dir, 7, true, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := first.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
 	}
 	if err := first.LogStep(StepInput{Tick: 1, Delta: 1}); err != nil {
 		t.Fatalf("LogStep: %v", err)
@@ -198,19 +305,15 @@ func TestPortionLogRestartSeq(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	second, err := NewPortionLog(dir, 7, 100*time.Millisecond, false, 1<<20)
+	second, err := NewPortionLog(dir, 7, true, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
-	// после закрытия second файл больше не читается — ошибка ловится здесь,
-	// а не молчаливым defer
-	t.Cleanup(func() {
-		if err := second.Close(); err != nil {
-			t.Errorf("Close: %v", err)
-		}
-	})
 	if second.seq != first.seq+1 {
 		t.Fatalf("seq новой сессии = %d; want %d (max существующих + 1)", second.seq, first.seq+1)
+	}
+	if err := second.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
 	}
 	if err := second.LogStep(StepInput{Tick: 2, Delta: 0}); err != nil {
 		t.Fatalf("LogStep: %v", err)
@@ -218,12 +321,8 @@ func TestPortionLogRestartSeq(t *testing.T) {
 	if err := second.w.Flush(); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
-	_, steps, _, err := ReadPortionLogDir(dir, 7)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if len(steps) != 2 || steps[0].Tick != 1 || steps[1].Tick != 2 {
-		t.Fatalf("сессии смешались: %+v", steps)
+	if _, _, _, err := ReadPortionLogDir(dir, 7); err == nil {
+		t.Fatal("прогоны после рестарта склеены молча; want ошибка цепочки (sessionID)")
 	}
 }
 
@@ -231,9 +330,12 @@ func TestPortionLogRestartSeq(t *testing.T) {
 // валидных записей, а не мусор.
 func TestPortionLogTruncatedTail(t *testing.T) {
 	dir := t.TempDir()
-	l, err := NewPortionLog(dir, 7, 100*time.Millisecond, true, 1<<20)
+	l, err := NewPortionLog(dir, 7, true, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
 	}
 	for i := range 3 {
 		if err := l.LogStep(StepInput{Tick: Tick(i), Delta: 1}); err != nil {
@@ -277,9 +379,12 @@ func TestPortionLogEncodeZeroAlloc(t *testing.T) {
 // E1: версия цепочки проверяется строго — v1/мусор дают явную ошибку.
 func TestPortionLogVersionStrict(t *testing.T) {
 	dir := t.TempDir()
-	l, err := NewPortionLog(dir, 7, 100*time.Millisecond, false, 1<<20)
+	l, err := NewPortionLog(dir, 7, false, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
 	}
 	if err := l.LogStep(StepInput{Tick: 1}); err != nil {
 		t.Fatalf("LogStep: %v", err)
@@ -317,9 +422,12 @@ func TestPortionLogVersionStrict(t *testing.T) {
 // E2: roundtrip Player с отрицательными int64 (X/Exp/CreatedUnix).
 func TestPortionLogPlayerRoundtrip(t *testing.T) {
 	dir := t.TempDir()
-	l, err := NewPortionLog(dir, 9, 100*time.Millisecond, false, 1<<20)
+	l, err := NewPortionLog(dir, 9, false, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
 	}
 	ent := Entity{Owner: 9, Pos: Position{X: -71338, Y: 258271, Z: -3104}, HP: 80,
 		Player: &Player{Rec: mkRec("acc", "Vasya", 0)}}
@@ -399,8 +507,8 @@ func TestPortionLogMovementRoundtrip(t *testing.T) {
 }
 
 // Реплей движения бит-в-бит: лог записанной сессии (входы письмами — рождения
-// логируются) прогоняется через тот же Fold (период — из заголовка) — дамп
-// равен живому; повтор — тоже; перестановка двух писем шага меняет дамп.
+// логируются с Owner и присвоенными ID) прогоняется через Replay — дамп равен
+// живому; повтор — тоже; перестановка двух писем шага меняет дамп.
 func TestPortionLogReplayMovementDigest(t *testing.T) {
 	r, _ := moveRegion(t)
 	// входы письмами: рождения попадают в лог с присвоенными ID
@@ -431,56 +539,39 @@ func TestPortionLogReplayMovementDigest(t *testing.T) {
 	if err := r.log.w.Flush(); err != nil { // тест читает при живом писателе
 		t.Fatalf("flush: %v", err)
 	}
-	hdr, steps, _, err := ReadPortionLogDir(r.log.dir, r.log.region)
+	hdr, frames, err := ReadPortionFrames(r.log.dir, r.log.region)
 	if err != nil {
-		t.Fatalf("ReadPortionLogDir: %v", err)
+		t.Fatalf("ReadPortionFrames: %v", err)
 	}
-	if len(steps) < 10 {
-		t.Fatalf("шагов в логе = %d; want ≥10", len(steps))
+	if len(frames) < 10 {
+		t.Fatalf("шагов в логе = %d; want ≥10", len(frames))
 	}
 	if hdr.PeriodNS != uint64(r.metro.period) {
 		t.Fatalf("заголовок несёт период %d; want %d (метроном сессии)", hdr.PeriodNS, r.metro.period)
 	}
 
-	// replay — зеркалит шаг региона: fold писем, рождения применяются с ID из
-	// лога (сортированная вставка), удаления изымаются
 	replay := func(mutateSwap bool) []byte {
-		st := newState()
-		var ents []*Entity
-		rules := testRules()
-		rules.PeriodNS = int64(hdr.PeriodNS) // шов 1: реплей берёт период из заголовка лога
-		for si, s := range steps {
-			portions := make([]Portion, len(s.Portions))
-			for i, p := range s.Portions {
-				envs := p.Envs
-				if mutateSwap && si == 2 && len(envs) >= 2 {
-					envs[0], envs[1] = envs[1], envs[0]
+		fr := frames
+		if mutateSwap { // перестановка двух клиентских кадров одной пачки
+			// (ретаргет движения: порядок писем определяет итоговый Dest);
+			// вызывается последним — разделяемые Envs после этого не читаются
+			fr = append([]LogFrame(nil), frames...)
+			for _, f := range fr {
+				if f.Step == nil {
+					continue
 				}
-				portions[i] = Portion{Region: r.id, Tick: s.Tick, Envs: envs}
-			}
-			rng := rand.New(rand.NewPCG(uint64(r.id), uint64(s.Tick)))
-			Fold(s.Tick, s.Delta, rng, st, ents, portions, s.Advisory, Env{Region: r.id, Rules: rules, GM: r.gm})
-			for _, br := range s.Births {
-				e := br.Ent
-				e.Owner = r.id // Spawn актора ставит владельца — зеркалим
-				idx := sort.Search(len(ents), func(i int) bool { return ents[i].ID >= br.ID })
-				ents = append(ents, nil)
-				copy(ents[idx+1:], ents[idx:])
-				ents[idx] = &e
-				if e.Player != nil { // материализация теней — зеркалит applyEffects актора
-					st.ResolveBirth(e.Player.Rec.Account, e.Player.ConnID, e.ID)
-				}
-			}
-			for _, rt := range s.Retires {
-				for i := range ents {
-					if ents[i].ID == rt.ID {
-						ents = append(ents[:i], ents[i+1:]...)
-						break
+				for pi := range f.Step.Portions {
+					envs := f.Step.Portions[pi].Envs
+					for ei := 0; ei+1 < len(envs); ei++ {
+						if envs[ei].Kind == transport.KindClientFrame && envs[ei+1].Kind == transport.KindClientFrame {
+							envs[ei], envs[ei+1] = envs[ei+1], envs[ei]
+							return ReplayDump(t, hdr, fr, r.gm)
+						}
 					}
 				}
 			}
 		}
-		return st.Dump(ents)
+		return ReplayDump(t, hdr, fr, r.gm)
 	}
 	d1, d2 := replay(false), replay(false)
 	if string(d1) != string(d2) {
@@ -492,6 +583,16 @@ func TestPortionLogReplayMovementDigest(t *testing.T) {
 	if d3 := replay(true); string(d3) == string(d1) {
 		t.Fatal("перестановка двух писем шага не меняет дамп — детектор слеп")
 	}
+}
+
+// ReplayDump — прогон кадров через Replay с фаталью по ошибке (хелпер тестов).
+func ReplayDump(t *testing.T, hdr FileHeader, fr []LogFrame, gm *geo.Map) []byte {
+	t.Helper()
+	res, err := Replay(hdr, fr, nil, gm)
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	return res.Dump
 }
 
 // mustJSONEnter — письмо входа (коннект + запись) для ручных сценариев.

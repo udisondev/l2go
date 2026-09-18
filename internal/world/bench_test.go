@@ -19,7 +19,7 @@ func newBenchRegion(b *testing.B, cfg Config, population int) *Region {
 		b.Fatalf("NewMetronome: %v", err)
 	}
 	reg := transport.NewRegistry(0)
-	log, err := NewPortionLog(b.TempDir(), 1, m.period, cfg.LogPayloads, 1<<20)
+	log, err := NewPortionLog(b.TempDir(), 1, cfg.LogPayloads, 1<<20)
 	if err != nil {
 		b.Fatalf("NewPortionLog: %v", err)
 	}
@@ -147,13 +147,16 @@ func TestRegionStepIdleAllocBudget(t *testing.T) {
 		t.Fatalf("NewMetronome: %v", err)
 	}
 	reg := transport.NewRegistry(0)
-	log, err := NewPortionLog(t.TempDir(), 1, m.period, false, 1<<20)
+	log, err := NewPortionLog(t.TempDir(), 1, false, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
 	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{}, emptyGeo)
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
+	}
+	if err := r.Wire(901, 900); err != nil { // реплей-контракт лога (SetRules) — до шагов
+		t.Fatalf("Wire: %v", err)
 	}
 	defer log.Close() // осознанный игнор: после теста файл лога не читается, ошибка Close на оракул не влияет
 	for range 100 {
@@ -305,13 +308,16 @@ func TestRegionStepMovingAllocBudget(t *testing.T) {
 		t.Fatalf("NewMetronome: %v", err)
 	}
 	reg := transport.NewRegistry(0)
-	log, err := NewPortionLog(t.TempDir(), 1, m.period, false, 1<<20)
+	log, err := NewPortionLog(t.TempDir(), 1, false, 1<<20)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
 	r, err := NewRegion(m, reg, 1, cfg, log, nullPusher{}, emptyGeo)
 	if err != nil {
 		t.Fatalf("NewRegion: %v", err)
+	}
+	if err := r.Wire(901, 900); err != nil { // реплей-контракт лога (SetRules) — до шагов
+		t.Fatalf("Wire: %v", err)
 	}
 	defer log.Close() // осознанный игнор: файл после теста не читается
 	for i := range 100 {

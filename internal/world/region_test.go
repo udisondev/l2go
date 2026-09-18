@@ -18,7 +18,7 @@ func newTestRegion(t *testing.T, cfg Config) (*Metronome, *Region) {
 		t.Fatalf("NewMetronome: %v", err)
 	}
 	reg := transport.NewRegistry(0)
-	log, err := NewPortionLog(t.TempDir(), 1, m.period, cfg.LogPayloads, cfg.LogMaxFileBytes)
+	log, err := NewPortionLog(t.TempDir(), 1, cfg.LogPayloads, cfg.LogMaxFileBytes)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestRegionNilDepsRejected(t *testing.T) {
 		t.Fatalf("NewMetronome: %v", err)
 	}
 	reg := transport.NewRegistry(0)
-	log, err := NewPortionLog(t.TempDir(), 1, m.period, cfg.LogPayloads, cfg.LogMaxFileBytes)
+	log, err := NewPortionLog(t.TempDir(), 1, cfg.LogPayloads, cfg.LogMaxFileBytes)
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
