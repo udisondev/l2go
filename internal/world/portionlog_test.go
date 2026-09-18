@@ -79,6 +79,26 @@ func TestPortionLogSetRulesRejectsNonPositive(t *testing.T) {
 	}
 }
 
+// Повторный SetRules — ошибка: контракт сессии неизменен (doc), второй Wire
+// до Run не должен молча перезаписывать правила.
+func TestPortionLogSetRulesTwiceRejected(t *testing.T) {
+	l, err := NewPortionLog(t.TempDir(), 7, true, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
+	}
+	if err := l.SetRules(testRules()); err == nil {
+		t.Fatal("повторный SetRules прошёл молча; want ошибка")
+	}
+	t.Cleanup(func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+}
+
 // Кадр без реплей-контракта (SetRules/Wire не пройдены) — ошибка записи:
 // регион обязан заморозиться действующим механизмом, файл остаётся пуст.
 func TestPortionLogRequiresSetRulesBeforeFrame(t *testing.T) {
@@ -92,9 +112,8 @@ func TestPortionLogRequiresSetRulesBeforeFrame(t *testing.T) {
 	if err := l.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	hdr, frames, err := ReadPortionFrames(l.dir, 7)
-	if err != nil || hdr.Version != 0 || len(frames) != 0 {
-		t.Fatalf("после отказа: hdr=%+v frames=%d err=%v; want пустая сессия", hdr, len(frames), err)
+	if _, _, err := ReadPortionFrames(l.dir, 7); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("после отказа: err=%v; want ErrNoSession (сессия без шагов)", err)
 	}
 }
 
@@ -119,9 +138,8 @@ func TestPortionLogHeaderLazyEmptySession(t *testing.T) {
 	if info.Size() != 0 {
 		t.Fatalf("файл сессии без шагов = %d байт; want 0 (заголовок ленивый)", info.Size())
 	}
-	hdr, frames, err := ReadPortionFrames(dir, 7)
-	if err != nil || hdr.Version != 0 || len(frames) != 0 {
-		t.Fatalf("пустая сессия: hdr=%+v frames=%d err=%v", hdr, len(frames), err)
+	if _, _, err := ReadPortionFrames(dir, 7); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("пустая сессия: err=%v; want ErrNoSession", err)
 	}
 }
 
@@ -309,6 +327,11 @@ func TestPortionLogSecondSessionSameDirRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPortionLog: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := second.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	if second.seq != first.seq+1 {
 		t.Fatalf("seq новой сессии = %d; want %d (max существующих + 1)", second.seq, first.seq+1)
 	}
@@ -593,6 +616,135 @@ func ReplayDump(t *testing.T, hdr FileHeader, fr []LogFrame, gm *geo.Map) []byte
 		t.Fatalf("Replay: %v", err)
 	}
 	return res.Dump
+}
+
+// Кадры ридера — в порядке записи: интерливинг шага и маркера паники
+// сохраняется (разделённые слайсы ReadPortionLogDir порядок теряют by
+// design — потребитель реплея читает кадрами).
+func TestReadPortionFramesInterleavesStepsAndPanics(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	l, err := NewPortionLog(dir, 7, true, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
+	}
+	for i := range 3 {
+		if err := l.LogStep(StepInput{Tick: Tick(i + 1), Delta: 1}); err != nil {
+			t.Fatalf("LogStep: %v", err)
+		}
+		if err := l.LogPanic(Tick(i+1), 2); err != nil {
+			t.Fatalf("LogPanic: %v", err)
+		}
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, frames, err := ReadPortionFrames(dir, 7)
+	if err != nil {
+		t.Fatalf("ReadPortionFrames: %v", err)
+	}
+	if len(frames) != 6 {
+		t.Fatalf("кадров %d; want 6", len(frames))
+	}
+	for i := range frames {
+		wantStep := i%2 == 0
+		if frames[i].Step != nil != wantStep || frames[i].Panic != nil == wantStep {
+			t.Fatalf("порядок кадров нарушен: frames[%d] = %+v; want чередование шаг/паника", i, frames[i])
+		}
+		if wantStep && frames[i].Step.Tick != Tick(i/2+1) {
+			t.Fatalf("шаг не на месте: frames[%d].Tick = %d", i, frames[i].Step.Tick)
+		}
+	}
+}
+
+// Злые входы ридера: порченые файлы дают именованные ошибки/ErrTruncated,
+// не панику (v6-поля заголовка — sessionID/правила — uvarint-гиганты тоже).
+func TestReadPortionFramesEvilInputsTable(t *testing.T) {
+	t.Parallel()
+	base := func(t *testing.T) []byte {
+		t.Helper()
+		dir := t.TempDir()
+		l, err := NewPortionLog(dir, 7, true, 1<<20)
+		if err != nil {
+			t.Fatalf("NewPortionLog: %v", err)
+		}
+		if err := l.SetRules(testRules()); err != nil {
+			t.Fatalf("SetRules: %v", err)
+		}
+		if err := l.LogStep(StepInput{Tick: 1, Delta: 1}); err != nil {
+			t.Fatalf("LogStep: %v", err)
+		}
+		if err := l.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, "portion-7-1.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	for _, c := range []struct {
+		name string
+		mut  func(raw []byte) []byte
+		want error
+	}{
+		{"мусорная магия", func(r []byte) []byte { r[1] = 'X'; return r }, nil},
+		{"версия 5", func(r []byte) []byte { r[len(portionMagic)] = 5; return r }, nil},
+		{"обрезанный заголовок", func(r []byte) []byte { return r[:9] }, nil},
+		{"uvarint-гигант sessionID", func(r []byte) []byte {
+			out := append([]byte(nil), r[:12]...)
+			for range 11 {
+				out = append(out, 0xFF)
+			}
+			return append(out, 0x01)
+		}, nil},
+		{"битый crc кадра", func(r []byte) []byte { r[len(r)-1] ^= 0xFF; return r }, ErrTruncated},
+		{"обрезанный кадр", func(r []byte) []byte { return r[:len(r)-3] }, ErrTruncated},
+		{"неизвестный тип записи", func(r []byte) []byte { r[len(portionMagic)+10] = 0x7F; return r }, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "portion-7-1.log"), c.mut(base(t)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			hdr, frames, err := ReadPortionFrames(dir, 7)
+			if err == nil {
+				t.Fatalf("порченый файл прочитан молча: hdr=%+v frames=%d", hdr, len(frames))
+			}
+			if c.want != nil && !errors.Is(err, c.want) {
+				t.Fatalf("err = %v; want %v", err, c.want)
+			}
+		})
+	}
+}
+
+// Переименованный файл чужого региона — громкая ошибка сверки (сид RNG
+// реплея берётся из заголовка, а файл выбран по имени).
+func TestReadPortionFramesRegionMismatchRejected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	l, err := NewPortionLog(dir, 7, true, 1<<20)
+	if err != nil {
+		t.Fatalf("NewPortionLog: %v", err)
+	}
+	if err := l.SetRules(testRules()); err != nil {
+		t.Fatalf("SetRules: %v", err)
+	}
+	if err := l.LogStep(StepInput{Tick: 1, Delta: 1}); err != nil {
+		t.Fatalf("LogStep: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := os.Rename(filepath.Join(dir, "portion-7-1.log"), filepath.Join(dir, "portion-3-1.log")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadPortionFrames(dir, 3); err == nil {
+		t.Fatal("файл чужого региона прочитан молча; want ошибка сверки региона")
+	}
 }
 
 // mustJSONEnter — письмо входа (коннект + запись) для ручных сценариев.

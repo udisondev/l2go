@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -131,6 +132,7 @@ func scenarioFrames(swap bool) (FileHeader, []LogFrame) {
 // Два прогона одной сессии на одних слайсах — бит-в-бит (гатлинг D3);
 // Leaving/SaveQ сессии S непусты — обходы карт свёртки под детектором.
 func TestReplaySessionTwoRunsBitExact(t *testing.T) {
+	t.Parallel()
 	hdr, frames := scenarioFrames(false)
 	r1, err := Replay(hdr, frames, nil, emptyGeo)
 	if err != nil {
@@ -155,6 +157,7 @@ func TestReplaySessionTwoRunsBitExact(t *testing.T) {
 // порядок A — EnterLeaving-рождение (Leaving), порядок B — DeadLetters и
 // обычное рождение; дампы обязаны различаться (детектор не слеп).
 func TestReplaySwapLettersChangesDump(t *testing.T) {
+	t.Parallel()
 	hdrA, framesA := scenarioFrames(false)
 	hdrB, framesB := scenarioFrames(true)
 	if hdrA.Session != hdrB.Session {
@@ -176,6 +179,7 @@ func TestReplaySwapLettersChangesDump(t *testing.T) {
 // Сессия без payloads — ошибка на входе: конверты без тел дали бы мусорный
 // дамп (все содержательные письма легли бы в DeadLetters).
 func TestReplayRejectsPayloadlessSession(t *testing.T) {
+	t.Parallel()
 	hdr, frames := scenarioFrames(false)
 	hdr.Payloads = false
 	if _, err := Replay(hdr, frames, nil, emptyGeo); err == nil {
@@ -186,6 +190,7 @@ func TestReplayRejectsPayloadlessSession(t *testing.T) {
 // Правила из заголовка валидируются: нулевой период/окна/адресаты — ошибка
 // (лог недоверен и в правилах).
 func TestReplayRejectsInvalidHeaderRules(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		mut  func(*FileHeader)
@@ -210,6 +215,7 @@ func TestReplayRejectsInvalidHeaderRules(t *testing.T) {
 // Маркер паники обрывает достоверность: шаги строго до маркера, флаг поднят,
 // дамп частичный (не выдаётся за полный).
 func TestReplayStopsAtPanicMarker(t *testing.T) {
+	t.Parallel()
 	hdr, frames := scenarioFrames(false)
 	cut := 5
 	marker := PanicRecord{Tick: frames[cut].Step.Tick, Phase: 2}
@@ -238,6 +244,7 @@ func TestReplayStopsAtPanicMarker(t *testing.T) {
 // Расхождение ID записи и сущности рождения — ошибка разбора (злой вход:
 // фантомное население).
 func TestReplayBirthIDMismatchRejected(t *testing.T) {
+	t.Parallel()
 	hdr, frames := scenarioFrames(false)
 	bad := append([]LogFrame(nil), frames...)
 	bad[0].Step.Births[0].ID = 999
@@ -249,6 +256,7 @@ func TestReplayBirthIDMismatchRejected(t *testing.T) {
 // Сид RNG — (region, tick) из заголовка и записи: другой регион или сдвиг
 // тиков меняет дамп; идентичные копии — равны.
 func TestReplayRNGSeededByRegionAndTick(t *testing.T) {
+	t.Parallel()
 	hdr, frames := scenarioFrames(false)
 	base, err := Replay(hdr, frames, nil, emptyGeo)
 	if err != nil {
@@ -288,10 +296,12 @@ func TestReplayRNGSeededByRegionAndTick(t *testing.T) {
 // Вход реплея не мутируется: указатели Player/Npc и байты transfer-записей
 // разделяются с кадрами — Fold пишет Beat/бакеты/движение.
 func TestReplayInputDeepImmutable(t *testing.T) {
+	t.Parallel()
 	hdr, frames := scenarioFrames(false)
 	frames[0].Step.Births[0].Ent.Transfers = []TransferRecord{
 		{ID: 1, Phase: 1, Payload: []byte{9, 9}, Precondition: []byte{7}},
 	}
+	frames[0].Step.Births[0].Ent.Npc = &NpcSkin{TemplateID: 5, Name: "Guard"}
 	snapshot := make([]LogFrame, len(frames))
 	for i := range frames {
 		snapshot[i] = frames[i]
@@ -310,7 +320,8 @@ func TestReplayInputDeepImmutable(t *testing.T) {
 }
 
 // deepCopyFrames — глубокая копия для снимка (Births/Portions/Advisory и
-// указатели сущностей), чтобы DeepEqual ловил мутации, а не разделяемость.
+// указатели сущностей), чтобы DeepEqual ловил мутации, а не разделяемость:
+// копии записываются обратно в записи снимка (write-back).
 func deepCopyFrames(dst []LogFrame) {
 	for i := range dst {
 		if dst[i].Step == nil {
@@ -319,10 +330,14 @@ func deepCopyFrames(dst []LogFrame) {
 		st := dst[i].Step
 		st.Births = append([]BirthRecord(nil), st.Births...)
 		for bi := range st.Births {
-			ent := st.Births[bi].Ent
+			ent := &st.Births[bi].Ent // write-back: копии возвращаются в снимок
 			if ent.Player != nil {
 				p := *ent.Player
 				ent.Player = &p
+			}
+			if ent.Npc != nil {
+				n := *ent.Npc
+				ent.Npc = &n
 			}
 			if ent.Transfers != nil {
 				tr := append([]TransferRecord(nil), ent.Transfers...)
@@ -422,8 +437,13 @@ func TestRegionWireFeedsSetRulesToLog(t *testing.T) {
 	h.send(t, h.ctrlLetter(transport.KindEnterWorld,
 		mustJSONEnter(7, mkRec("acc", "Vasya", 0)))) // хотя бы один шаг — заголовок ленивый
 
-	if err := h.r.log.w.Flush(); err != nil { // тест читает при живом писателе
-		t.Fatalf("flush: %v", err)
+	// quiesce до чтения: писатель лога — горутина региона (гонка харнесса
+	// запрещена); closeLog на выходе Run сам сбрасывает буфер
+	h.rCancel()
+	select {
+	case <-h.rDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("регион не остановился")
 	}
 	hdr, _, err := ReadPortionFrames(h.r.log.dir, h.r.log.region)
 	if err != nil {
@@ -612,7 +632,7 @@ func benchScenario(steps int) (FileHeader, []LogFrame) {
 // письма посчитаны), machine-пыль крафта — вне измеряемого пути.
 func BenchmarkReplay(b *testing.B) {
 	for _, n := range []int{100, 1000} {
-		b.Run(stepsName(n), func(b *testing.B) {
+		b.Run("steps-"+strconv.Itoa(n), func(b *testing.B) {
 			hdr, frames := benchScenario(n)
 			res, err := Replay(hdr, frames, nil, emptyGeo)
 			if err != nil {
@@ -631,31 +651,4 @@ func BenchmarkReplay(b *testing.B) {
 			}
 		})
 	}
-}
-
-// stepsName — имя под-бенчмарка по числу шагов.
-func stepsName(n int) string {
-	switch n {
-	case 100:
-		return "steps-100"
-	case 1000:
-		return "steps-1000"
-	default:
-		return "steps-" + itoa(n)
-	}
-}
-
-// itoa — десятичная запись без fmt в горячем пути бенчмарка.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }

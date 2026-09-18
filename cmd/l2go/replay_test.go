@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/udisondev/l2go/internal/artifact"
@@ -20,8 +21,8 @@ import (
 	"github.com/udisondev/l2go/internal/world"
 )
 
-// emptyGeoCmd — карта без гео-регионов (NullRegion-семантика) для CLI-тестов.
-var emptyGeoCmd = func() *geo.Map {
+// emptyGeo — карта без гео-регионов (NullRegion-семантика) для CLI-тестов.
+var emptyGeo = func() *geo.Map {
 	m, err := geo.NewMapFromRegions(nil)
 	if err != nil {
 		panic("тест: пустая карта гео: " + err.Error())
@@ -126,13 +127,17 @@ func TestReplayRecordFixture(t *testing.T) {
 	manifest := fmt.Sprintf("session=%d\nregion=%d payloads=%v period_ns=%d grace=%d save_retry=%d persist=%d gateway=%d ctrl=%d\nsteps=%d letters=%d\nfinal.dump sha256=%s\n",
 		hdr.Session, hdr.Region, hdr.Payloads, hdr.PeriodNS, hdr.GraceTicks, hdr.SaveRetryTicks,
 		hdr.Persist, hdr.Gateway, hdr.CtrlFrom, res.Steps, res.Letters, hex.EncodeToString(sum[:]))
-	logs, _ := filepath.Glob(filepath.Join(fixtureDir, "portion-*.log"))
+	logs, err := filepath.Glob(filepath.Join(fixtureDir, "portion-*.log"))
+	if err != nil {
+		t.Fatalf("glob логов фикстуры: %v", err)
+	}
 	for _, f := range logs {
-		info, err := os.Stat(f)
+		raw, err := os.ReadFile(f)
 		if err != nil {
-			t.Fatalf("stat %s: %v", f, err)
+			t.Fatalf("чтение %s: %v", f, err)
 		}
-		manifest += fmt.Sprintf("%s %d байт\n", filepath.Base(f), info.Size())
+		lsum := sha256.Sum256(raw)
+		manifest += fmt.Sprintf("%s %d байт sha256=%s\n", filepath.Base(f), len(raw), hex.EncodeToString(lsum[:]))
 	}
 	if err := os.WriteFile(filepath.Join(fixtureDir, "manifest.txt"), []byte(manifest), 0o644); err != nil {
 		t.Fatalf("manifest.txt: %v", err)
@@ -205,7 +210,7 @@ func TestReplayCliIncompleteResultExitsNonZero(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadPortionFrames: %v", err)
 		}
-		res, err := world.Replay(hdr, frames, nil, emptyGeoCmd)
+		res, err := world.Replay(hdr, frames, nil, emptyGeo)
 		if err != nil {
 			t.Fatalf("Replay: %v", err)
 		}
@@ -220,13 +225,17 @@ func TestReplayCliIncompleteResultExitsNonZero(t *testing.T) {
 		if err == nil {
 			t.Fatal("неполный реплей с совпадающим -expect прошёл; want ненулевой выход")
 		}
-		if s := err.Error(); bytes.Contains([]byte(s), []byte("офсете")) {
+		if s := err.Error(); strings.Contains(s, "офсете") {
 			t.Fatalf("диагностика сверки при неполном результате: %s", s)
 		}
 	})
 	t.Run("оборванный хвост", func(t *testing.T) {
 		dir := t.TempDir()
 		craftCliSession(t, dir, false)
+		expect := filepath.Join(dir, "expect.dump")
+		if err := os.WriteFile(expect, []byte{0}, 0o644); err != nil {
+			t.Fatal(err)
+		}
 		path := filepath.Join(dir, "portion-1-1.log")
 		info, err := os.Stat(path)
 		if err != nil {
@@ -235,9 +244,13 @@ func TestReplayCliIncompleteResultExitsNonZero(t *testing.T) {
 		if err := os.Truncate(path, info.Size()-2); err != nil {
 			t.Fatal(err)
 		}
-		if err := run([]string{"-replay", dir, "-artifact", synthArtifact,
-			"-expect", filepath.Join(dir, "нет.dump")}); err == nil {
+		err = run([]string{"-replay", dir, "-artifact", synthArtifact, "-expect", expect})
+		if err == nil {
 			t.Fatal("оборванная цепочка прошла; want ненулевой выход")
+		}
+		// сверка не выполняется: ошибка неполноты, а не чтения/расхождения
+		if s := err.Error(); strings.Contains(s, "офсете") || strings.Contains(s, "expect.dump") {
+			t.Fatalf("диагностика сверки при неполном результате: %s", s)
 		}
 	})
 }
@@ -251,7 +264,7 @@ func TestReplayCliExpectMismatchOffsetHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadPortionFrames: %v", err)
 	}
-	res, err := world.Replay(hdr, frames, nil, emptyGeoCmd)
+	res, err := world.Replay(hdr, frames, nil, emptyGeo)
 	if err != nil {
 		t.Fatalf("Replay: %v", err)
 	}
@@ -266,7 +279,7 @@ func TestReplayCliExpectMismatchOffsetHint(t *testing.T) {
 		t.Fatal("расхождение прошло; want ненулевой выход")
 	}
 	for _, sub := range []string{"офсете", "перезапись фикстуры"} {
-		if !bytes.Contains([]byte(err.Error()), []byte(sub)) {
+		if !strings.Contains(err.Error(), sub) {
 			t.Errorf("ошибка без %q: %s", sub, err)
 		}
 	}
@@ -280,7 +293,7 @@ func TestReplayCliFullResultDumpsToStdout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadPortionFrames: %v", err)
 	}
-	res, err := world.Replay(hdr, frames, nil, emptyGeoCmd)
+	res, err := world.Replay(hdr, frames, nil, emptyGeo)
 	if err != nil {
 		t.Fatalf("Replay: %v", err)
 	}
@@ -289,16 +302,26 @@ func TestReplayCliFullResultDumpsToStdout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	type result struct {
+		got []byte
+		err error
+	}
+	readDone := make(chan result, 1)
+	go func() { // читатель параллелен писателю: дамп больше буфера пайпа не вешает тест
+		got, err := io.ReadAll(r)
+		readDone <- result{got, err}
+	}()
 	old := os.Stdout
 	os.Stdout = w
 	runErr := run([]string{"-replay", dir, "-artifact", synthArtifact})
 	w.Close()
 	os.Stdout = old
 
-	got, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
+	read := <-readDone
+	if read.err != nil {
+		t.Fatal(read.err)
 	}
+	got := read.got
 	if runErr != nil {
 		t.Fatalf("run: %v", runErr)
 	}
@@ -316,16 +339,23 @@ func TestReplayCliEvilArgsTable(t *testing.T) {
 	}
 	for _, c := range []struct {
 		name string
-		args []string
+		args func(t *testing.T) []string
 	}{
-		{"без -artifact", []string{"-replay", emptyDir}},
-		{"каталог без сессии", []string{"-replay", emptyDir, "-artifact", synthArtifact}},
-		{"мусорный артефакт", []string{"-replay", emptyDir, "-artifact", filepath.Join(garbage, "junk.l2a")}},
-		{"чужой регион", []string{"-replay", emptyDir, "-artifact", synthArtifact, "-region", "2"}},
+		{"без -artifact", func(t *testing.T) []string { return []string{"-replay", emptyDir} }},
+		{"каталог без сессии", func(t *testing.T) []string { return []string{"-replay", emptyDir, "-artifact", synthArtifact} }},
+		{"мусорный артефакт", func(t *testing.T) []string {
+			return []string{"-replay", emptyDir, "-artifact", filepath.Join(garbage, "junk.l2a")}
+		}},
+		{"чужой регион", func(t *testing.T) []string {
+			dir := t.TempDir()
+			craftCliSession(t, dir, false) // сессия региона 1
+			return []string{"-replay", dir, "-artifact", synthArtifact, "-region", "2"}
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if err := run(c.args); err == nil {
-				t.Fatalf("run(%v) прошёл молча; want ошибка", c.args)
+			args := c.args(t)
+			if err := run(args); err == nil {
+				t.Fatalf("run(%v) прошёл молча; want ошибка", args)
 			}
 		})
 	}

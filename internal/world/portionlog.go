@@ -194,6 +194,9 @@ func (l *PortionLog) SetRules(r Rules) error {
 	if l.framesOpened {
 		return fmt.Errorf("world: SetRules после записанных кадров лога порций")
 	}
+	if l.rulesSet {
+		return fmt.Errorf("world: SetRules повторно: контракт сессии неизменен")
+	}
 	if !r.valid() {
 		return fmt.Errorf("world: правила лога порций невалидны: %+v", r)
 	}
@@ -437,11 +440,16 @@ type LogFrame struct {
 	Panic *PanicRecord
 }
 
+// ErrNoSession — в каталоге нет записанной сессии региона (нет файлов или
+// все без шагов: заголовок ленивый). In-band-признаков пустой цепочки нет.
+var ErrNoSession = errors.New("world: сессия региона не найдена (нет файлов или сессия без шагов)")
+
 // ReadPortionFrames читает сессию региона кадрами в порядке записи: цепочка
 // файлов по возрастанию seq, заголовки файлов (включая sessionID) обязаны
 // совпадать; заголовочный регион — с запрошенным (файл выбран по имени, а
-// сид RNG реплей берёт из заголовка). Оборванный хвост даёт ErrTruncated
-// после валидных кадров.
+// сид RNG реплей берёт из заголовка; сверяется по любому разобранному
+// заголовку, независимо от обрыва хвоста). Оборванный хвост даёт
+// ErrTruncated после валидных кадров; пустая цепочка — ErrNoSession.
 func ReadPortionFrames(dir string, region RegionID) (FileHeader, []LogFrame, error) {
 	files := listSeqFiles(dir, region)
 	var hdr FileHeader
@@ -457,6 +465,11 @@ func ReadPortionFrames(dir string, region RegionID) (FileHeader, []LogFrame, err
 		}
 		fh, fs, err := parseFile(data)
 		if first {
+			// заголовок разобран (Version ≠ 0) — регион сверяем и при
+			// оборванном хвосте; битая магия/версия уходят своей ошибкой
+			if fh.Version != 0 && fh.Region != region {
+				return hdr, frames, fmt.Errorf("world: лог порций: заголовочный регион %d ≠ запрошенному %d", fh.Region, region)
+			}
 			hdr = fh
 			first = false
 		} else if err == nil || errors.Is(err, ErrTruncated) {
@@ -464,13 +477,13 @@ func ReadPortionFrames(dir string, region RegionID) (FileHeader, []LogFrame, err
 				return hdr, frames, fmt.Errorf("world: заголовок файла seq=%d расходится с началом цепочки: %+v против %+v", fileSeq(path), fh, hdr)
 			}
 		}
-		if err == nil && fh.Region != region {
-			return hdr, frames, fmt.Errorf("world: лог порций: заголовочный регион %d ≠ запрошенному %d", fh.Region, region)
-		}
 		frames = append(frames, fs...)
 		if err != nil {
 			return hdr, frames, err
 		}
+	}
+	if first {
+		return hdr, frames, ErrNoSession
 	}
 	return hdr, frames, nil
 }
@@ -594,15 +607,13 @@ func parseFile(data []byte) (FileHeader, []LogFrame, error) {
 			if err != nil {
 				return hdr, frames, err
 			}
-			stCopy := st
-			frames = append(frames, LogFrame{Step: &stCopy})
+			frames = append(frames, LogFrame{Step: &st})
 		case recPanic:
 			p, err := parsePanic(body[1:])
 			if err != nil {
 				return hdr, frames, err
 			}
-			pCopy := p
-			frames = append(frames, LogFrame{Panic: &pCopy})
+			frames = append(frames, LogFrame{Panic: &p})
 		default:
 			return hdr, frames, fmt.Errorf("world: лог порций: неизвестный тип записи %d", body[0])
 		}

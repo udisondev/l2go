@@ -447,12 +447,12 @@ func replayRun(dir string, region int, artifactPath, expect string) error {
 		return fmt.Errorf("l2go: артефакт %s: %w", artifactPath, err)
 	}
 	hdr, frames, err := world.ReadPortionFrames(dir, world.RegionID(region))
+	if errors.Is(err, world.ErrNoSession) {
+		return fmt.Errorf("l2go: -replay %s: сессия региона %d не найдена или без шагов", dir, region)
+	}
 	truncated := errors.Is(err, world.ErrTruncated)
 	if err != nil && !truncated {
 		return fmt.Errorf("l2go: чтение лога порций %s: %w", dir, err)
-	}
-	if hdr.Version == 0 {
-		return fmt.Errorf("l2go: -replay %s: сессия региона %d не найдена или без шагов", dir, region)
 	}
 	res, err := world.Replay(hdr, frames, static, gm)
 	if err != nil {

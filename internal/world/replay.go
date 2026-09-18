@@ -59,8 +59,8 @@ func Replay(hdr FileHeader, frames []LogFrame, static *data.Static, gm *geo.Map)
 		}
 		s := f.Step
 		rng := rand.New(rand.NewPCG(uint64(hdr.Region), uint64(s.Tick)))
-		foldRes := Fold(s.Tick, s.Delta, rng, st, ents, portionsOf(hdr.Region, s), s.Advisory, env)
-		_ = foldRes // Out/Pushes отбрасываются: исходящий поток не сравнивается
+		// Out/Pushes отбрасываются: исходящий поток не сравнивается (ADR-0004)
+		_ = Fold(s.Tick, s.Delta, rng, st, ents, portionsOf(hdr.Region, s), s.Advisory, env)
 		var err error
 		if ents, err = replayBirths(st, ents, s, rules.GraceTicks); err != nil {
 			return ReplayResult{}, err

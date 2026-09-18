@@ -304,15 +304,17 @@ func TestRegionPanicDropsBatchAndMarks(t *testing.T) {
 	if st.FinalReliable != 4 {
 		t.Fatalf("классовый дроп остатка reliable = %d; want 4 (тихая потеря запрещена)", st.FinalReliable)
 	}
+	// регион шагается синхронно из теста — Flush из этой же горутины легален;
+	// до сброса буфера файл пуст (заголовок ленивый), чтение — после Flush
+	if err := r.log.w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
 	_, steps, _, err := ReadPortionLogDir(r.log.dir, r.log.region)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if len(steps) != 0 {
 		t.Fatalf("паник-шаг попал в лог порций: %d записей; want 0", len(steps))
-	}
-	if err := r.log.w.Flush(); err != nil {
-		t.Fatalf("flush: %v", err)
 	}
 	_, _, panics, err := ReadPortionLogDir(r.log.dir, r.log.region)
 	if err != nil {

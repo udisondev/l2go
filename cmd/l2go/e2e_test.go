@@ -136,15 +136,12 @@ func waitForLine(t *testing.T, out *syncBuffer, substr string, budget time.Durat
 
 // e2eEnv — поднятый контур: LS (login-нога + стык) и GS (bootstrap).
 type e2eEnv struct {
-	t         *testing.T
-	lsAddr    string
-	gsAddr    string
-	gs        *server
-	persist   string // каталог chars GS
-	portions  string // каталог лога порций GS
-	withNPC   bool
-	payloads  bool // запись тел писем в лог порций (реплей D6)
-	staticSet bool
+	t        *testing.T
+	lsAddr   string
+	gsAddr   string
+	gs       *server
+	persist  string // каталог chars GS
+	portions string // каталог лога порций GS
 }
 
 // e2eOpts — параметры старта контура сверх hz/grace (P3.12).
@@ -246,8 +243,7 @@ func startE2EOpts(t *testing.T, hz, graceTicks int, opts e2eOpts) *e2eEnv {
 	}
 	t.Cleanup(srv.shutdown)
 	return &e2eEnv{t: t, lsAddr: lsLn.Addr().String(), gsAddr: srv.gameAddr(),
-		gs: srv, persist: gsPersist, portions: opts.portionsDir,
-		withNPC: opts.npc, payloads: opts.portionsPayloads, staticSet: opts.npc}
+		gs: srv, persist: gsPersist, portions: opts.portionsDir}
 }
 
 // session — одна клиентская сессия до стационара (создание персонажа, вход).

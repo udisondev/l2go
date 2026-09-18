@@ -47,7 +47,7 @@ jobs:
           go run ./cmd/l2data build internal/data/testdata/synth "$RUNNER_TEMP/geosynth"
           go vet -tags embedded ./internal/artifact/
           go test -tags embedded ./internal/artifact/
-          # Оба поставочных бинараря в embedded-конфигурации на синт-артефакте
+          # Оба поставочных бинарника в embedded-конфигурации на синт-артефакте
           # (для l2login тег инертен — артефакт не импортируется; сборка
           # доказывает компиляцию поставочной конфигурации; прецедент P2.7).
           go build -tags embedded ./cmd/...
