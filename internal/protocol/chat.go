@@ -64,6 +64,15 @@ const (
 // OpCSay2 — публичный опкод C→GS Say2 (белый список шлюза).
 const OpCSay2 = say2
 
+// OpCreatureSay — публичный опкод GS→C CreatureSay (строка трафик-лога l2client).
+const OpCreatureSay = creatureSay
+
+// Имена кадров для трафик-лога.
+const (
+	NameSay2        = "SAY2"
+	NameCreatureSay = "CREATURE_SAY"
+)
+
 // Say2Size — размер кадра Say2 с опкодом; адресат пишется только при whisper
 // (читающая сторона канона разбирает его условно).
 func Say2Size(text string, chatType ChatType, target string) int {

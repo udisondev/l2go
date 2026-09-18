@@ -58,6 +58,10 @@ type Player struct {
 	// SpeedBudget — токен-бакет скорости в милли-юнитах (r1: списывает
 	// расхождение отчёта с authPos; при рождении = CAP).
 	SpeedBudget int64
+	// ChatBudget — токен-бакет спам-лимита чата в мс кредита (P3.11:
+	// списание chatSayCostMS за реплику, refill dt-тиками в foldAdvance;
+	// при рождении = CAP ≈ каноническому per-коннект FloodProtectors).
+	ChatBudget int64
 	// SpeedFlagged — сессия в состоянии спидхак-флага: slog-алерт однократен
 	// на эпизод (бакет восстанавливается refill-ом), метрика SpeedFlags
 	// считается на каждый кадр.

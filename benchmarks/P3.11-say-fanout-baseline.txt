@@ -1,0 +1,40 @@
+# Baseline P3.11 internal/world: fan-out рассылки чата (benchstat-совместимо: -count=10)
+# Окружение: AMD Ryzen 9 PRO 8945HS, linux/amd64, go1.27.1
+# Живость: N+1 кадр за шаг (анти-твин мёртвого бенча). Один слайс кадра на всех
+# получателей (Stage.Push копирует в слэб). Каркас — F10 реестра P3.11.
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/world
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkSay2FanOut/10-16 	  142412	       842.9 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  135902	       819.5 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  125292	       849.0 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  159360	       875.4 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  142712	       821.7 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  145802	       825.2 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  141285	       836.7 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  148028	       870.3 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  140853	       862.6 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/10-16 	  157250	       856.1 ns/op	    1440 B/op	       9 allocs/op
+BenchmarkSay2FanOut/100-16         	   37484	      3000 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   37101	      3034 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   35799	      3108 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   46318	      2864 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   39525	      2996 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   39547	      3035 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   41516	      3118 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   33627	      3180 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   37630	      2897 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/100-16         	   41997	      3031 ns/op	   12064 B/op	      12 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6146	     19463 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6237	     19118 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    7276	     18913 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6966	     20221 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    5659	     20645 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    5556	     20716 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    5665	     19905 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    7550	     19464 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    5425	     20706 ns/op	   89888 B/op	      15 allocs/op
+BenchmarkSay2FanOut/1000-16        	    6938	     19150 ns/op	   89888 B/op	      15 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/world	3.669s

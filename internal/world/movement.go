@@ -108,15 +108,18 @@ func foldMoveToLocation(st *State, ent *Entity, env *transport.Envelope, mov *mo
 
 // foldAdvance — фаза A: продвижение всех движущихся по валидированным
 // отрезкам со скоростью × dt и refill бакета игроков (r1: дёшево, без
-// гео-трейса — тяжёлый line-walk делается один раз на интент).
+// гео-трейса — тяжёлый line-walk делается один раз на интент). Чат-бакет
+// рефиллится тем же dt (кредит 1:1 симуляционному времени, клэмп к CAP).
 func foldAdvance(delta uint64, rules Rules, ents []*Entity, res *StepResult) {
 	if delta == 0 {
 		return
 	}
 	step := runSpeed * int64(delta) * rules.PeriodNS / 1e6 // мЮ этого шага
+	chatMS := int64(delta) * rules.PeriodNS / 1e6          // мс этого шага
 	for _, e := range ents {
 		if e.Player != nil {
 			e.Player.SpeedBudget = min(e.Player.SpeedBudget+step, speedCAP)
+			e.Player.ChatBudget = min(e.Player.ChatBudget+chatMS, chatSayCapMS)
 		}
 		if !e.Moving {
 			continue

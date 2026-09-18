@@ -20,7 +20,7 @@ import (
 
 const (
 	portionMagic   = "PL32"
-	portionVersion = 4 // v4: сущность несёт NPC-скин разворачивания населения (P3.10); v3 — отрезок движения и бакет игрока (P3.9)
+	portionVersion = 5 // v5: спам-бакет чата игрока (P3.11); v4 — NPC-скин (P3.10); v3 — отрезок движения и бакет (P3.9)
 	flagPayloads   = 1
 
 	recStep  = 1
@@ -772,6 +772,7 @@ func parsePlayer(c *parseCursor) (*Player, error) {
 	r.LastSeenUnix = c.varint()
 	p.ConnID = c.uvarint()
 	p.SpeedBudget = c.varint()
+	p.ChatBudget = c.varint()
 	p.SpeedFlagged = c.byte() == 1
 	p.PendingTeleport = c.byte() == 1
 	p.EnterLeaving = c.byte() == 1

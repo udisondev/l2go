@@ -186,3 +186,63 @@ func chatFixtures(t *testing.T) map[string]fixture.Fixture {
 	}
 	return out
 }
+
+// TextMeasure — длина по сырым UTF-16 юнитам (астральная руна = 2) и чистота
+// декода: битый суррогат и литеральный U+FFFD дают clean=false (over-drop
+// одного кодпоинта — комментарий TextMeasure; P3.11).
+func TestSay2ViewTextMeasure(t *testing.T) {
+	t.Parallel()
+	mk := func(text string) Say2View {
+		b := make([]byte, Say2Size(text, ChatGeneral, ""))
+		WriteSay2(b, text, ChatGeneral, "")
+		v, ok := NewSay2View(b)
+		if !ok {
+			t.Fatal("NewSay2View")
+		}
+		return v
+	}
+	if u, clean := mk("hello").TextMeasure(); u != 5 || !clean {
+		t.Errorf("ASCII: units=%d clean=%v; want 5/true", u, clean)
+	}
+	if u, clean := mk("𝄞𝄞").TextMeasure(); u != 4 || !clean {
+		t.Errorf("астральные: units=%d clean=%v; want 4/true (юниты, не руны)", u, clean)
+	}
+	if _, clean := mk("bad \uFFFD text").TextMeasure(); clean {
+		t.Error("литеральный U+FFFD: clean=true; want false (over-drop)")
+	}
+	// lone surrogate: писатель не порождает — ручные байты.
+	b := []byte{OpCSay2, 0x00, 0xD8, 0x41, 0x00, 0x00, 0x00, 0, 0, 0, 0}
+	if v, ok := NewSay2View(b); ok {
+		if _, clean := v.TextMeasure(); clean {
+			t.Error("битый суррогат: clean=true; want false")
+		}
+	} else {
+		t.Fatal("NewSay2View(битый суррогат) отвергнут — TextMeasure не достигнут")
+	}
+}
+
+// Fields — поля трафик-лога CreatureSay (e2e-ассерты чата P3.11 без hex).
+func TestCreatureSayViewFields(t *testing.T) {
+	t.Parallel()
+	b := make([]byte, CreatureSaySize("Vasya", "hi there"))
+	WriteCreatureSay(b, 0x10000045, ChatGeneral, "Vasya", "hi there")
+	v, ok := NewCreatureSayView(b)
+	if !ok {
+		t.Fatal("NewCreatureSayView")
+	}
+	fields := v.Fields()
+	want := []Field{
+		{K: "objID", V: "268435525"},
+		{K: "type", V: "0"},
+		{K: "name", V: `"Vasya"`},
+		{K: "text", V: `"hi there"`},
+	}
+	if len(fields) != len(want) {
+		t.Fatalf("полей = %d; want %d", len(fields), len(want))
+	}
+	for i, w := range want {
+		if fields[i] != w {
+			t.Errorf("поле[%d] = %+v; want %+v", i, fields[i], w)
+		}
+	}
+}

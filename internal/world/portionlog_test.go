@@ -84,7 +84,7 @@ func TestPortionLogRoundtrip(t *testing.T) {
 			t.Fatalf("read: %v", err)
 		}
 		// версия — литералом: откат bump должен краснеть, а не следовать константе
-		if hdr.Region != 7 || hdr.Version != 4 || hdr.Payloads != payloads || hdr.PeriodNS == 0 {
+		if hdr.Region != 7 || hdr.Version != 5 || hdr.Payloads != payloads || hdr.PeriodNS == 0 {
 			t.Fatalf("заголовок %+v", hdr)
 		}
 		if len(steps) != 1 || len(panics) != 1 {
@@ -354,14 +354,15 @@ func TestPortionLogPlayerRoundtrip(t *testing.T) {
 	}
 }
 
-// v3: roundtrip отрезка движения и бакета (отрицательные значения включительно).
+// v3: roundtrip отрезка движения и бакета (отрицательные значения включительно);
+// v5: спам-бакет чата пережив roundtrip тем же varint (F6 реестра P3.11).
 func TestPortionLogMovementRoundtrip(t *testing.T) {
 	l := newTestLog(t, false, 1<<20)
 	ent := Entity{Owner: 7, Pos: Position{X: -71338, Y: 258271, Z: -3104},
 		Heading: 49152, Moving: true,
 		MoveFrom: Position{X: -72000, Y: 258000, Z: -3200},
 		MoveDist: 9007199, MoveDone: 1234567,
-		Player: &Player{Rec: mkRec("acc", "Vasya", 0), SpeedBudget: -58000}}
+		Player: &Player{Rec: mkRec("acc", "Vasya", 0), SpeedBudget: -58000, ChatBudget: 500}}
 	if err := l.LogStep(StepInput{Tick: 3, Births: []AppliedBirth{{ID: 77, Ent: &ent}}}); err != nil {
 		t.Fatalf("LogStep: %v", err)
 	}
@@ -377,6 +378,23 @@ func TestPortionLogMovementRoundtrip(t *testing.T) {
 	}
 	if got.Player == nil || got.Player.SpeedBudget != -58000 {
 		t.Fatalf("бакет roundtrip: %+v", got.Player)
+	}
+	if got.Player.ChatBudget != 500 {
+		t.Fatalf("чат-бакет roundtrip: %+v; want 500", got.Player.ChatBudget)
+	}
+	// истощённый бакет (0) — тоже переживает: пустое varint-кодирование.
+	l2 := newTestLog(t, false, 1<<20)
+	ent2 := ent
+	ent2.Player = &Player{Rec: mkRec("acc", "Vasya", 0), ChatBudget: 0}
+	if err := l2.LogStep(StepInput{Tick: 1, Births: []AppliedBirth{{ID: 78, Ent: &ent2}}}); err != nil {
+		t.Fatalf("LogStep(0): %v", err)
+	}
+	_, steps2, _, err := readAll(t, l2)
+	if err != nil {
+		t.Fatalf("read(0): %v", err)
+	}
+	if p := steps2[0].Births[0].Ent.Player; p == nil || p.ChatBudget != 0 {
+		t.Fatalf("чат-бакет 0 roundtrip: %+v", p)
 	}
 }
 

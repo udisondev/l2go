@@ -121,6 +121,9 @@ type State struct {
 	SpeedFlags         uint64 // флаги спидхака (токен-бакет ниже −SLACK)
 	SnapBacks          uint64 // коррекции ValidateLocation (дрейф/спидхак/телепорт)
 	CannotMoveStanding uint64 // CannotMoveAnymore вне движения: применён как стоячий поворот (метрика)
+	ChatDropped        uint64 // реплики Say2: длина/\b/битый UTF-16 (коннект жив)
+	ChatFlooded        uint64 // реплики Say2, задушенные спам-бакетом
+	ChatIgnored        uint64 // реплики Say2 не-ALL каналов (каналы не реализованы)
 
 	NPCDeployedOnce bool   // письмо разворота населения принято (однократность)
 	NPCDeployed     uint64 // развёрнутых записей спавнов (не сущностей: count внутри записи)
@@ -341,7 +344,8 @@ func foldEnterWorld(tick Tick, st *State, msg transport.EnterWorldMsg, res *Step
 		Pos:     Position{X: int32(rec.X), Y: int32(rec.Y), Z: int32(rec.Z)},
 		Heading: int32(rec.Heading) & 0xFFFF, // запись за trust-границей — домен [0,65536)
 		HP:      int32(rec.HP),
-		Player:  &Player{Rec: rec, ConnID: msg.Conn, PendingTeleport: true, SpeedBudget: speedCAP},
+		Player: &Player{Rec: rec, ConnID: msg.Conn, PendingTeleport: true,
+			SpeedBudget: speedCAP, ChatBudget: chatSayCapMS},
 	}})
 	pending.byConn[msg.Conn] = len(res.Births) - 1
 	pending.byAccount[msg.Account] = append(pending.byAccount[msg.Account], len(res.Births)-1)
@@ -401,8 +405,10 @@ func foldClientFrame(tick Tick, st *State, ents []*Entity, env *transport.Envelo
 		foldValidatePosition(st, ent, env, mov, res)
 	case protocol.OpCCannotMoveAnymore:
 		foldCannotMoveAnymore(st, ent, env, res)
+	case protocol.OpCSay2:
+		foldSay2(tick, st, ents, ent, env, rules, res)
 	default:
-		// Чат — потребитель P3.11; кадр валиден, применения в фазе 3 нет.
+		// Прочие валидные кадры — вне фазы 3.
 	}
 }
 
@@ -603,6 +609,9 @@ func (st *State) Dump(ents []*Entity) []byte {
 	buf = binary.AppendUvarint(buf, st.SpeedFlags)
 	buf = binary.AppendUvarint(buf, st.SnapBacks)
 	buf = binary.AppendUvarint(buf, st.CannotMoveStanding)
+	buf = binary.AppendUvarint(buf, st.ChatDropped)
+	buf = binary.AppendUvarint(buf, st.ChatFlooded)
+	buf = binary.AppendUvarint(buf, st.ChatIgnored)
 	buf = binary.AppendUvarint(buf, st.NPCDeployed)
 	buf = binary.AppendUvarint(buf, st.NPCSkipped)
 	if st.NPCDeployedOnce {
@@ -769,6 +778,7 @@ func appendPlayer(buf []byte, p *Player) []byte {
 	buf = binary.AppendVarint(buf, r.LastSeenUnix)
 	buf = binary.AppendUvarint(buf, p.ConnID)
 	buf = binary.AppendVarint(buf, p.SpeedBudget) // бакет бывает отрицательным (ниже −SLACK)
+	buf = binary.AppendVarint(buf, p.ChatBudget)  // спам-бакет чата — тот же varint-прецедент
 	if p.SpeedFlagged {
 		buf = append(buf, 1)
 	} else {

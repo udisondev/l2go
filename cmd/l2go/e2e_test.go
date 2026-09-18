@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1201,4 +1202,186 @@ func TestE2EPairMoveAcrossCellBoundary(t *testing.T) {
 		t.Errorf("прибытие x = %d; want %d", got, dstX)
 	}
 	waitForLine(t, west2.out, "STOP_MOVE", 3*time.Second)
+}
+
+// creatureSayLines — строки трафик-лога с кадрами CREATURE_SAY (по имени
+// говорящего, если задано).
+func creatureSayLines(out *syncBuffer, name string) []string {
+	var lines []string
+	for _, ln := range strings.Split(out.String(), "\n") {
+		if strings.Contains(ln, "CREATURE_SAY") && (name == "" || strings.Contains(ln, `name="`+name+`"`)) {
+			lines = append(lines, ln)
+		}
+	}
+	return lines
+}
+
+// Зона 5 (P3.11): полный DoD-сценарий — два headless-клиента на синтетике с
+// NPC: логин обоих → создание → вход → взаимная видимость → NpcInfo в радиусе
+// → движение доведено до наблюдателя → чат доставлен обоим → логаут →
+// DeleteObject у соседа → перезаход на сохранённой позиции. По одному ассерту
+// на стадию (детализация — точечными e2e); время смоука — в журнал.
+func TestE2EFullDodScenario(t *testing.T) {
+	start := time.Now()
+	env := startE2E(t, 10, 4, true)
+	alice := enterWorld(t, env, "doda")
+	lineUI := waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineUI, "x"), parseCoord(t, lineUI, "y")
+	bob := enterWorld(t, env, "dodb")
+	waitForLine(t, bob.out, "USER_INFO", 3*time.Second)
+
+	// взаимная видимость
+	waitForLine(t, alice.out, `CHAR_INFO name="Botdodb"`, 3*time.Second)
+	waitForLine(t, bob.out, `CHAR_INFO name="Botdoda"`, 3*time.Second)
+	// NpcInfo стартовой окрестности (P3.10 вошла — сценарий с населением)
+	if lines := npcInfoLines(alice.out); len(lines) == 0 {
+		t.Error("DoD: NpcInfo в радиусе не получены")
+	}
+	// движение A доведено до B
+	if err := alice.gc.MoveToLocation(int32(ax+120), int32(ay), -3104, int32(ax), int32(ay), -3104, 1); err != nil {
+		t.Fatalf("MoveToLocation: %v", err)
+	}
+	waitForLine(t, alice.out, "STOP_MOVE", 3*time.Second)
+	waitForLine(t, bob.out, "CHAR_MOVE_TO_LOCATION", 3*time.Second)
+	// чат доставлен обоим: тип/имя/текст
+	if err := alice.gc.Say2("hello from doda", protocol.ChatGeneral); err != nil {
+		t.Fatalf("Say2: %v", err)
+	}
+	lineEcho := waitForLine(t, alice.out, `CREATURE_SAY`, 3*time.Second)
+	for _, want := range []string{`name="Botdoda"`, `text="hello from doda"`, "type=0"} {
+		if !strings.Contains(lineEcho, want) {
+			t.Errorf("эхо без %q: %s", want, lineEcho)
+		}
+	}
+	lineB := waitForLine(t, bob.out, `CREATURE_SAY`, 3*time.Second)
+	if !strings.Contains(lineB, `text="hello from doda"`) {
+		t.Errorf("реплика у соседа: %s", lineB)
+	}
+	// логаут A → DeleteObject у B
+	if err := alice.gc.Logout(); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	waitForLeaveWorld(t, alice, env)
+	lineD := waitForLine(t, bob.out, "DELETE_OBJECT", 3*time.Second)
+	if !strings.Contains(lineD, "objID=") {
+		t.Errorf("DELETE_OBJECT без objID: %s", lineD)
+	}
+	// перезаход A на сохранённой позиции (позиция прибытия движения)
+	waitPersistIdle(t, env.gs.actor)
+	again := enterWorld(t, env, "doda")
+	line2 := waitForLine(t, again.out, "USER_INFO", 3*time.Second)
+	if got := parseCoord(t, line2, "x"); got != ax+120 {
+		t.Errorf("перезаход x = %d; want %d (сохранённая позиция прибытия)", got, ax+120)
+	}
+	t.Logf("DoD-смоук: %s", time.Since(start))
+}
+
+// Реплика вне радиуса речи (в известности): третий на dx=3000 — интервал
+// 1250<d<3500 отличает радиус речи от радиуса известности (F17).
+func TestE2EChatOutsideSayRadiusInKnownRange(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	// подготовка «далеко́го» (в известности, вне слышимости): прецедент
+	// TestE2EMovementObserverOutsideRadius — правка файла + рестарт GS.
+	far := enterWorld(t, env, "chatfar")
+	lineF := waitForLine(t, far.out, "USER_INFO", 3*time.Second)
+	ax, ay := parseCoord(t, lineF, "x"), parseCoord(t, lineF, "y")
+	if err := far.gc.Logout(); err != nil {
+		t.Fatalf("Logout(far): %v", err)
+	}
+	waitForLeaveWorld(t, far, env)
+	waitPersistIdle(t, env.gs.actor)
+	path := env.charFile("chatfar")
+	recs := readChars(t, path)
+	recs[0]["x"] = ax + 3000
+	recs[0]["y"] = ay
+	writeChars(t, path, recs)
+	env.restartGS(t)
+
+	alice := enterWorld(t, env, "chatnear")
+	waitForLine(t, alice.out, "USER_INFO", 3*time.Second)
+	far2 := enterWorld(t, env, "chatfar")
+	waitForLine(t, far2.out, "USER_INFO", 3*time.Second)
+	// известность есть (взаимные CHAR_INFO через enter-радиус 3500)
+	waitForLine(t, far2.out, `CHAR_INFO name="Botchatnear"`, 3*time.Second)
+	waitForLine(t, alice.out, `CHAR_INFO name="Botchatfar"`, 3*time.Second)
+
+	if err := alice.gc.Say2("can you hear me?", protocol.ChatGeneral); err != nil {
+		t.Fatalf("Say2: %v", err)
+	}
+	waitForLine(t, alice.out, "CREATURE_SAY", 3*time.Second) // эхо у спикера
+	time.Sleep(300 * time.Millisecond)                       // ≥3 тика 10 Гц — молчание устойчиво (тайминг-инвариант)
+	if got := len(creatureSayLines(far2.out, "")); got != 0 {
+		t.Errorf("клиент вне радиуса речи получил %d реплик; want 0 (в известности, но не слышит)", got)
+	}
+}
+
+// Спам-изоляция: лава одного отправителя — сосед получил ровно одну реплику
+// спамера (count-ассерт, не ≤), спамер — ровно одно эхо; после окна рефилла
+// следующая реплика доставляется (сон — тайминг-нагрузка с бюджетом, не
+// синхронизация).
+func TestE2EChatSpamIsolation(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	spammer := enterWorld(t, env, "spammer")
+	waitForLine(t, spammer.out, "USER_INFO", 3*time.Second)
+	neighbor := enterWorld(t, env, "quietguy")
+	waitForLine(t, neighbor.out, `CHAR_INFO name="Botspammer"`, 3*time.Second)
+
+	// Лава темпом 50 мс (темп серии — нагрузка, не синхронизация): тесный
+	// burst рвал бы коннект пер-конн под-лимитом событий шлюза
+	// (close-on-overflow, P3.6) — тест проверяет душение именно чат-бакетом
+	// свёртки. Окно лавы 400 мс < интервала 500 мс — в бюджете только первая.
+	for i := range 8 {
+		if err := spammer.gc.Say2("spam it is", protocol.ChatGeneral); err != nil {
+			t.Fatalf("Say2[%d]: %v", i, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(400 * time.Millisecond) // ≥3 тика: доставка первой и душение остальных
+	if got := len(creatureSayLines(neighbor.out, "Botspammer")); got != 1 {
+		t.Errorf("сосед получил реплик спамера = %d; want ровно 1", got)
+	}
+	if got := len(creatureSayLines(spammer.out, "Botspammer")); got != 1 {
+		t.Errorf("спамер получил собственных эх = %d; want ровно 1", got)
+	}
+	// перезавод: после ≥500 мс окна бакета следующая реплика проходит.
+	time.Sleep(600 * time.Millisecond)
+	if err := spammer.gc.Say2("sorry guys", protocol.ChatGeneral); err != nil {
+		t.Fatalf("Say2(после паузы): %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(creatureSayLines(neighbor.out, "Botspammer")) >= 2 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("реплика после окна рефилла не доставлена (бакет не восстанавливается)")
+}
+
+// Мусорный тип Say2 на живом контуре — полный уход: Residents→0, кадры
+// разрыва в логе, файл персонажа свежий (прецедент RoundTripPosition).
+func TestE2ESay2GarbageTypeFullLeave(t *testing.T) {
+	env := startE2E(t, 10, 4)
+	s := enterWorld(t, env, "hacker")
+	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
+	start := time.Now().Unix()
+
+	b := make([]byte, 0, 12)
+	b = append(b, protocol.OpCSay2, 0, 0)
+	b = binary.LittleEndian.AppendUint32(b, 999)
+	if err := s.gc.SendRaw(b, "SAY2_GARBAGE"); err != nil {
+		t.Fatalf("SendRaw: %v", err)
+	}
+	waitForLeaveWorld(t, s, env)
+	waitForLine(t, s.out, "ACTION_FAIL", 3*time.Second)
+	waitForResidents(t, env.gs, 0)
+
+	waitPersistIdle(t, env.gs.actor)
+	recs := readChars(t, env.charFile("hacker"))
+	if len(recs) != 1 {
+		t.Fatalf("персонажей = %d; want 1", len(recs))
+	}
+	if ls, ok := recs[0]["last_seen_unix"].(float64); !ok || int64(ls) < start {
+		t.Errorf("файл не отражает сессию разрыва: last_seen=%v (start=%d)", recs[0]["last_seen_unix"], start)
+	}
 }

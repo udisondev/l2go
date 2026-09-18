@@ -695,3 +695,38 @@ func TestErrorsWrapped(t *testing.T) {
 		t.Errorf("ошибка без контекста адреса: %v", err)
 	}
 }
+
+// Say2-команда строит каноничный кадр (раундтрип представлением); входящий
+// CreatureSay логируется типизированной строкой CREATURE_SAY с полями —
+// ассерты e2e чата P3.11 идут по ним, без hex.
+func TestGameClientSay2AndCreatureSayDecode(t *testing.T) {
+	t.Parallel()
+	// Кадр команды: writer — тот же, что в Say2 (прямая сборка без сокета).
+	wire := make([]byte, protocol.Say2Size("hello world", protocol.ChatGeneral, ""))
+	protocol.WriteSay2(wire, "hello world", protocol.ChatGeneral, "")
+	v, ok := protocol.NewSay2View(wire)
+	if !ok {
+		t.Fatal("NewSay2View(кадр команды)")
+	}
+	if s, _ := v.Text(); s != "hello world" {
+		t.Errorf("текст = %q; want hello world", s)
+	}
+	if v.Type() != protocol.ChatGeneral {
+		t.Errorf("тип = %d; want ChatGeneral", v.Type())
+	}
+
+	// Входящий CreatureSay — типизированная строка трафик-лога.
+	frame := make([]byte, protocol.CreatureSaySize("Vasya", "hi there"))
+	protocol.WriteCreatureSay(frame, 0x10000045, protocol.ChatGeneral, "Vasya", "hi there")
+	var out bytes.Buffer
+	gc := &GameClient{opts: Options{Traffic: &out}}
+	gc.handleFrame(frame)
+	line := out.String()
+	for _, want := range []string{
+		"CREATURE_SAY", `name="Vasya"`, `text="hi there"`, "type=0", "objID=268435525",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("строка лога без %q: %s", want, line)
+		}
+	}
+}

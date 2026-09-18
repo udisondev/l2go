@@ -290,6 +290,13 @@ func (gc *GameClient) SendRaw(wire []byte, name string) error {
 	return gc.command(wire, name)
 }
 
+// Say2 — реплика в канал чата (стационарная фаза; ALL = protocol.ChatGeneral).
+func (gc *GameClient) Say2(text string, chatType protocol.ChatType) error {
+	wire := make([]byte, protocol.Say2Size(text, chatType, ""))
+	protocol.WriteSay2(wire, text, chatType, "")
+	return gc.command(wire, protocol.NameSay2, Field{K: "text", V: protocol.Quote(text)})
+}
+
 // ValidatePosition отправляет периодическую синхронизацию позиции (~1/с канона).
 func (gc *GameClient) ValidatePosition(x, y, z, heading int32) error {
 	var wire [protocol.ValidatePositionSize]byte
@@ -508,6 +515,11 @@ func (gc *GameClient) handleFrame(f []byte) {
 		// ValidateLocation — snap-back коррекция себе (P3.9).
 		if v, ok := protocol.NewValidateLocationView(f); ok {
 			name, fields, typed = protocol.NameValidateLocation, v.Fields(), true
+		}
+	case protocol.OpCreatureSay:
+		// CreatureSay — реплика существа в радиусе речи (чат ALL, P3.11).
+		if v, ok := protocol.NewCreatureSayView(f); ok {
+			name, fields, typed = protocol.NameCreatureSay, v.Fields(), true
 		}
 	}
 	if typed {

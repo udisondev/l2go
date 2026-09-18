@@ -5,6 +5,8 @@
 
 package protocol
 
+import "strings"
+
 // Say2View — представление кадра Say2 (C→GS). Навигационные геттеры мерят
 // строковые поля без декода (sFieldLen): отказ ReadS невозможен после
 // успешного конструктора, игнор осознан.
@@ -37,6 +39,22 @@ func (v Say2View) Target() (string, bool) {
 	n, _ := sFieldLen(v, 1)
 	s, _, ok := ReadS(v, n+5)
 	return s, ok
+}
+
+// TextMeasure — длина текста в UTF-16 code units (без терминатора) и признак
+// чистоты декода. Лимит длины канона (Say2.java @43ac8878: >105) мерится
+// сырыми юнитами поля, не рунами: астральная руна занимает два юнита.
+// clean=false — декод содержал U+FFFD (битый суррогат); литеральный U+FFFD
+// легитимного текста от декод-отказа неотличим и отбраковывается вместе с
+// ним (over-drop одного кодпоинта).
+func (v Say2View) TextMeasure() (units int, clean bool) {
+	n, ok := sFieldLen(v, 1)
+	if !ok {
+		return 0, false
+	}
+	units = n/2 - 1
+	s, _, _ := ReadS(v, 1)
+	return units, !strings.ContainsRune(s, 0xFFFD)
 }
 
 // CreatureSayView — представление кадра CreatureSay (GS→C, режим имя+текст).
@@ -75,6 +93,19 @@ func (v CreatureSayView) Text() (string, bool) {
 	n, _ := sFieldLen(v, 9)
 	s, _, ok := ReadS(v, 9+n)
 	return s, ok
+}
+
+// Fields возвращает поля трафик-лога: говорящий, канал, имя, текст
+// (e2e-ассерты чата P3.11).
+func (v CreatureSayView) Fields() []Field {
+	name, _ := v.SenderName()
+	text, _ := v.Text()
+	return []Field{
+		{K: "objID", V: num32(v.SenderObjID())},
+		{K: "type", V: num32(int32(v.Type()))},
+		{K: "name", V: quoted(name)},
+		{K: "text", V: quoted(text)},
+	}
 }
 
 // SystemMessageView — представление кадра SystemMessage (GS→C).
