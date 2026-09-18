@@ -742,6 +742,8 @@ func parseNpc(c *parseCursor) (*NpcSkin, error) {
 	n.MAtkSpd = int32(int64(c.uvarint()))
 	n.MoveMultiplier = math.Float64frombits(c.uvarint())
 	n.AttackSpeedMultiplier = math.Float64frombits(c.uvarint())
+	n.RHand = int32(int64(c.uvarint()))
+	n.LHand = int32(int64(c.uvarint()))
 	return n, c.err
 }
 

@@ -196,7 +196,10 @@ func startE2E(t *testing.T, hz, graceTicks int, npc ...bool) *e2eEnv {
 	t.Cleanup(func() { _ = lsLn.Close() })
 
 	gsPersist := t.TempDir()
-	npcDeploy := len(npc) > 0 && npc[0]
+	radius := 0
+	if len(npc) > 0 && npc[0] {
+		radius = 20000
+	}
 	srv, err := bootstrap(config{
 		Addr: "127.0.0.1:0", Hz: hz,
 		PersistDir:     gsPersist,
@@ -209,8 +212,7 @@ func startE2E(t *testing.T, hz, graceTicks int, npc ...bool) *e2eEnv {
 		SaveRetryTicks: 2,
 		NPCCenterX:     int32(persist.HumanFighter.StartX),
 		NPCCenterY:     int32(persist.HumanFighter.StartY),
-		NPCRadius:      20000,
-		NPCDeployOn:    npcDeploy,
+		NPCRadius:      int32(radius),
 	})
 	if err != nil {
 		t.Fatalf("bootstrap: %v", err)
@@ -1061,15 +1063,16 @@ func TestE2ENpcInfoRadiusOnly(t *testing.T) {
 	env := startE2E(t, 10, 4, true)
 	s := enterWorld(t, env, "npcguy")
 	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
-	deadline := time.Now().Add(5 * time.Second)
-	var lines []string
-	for {
-		lines = npcInfoLines(s.out)
-		if len(lines) >= 6 || time.Now().After(deadline) {
-			break
+	lines := func() []string {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			ls := npcInfoLines(s.out)
+			if len(ls) >= 6 || time.Now().After(deadline) {
+				return ls
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	}()
 	if len(lines) != 6 {
 		t.Fatalf("NPC_INFO кадров = %d; want 6 (стартовая окрестность синтетики)", len(lines))
 	}
@@ -1095,15 +1098,18 @@ func TestE2EReenterNpcSetIdenticalById(t *testing.T) {
 	env := startE2E(t, 10, 4, true)
 	s := enterWorld(t, env, "reenter")
 	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
-	deadline := time.Now().Add(5 * time.Second)
-	var first []string
-	for {
-		first = npcInfoLines(s.out)
-		if len(first) >= 6 || time.Now().After(deadline) {
-			break
+	waitLines := func(out *syncBuffer, want int) []string {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second) // бюджет — на каждое ожидание
+		for {
+			lines := npcInfoLines(out)
+			if len(lines) >= want || time.Now().After(deadline) {
+				return lines
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
+	first := waitLines(s.out, 6)
 	if len(first) != 6 {
 		t.Fatalf("первый набор NPC_INFO = %d; want 6", len(first))
 	}
@@ -1112,12 +1118,7 @@ func TestE2EReenterNpcSetIdenticalById(t *testing.T) {
 	}
 	s2 := enterWorld(t, env, "reenter")
 	waitForLine(t, s2.out, "USER_INFO", 3*time.Second)
-	for {
-		if len(npcInfoLines(s2.out)) >= 6 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitLines(s2.out, 6)
 	second := npcInfoLines(s2.out)
 	if len(second) != 6 {
 		t.Fatalf("второй набор NPC_INFO = %d; want 6", len(second))

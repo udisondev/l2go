@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -75,10 +76,9 @@ type config struct {
 	// NPCCenterX/Y, NPCRadius — срез разворачивания NPC-населения P3.10:
 	// центр по умолчанию — стартовая точка новичка (КТ-1: географию среза
 	// владелец утверждает по гео-покрытию).
-	NPCCenterX  int32
-	NPCCenterY  int32
-	NPCRadius   int32
-	NPCDeployOn bool
+	NPCCenterX int32
+	NPCCenterY int32
+	NPCRadius  int32
 	// RegisterTimeout — бюджет регистрации на LS (харнесс ускоряет).
 	RegisterTimeout time.Duration
 }
@@ -253,8 +253,8 @@ func bootstrap(cfg config) (*server, error) {
 
 	// Разворачивание NPC-населения (P3.10): письмо кладётся до старта Run —
 	// применение первым шагом региона; конфиг среза едет в письме (реплей
-	// воспроизводит разворот из лога порций).
-	if cfg.NPCDeployOn {
+	// воспроизводит разворот из лога порций); радиус 0 — без населения.
+	if cfg.NPCRadius > 0 {
 		if err := region.DeployNPCs(static, transport.NPCDeployMsg{
 			CenterX: cfg.NPCCenterX, CenterY: cfg.NPCCenterY, Radius: cfg.NPCRadius,
 		}); err != nil {
@@ -381,18 +381,18 @@ func run(args []string) error {
 	cx, cy := int32(persist.HumanFighter.StartX), int32(persist.HumanFighter.StartY)
 	if *npcCenter != "" {
 		parts := strings.SplitN(*npcCenter, ",", 2)
-		x, errX := strconv.ParseInt(parts[0], 10, 32)
-		y, errY := int64(0), error(nil)
-		if len(parts) == 2 {
-			y, errY = strconv.ParseInt(parts[1], 10, 32)
-		}
-		if len(parts) != 2 || errX != nil || errY != nil {
+		if len(parts) != 2 {
 			return fmt.Errorf("l2go: -npc-center %q: нужен формат \"x,y\" int32", *npcCenter)
+		}
+		x, errX := strconv.ParseInt(parts[0], 10, 32)
+		y, errY := strconv.ParseInt(parts[1], 10, 32)
+		if errX != nil || errY != nil {
+			return fmt.Errorf("l2go: -npc-center %q: x/y вне домена int32: %v / %v", *npcCenter, errX, errY)
 		}
 		cx, cy = int32(x), int32(y)
 	}
-	if *npcRadius < 0 {
-		return fmt.Errorf("l2go: -npc-radius %d: отрицательный радиус запрещён", *npcRadius)
+	if *npcRadius < 0 || int64(*npcRadius) > math.MaxInt32 {
+		return fmt.Errorf("l2go: -npc-radius %d: вне домена [0, %d]", *npcRadius, math.MaxInt32)
 	}
 
 	srv, err := bootstrap(config{
@@ -405,7 +405,6 @@ func run(args []string) error {
 		NPCCenterX:     cx,
 		NPCCenterY:     cy,
 		NPCRadius:      int32(*npcRadius),
-		NPCDeployOn:    *npcRadius > 0,
 	})
 	if err != nil {
 		return err

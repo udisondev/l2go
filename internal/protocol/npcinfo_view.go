@@ -65,6 +65,9 @@ func (v NpcInfoView) Title() (string, bool) {
 	return s, ok
 }
 
+// Running возвращает режим бега NPC (канон: не бежит при спавне).
+func (v NpcInfoView) Running() bool { return v[118] != 0 }
+
 // Fields — строка трафик-лога l2client (поля живого интереса P3.10).
 func (v NpcInfoView) Fields() []Field {
 	name, _ := v.Name()

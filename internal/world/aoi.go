@@ -52,6 +52,8 @@ func recordOf(ent *Entity) replica.Record {
 			rec.MAtkSpd = s.MAtkSpd
 			rec.MoveMultiplier = s.MoveMultiplier
 			rec.AttackSpeedMultiplier = s.AttackSpeedMultiplier
+			rec.RHand = s.RHand
+			rec.LHand = s.LHand
 		}
 		return rec
 	}
@@ -143,6 +145,8 @@ func npcInfoOf(rec replica.Record) protocol.NpcInfoData {
 		CollisionHeight:       rec.CollisionHeight,
 		Name:                  rec.Name,
 		Title:                 rec.Title,
+		RHand:                 rec.RHand,
+		LHand:                 rec.LHand,
 	}
 }
 

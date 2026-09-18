@@ -388,8 +388,8 @@ func TestComposeJoinEventKinds(t *testing.T) {
 	if got, ok := view.Title(); !ok || got != "Разбойник" {
 		t.Errorf("Title = %q, ok=%v; want Разбойник", got, ok)
 	}
-	if pushes[1].Frame[118] != 0 {
-		t.Errorf("Running-байт = %d; want 0 (NPC не бежит, канон)", pushes[1].Frame[118])
+	if view.Running() {
+		t.Errorf("Running = true; want false (NPC не бежит, канон)")
 	}
 	if r.npcIntroduced.Load() != 1 {
 		t.Fatalf("NPC-ввод не посчитан")

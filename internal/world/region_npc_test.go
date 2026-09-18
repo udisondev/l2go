@@ -71,6 +71,9 @@ func TestRegionDeployNPCsBirthsApplied(t *testing.T) {
 	if got := h.r.Stats().Residents; got != wantNPCResidents {
 		t.Fatalf("население растёт после разворота: %d", got)
 	}
+	// quiesce: прямой обход residents при живом Run — гонка харнесса.
+	h.rCancel()
+	waitCond(t, h.r, func(RegionStats) bool { return h.regionDone() })
 	ents := h.r.entsProj()
 	perTemplate := make(map[int32]int)
 	ids := make([]int, 0, len(ents))
@@ -110,17 +113,25 @@ func TestRegionDeployDeadLetterCounters(t *testing.T) {
 	if h.r.Stats().Frozen {
 		t.Fatalf("регион заморожен dead-letter'ом разворота")
 	}
+	// Дамп после остановки: счётчик dead-letter — машинный оракул (журнал —
+	// наблюдаемость).
+	h.rCancel()
+	waitCond(t, h.r, func(RegionStats) bool { return h.regionDone() })
+	if h.r.state.DeadLetters != 1 {
+		t.Fatalf("DeadLetters = %d; want 1 (битый конфиг письма)", h.r.state.DeadLetters)
+	}
 }
 
 // npcInfoKnown — множество objID NPC из пушей коллектора.
 func npcInfoKnown(c *pushCollector) map[uint64]bool {
 	out := make(map[uint64]bool)
 	for _, p := range c.Snapshot() {
-		if len(p.Frame) == 0 || p.Frame[0] != protocol.OpNpcInfo || len(p.Frame) < 5 {
+		if len(p.Frame) == 0 || p.Frame[0] != protocol.OpNpcInfo {
 			continue
 		}
-		out[uint64(uint32(p.Frame[1])|uint32(p.Frame[2])<<8|
-			uint32(p.Frame[3])<<16|uint32(p.Frame[4])<<24)] = true
+		if view, ok := protocol.NewNpcInfoView(p.Frame); ok {
+			out[uint64(uint32(view.ObjID()))] = true
+		}
 	}
 	return out
 }
@@ -157,11 +168,13 @@ func TestRegionNPCIntroduceRadiusSet(t *testing.T) {
 		if len(p.Frame) == 0 || p.Frame[0] != protocol.OpNpcInfo {
 			continue
 		}
-		x := int32(uint32(p.Frame[13]) | uint32(p.Frame[14])<<8 | uint32(p.Frame[15])<<16 | uint32(p.Frame[16])<<24)
-		y := int32(uint32(p.Frame[17]) | uint32(p.Frame[18])<<8 | uint32(p.Frame[19])<<16 | uint32(p.Frame[20])<<24)
-		dx, dy := int64(x)-1000, int64(y)-1000
+		view, ok := protocol.NewNpcInfoView(p.Frame)
+		if !ok {
+			t.Fatalf("NpcInfo-кадр не навигируется")
+		}
+		dx, dy := int64(view.X())-1000, int64(view.Y())-1000
 		if dx*dx+dy*dy > 3500*3500 {
-			t.Errorf("NpcInfo вне enter-радиуса: (%d,%d)", x, y)
+			t.Errorf("NpcInfo вне enter-радиуса: (%d,%d)", view.X(), view.Y())
 		}
 	}
 	h.pushes.Reset()
@@ -178,6 +191,7 @@ func TestRegionNPCNotObserver(t *testing.T) {
 	h := newNPCHarness(t, 10000)
 	waitForResidents(t, h.r, wantNPCResidents)
 	h.enterConn(t, 32, mkRecAt("npcacc2", "NpcGuy2", 1000, 1000))
+	waitNPCFrames(t, h, 1) // кадры шага с рождением уже в коллекторе — ассерт не гонится с фазой B
 	for _, p := range h.pushes.Snapshot() {
 		if p.Client != 32 {
 			t.Fatalf("кадр ушёл клиенту %d; want только игроку 32", p.Client)
@@ -220,8 +234,10 @@ func TestRegionDeployPanicWindows(t *testing.T) {
 			CenterX: 1000, CenterY: 1000, Radius: 100}); err != nil {
 			t.Fatal(err)
 		}
-		h.startRun(t)
+		// инъекция до старта: письмо в ctrl-ящике будит регион немедленно —
+		// Store после startRun гонится с первым шагом
 		h.r.forcePanic.Store(uint32(phaseDrain))
+		h.startRun(t)
 		waitCond(t, h.r, func(s RegionStats) bool { return s.Failed >= 1 })
 		h.r.forcePanic.Store(0)
 		// радиус 100: только near_terr (∩ квадрата [900..1100]).
@@ -233,11 +249,39 @@ func TestRegionDeployPanicWindows(t *testing.T) {
 			CenterX: 1000, CenterY: 1000, Radius: 10000}); err != nil {
 			t.Fatal(err)
 		}
-		h.startRun(t)
 		h.r.forcePanic.Store(uint32(phaseFold))
+		h.startRun(t)
 		waitCond(t, h.r, func(s RegionStats) bool { return s.Failed >= 1 })
 		h.r.forcePanic.Store(0)
+		// Живые шаги после сброса: пустой регион спит (снимается сета) —
+		// будим контрольными письмами; оракул исполнений — PhaseAck (тиковое
+		// ожидание слепо: шаги при тике 0 не растят doneTick). Письмо
+		// разворота классово дропнуто — разворота не случится никогда.
+		before := h.r.Stats().PhaseAck
+		for range 3 {
+			h.reg.Send(transport.Envelope{To: transport.Addr{Entity: h.r.CtrlID()},
+				FromID: 5, Kind: transport.KindSeed})
+		}
+		// письма коалесируются notify-токеном — минимум один живой шаг
+		waitCond(t, h.r, func(s RegionStats) bool { return s.PhaseAck >= before+1 })
 		waitForResidents(t, h.r, 0)
+	})
+	t.Run("phaseB на шаге рождения — кадры доставляет хвост recovered", func(t *testing.T) {
+		h := buildEnterHarness(t, DefaultConfig(), nil)
+		if err := h.r.DeployNPCs(miniStatic(t), transport.NPCDeployMsg{
+			CenterX: 1000, CenterY: 1000, Radius: 10000}); err != nil {
+			t.Fatal(err)
+		}
+		h.startRun(t)
+		waitForResidents(t, h.r, wantNPCResidents)
+		// Паника фазы B на шаге рождения наблюдателя: слиток и joinPushes
+		// (вводы NPC) уже в pendingPushes — recovered доставляет выживший
+		// хвост кадров немедленно, известность не теряется.
+		h.r.forcePanic.Store(uint32(phaseB))
+		h.enterConnRaw(41, mkRecAt("pbacc", "PbGuy", 1000, 1000))
+		waitCond(t, h.r, func(s RegionStats) bool { return s.Failed >= 1 })
+		h.r.forcePanic.Store(0)
+		waitNPCFrames(t, h, wantNPCResidents)
 	})
 }
 
@@ -255,13 +299,18 @@ func TestRegionNPCStepPhaseCounters(t *testing.T) {
 	}
 }
 
-// E10: остановка при NPC-населении — выход Run чист (сохранитель
-// игнорирует NPC: Player==nil).
+// E10: остановка при NPC-населении — выход Run чист, сохранитель игнорирует
+// NPC (Player==nil): персист-ящок без запросов.
 func TestRegionShutdownWithNPCPopulation(t *testing.T) {
 	h := newNPCHarness(t, 10000)
 	waitForResidents(t, h.r, wantNPCResidents)
 	h.rCancel()
 	waitCond(t, h.r, func(RegionStats) bool { return h.regionDone() })
+	for _, env := range h.pBox.ExtractInto(h.pToken, nil) {
+		if env.Kind == transport.KindPersistRequest {
+			t.Errorf("сохранитель записал NPC: %+v", env)
+		}
+	}
 }
 
 // F1: roundtrip разворота в логе порций (v4): Births несут полные NPC-скины
@@ -362,5 +411,36 @@ func TestComposeJoinNpcInfoHugeNameTitle(t *testing.T) {
 	}
 	if got, okV := view.Name(); !okV || got != huge {
 		t.Errorf("Name roundtrip отказ")
+	}
+}
+
+// F2-свидетель: лог с payloads=false не несёт байтов письма разворота —
+// реплей разворота невозможен (обязательство P3.12: реплейные логи пишутся с
+// LogPayloads=true; негативный свидетель).
+func TestPortionLogDeployRequiresPayloads(t *testing.T) {
+	msg := transport.NPCDeployMsg{CenterX: 1, CenterY: 2, Radius: 3}
+	body, err := transport.EncodeLetter(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployEnv := transport.Envelope{
+		To: transport.Addr{Entity: 7}, FromID: 7, Kind: transport.KindDeployNPCs, Payload: body}
+	for _, payloads := range []bool{false, true} {
+		l := newTestLog(t, payloads, 1<<20)
+		if err := l.LogStep(StepInput{Tick: 9, Delta: 0,
+			Portions: []PortionRecord{{Box: 7, Mark: 1, Envs: []transport.Envelope{deployEnv}}}}); err != nil {
+			t.Fatalf("LogStep(payloads=%v): %v", payloads, err)
+		}
+		_, steps, _, err := readAll(t, l)
+		if err != nil {
+			t.Fatalf("read(payloads=%v): %v", payloads, err)
+		}
+		envs := steps[0].Portions[0].Envs
+		if payloads && (len(envs) != 1 || len(envs[0].Payload) == 0) {
+			t.Fatalf("payloads=true: письмо без байтов — реплей невозможен")
+		}
+		if !payloads && len(envs) == 1 && len(envs[0].Payload) != 0 {
+			t.Fatalf("payloads=false: байты письма попали в лог (контракт заголовков)")
+		}
 	}
 }

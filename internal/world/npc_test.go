@@ -12,6 +12,8 @@ import (
 
 	"github.com/udisondev/l2go/internal/data"
 	"github.com/udisondev/l2go/internal/geo"
+	"github.com/udisondev/l2go/internal/persist"
+	"github.com/udisondev/l2go/internal/replica"
 	"github.com/udisondev/l2go/internal/transport"
 )
 
@@ -74,10 +76,16 @@ func miniStatic(t *testing.T) *data.Static {
 	return mkStatic(t, npcs, spawns)
 }
 
-// mkStatic — загрузка мини-датапака из XML-текстов (категории-заглушки
-// обязательны: Load читает все каталоги).
+// mkStatic — загрузка мини-датапака из XML-текстов (общий с бенчами:
+// категории-заглушки обязательны — Load читает все каталоги).
 func mkStatic(t *testing.T, npcs, spawns string) *data.Static {
 	t.Helper()
+	return staticOfXML(t, npcs, spawns)
+}
+
+// staticOfXML — сборка статики из XML-текстов (тесты и бенчи).
+func staticOfXML(tb testing.TB, npcs, spawns string) *data.Static {
+	tb.Helper()
 	fsys := fstest.MapFS{
 		"stats/items/.keep":   {},
 		"stats/skills/.keep":  {},
@@ -87,10 +95,10 @@ func mkStatic(t *testing.T, npcs, spawns string) *data.Static {
 	}
 	st, rep, err := data.Load(fsys)
 	if err != nil {
-		t.Fatalf("mkStatic: %v", err)
+		tb.Fatalf("staticOfXML: %v", err)
 	}
 	if rep.HasErrors() {
-		t.Fatalf("mkStatic: датапак красный: %v", rep.Errors)
+		tb.Fatalf("staticOfXML: датапак красный: %v", rep.Errors)
 	}
 	return st
 }
@@ -404,46 +412,30 @@ func TestFoldDeployNPCsIsolatedRNG(t *testing.T) {
 // повторное письмо → dead-letter, рождения нет.
 func TestFoldDeployNPCsLetterValidation(t *testing.T) {
 	static := miniStatic(t)
-	letter := func(mod func(*transport.Envelope)) transport.Envelope {
-		return deployLetter(t, func() transport.NPCDeployMsg {
-			return transport.NPCDeployMsg{CenterX: 1000, CenterY: 1000, Radius: 100}
-		}())
-	}
+	foreign := deployLetter(t, transport.NPCDeployMsg{CenterX: 1000, CenterY: 1000, Radius: 100})
+	foreign.FromID = 42
 	cases := []struct {
 		name string
 		env  transport.Envelope
 	}{
-		{"чужой FromID", func() transport.Envelope {
-			e := letter(nil)
-			e.FromID = 42
-			return e
-		}()},
-		{"radius 0", func() transport.Envelope {
-			e := letter(nil)
-			e.Payload = mustLetter(t, transport.NPCDeployMsg{Radius: 0})
-			return e
-		}()},
-		{"radius <0", func() transport.Envelope {
-			e := letter(nil)
-			e.Payload = mustLetter(t, transport.NPCDeployMsg{Radius: -5})
-			return e
-		}()},
-		{"битый payload", func() transport.Envelope {
-			e := letter(nil)
-			e.Payload = []byte("{")
-			return e
-		}()},
+		{"чужой FromID", foreign},
+		{"radius 0", deployLetter(t, transport.NPCDeployMsg{Radius: 0})},
+		{"radius <0", deployLetter(t, transport.NPCDeployMsg{Radius: -5})},
+		{"битый payload", transport.Envelope{To: transport.Addr{Entity: 1}, FromID: 1,
+			Kind: transport.KindDeployNPCs, Payload: []byte("{")}},
 	}
 	for _, tc := range cases {
-		st := &State{}
-		res := Fold(100, 1, stepRNG(1, 100), st, nil, foldPortions(100, tc.env), nil, testEnv(static))
-		if st.DeadLetters != 1 || len(res.Births) != 0 {
-			t.Errorf("%s: DeadLetters=%d Births=%d; want 1/0", tc.name, st.DeadLetters, len(res.Births))
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			st := &State{}
+			res := Fold(100, 1, stepRNG(1, 100), st, nil, foldPortions(100, tc.env), nil, testEnv(static))
+			if st.DeadLetters != 1 || len(res.Births) != 0 {
+				t.Errorf("DeadLetters=%d Births=%d; want 1/0", st.DeadLetters, len(res.Births))
+			}
+		})
 	}
 	// Static=nil: письмо валидно, но разворачивать нечем.
 	st := &State{}
-	env0 := letter(nil)
+	env0 := deployLetter(t, transport.NPCDeployMsg{CenterX: 1000, CenterY: 1000, Radius: 100})
 	res := Fold(100, 1, stepRNG(1, 100), st, nil, foldPortions(100, env0), nil, testEnv(nil))
 	if st.DeadLetters != 1 || len(res.Births) != 0 {
 		t.Errorf("Static=nil: DeadLetters=%d Births=%d; want 1/0", st.DeadLetters, len(res.Births))
@@ -554,4 +546,178 @@ func cloneEnts(ents []*Entity) []Entity {
 		out[i] = *e
 	}
 	return out
+}
+
+// C1: recordOf NPC-ветки — все NPC-поля Record равны скину, Player-поля нули
+// (и наоборот) — шов скин→запись фальсифицирован по полям.
+func TestRecordOfNPCFields(t *testing.T) {
+	skin := &NpcSkin{
+		TemplateID: 20550, Name: "Орк", Title: "Разбойник", Attackable: true,
+		CollisionRadius: 13, CollisionHeight: 22.5,
+		RunSpd: 140, WalkSpd: 60, SwimRunSpd: 140, SwimWalkSpd: 60,
+		PAtkSpd: 253, MAtkSpd: 333, MoveMultiplier: 1.0, AttackSpeedMultiplier: 1.1,
+		RHand: 127, LHand: 42,
+	}
+	rec := recordOf(&Entity{ID: 9, Owner: 1, Pos: Position{X: 1, Y: 2, Z: 3},
+		Heading: 77, Npc: skin})
+	want := replica.Record{
+		Entity: 9, Cell: aoiCell, X: 1, Y: 2, Z: 3, Heading: 77,
+		Kind:       replica.RecordKindNPC,
+		TemplateID: skin.TemplateID, Name: skin.Name, Title: skin.Title,
+		Attackable:      skin.Attackable,
+		CollisionRadius: skin.CollisionRadius, CollisionHeight: skin.CollisionHeight,
+		RunSpd: skin.RunSpd, WalkSpd: skin.WalkSpd,
+		SwimRunSpd: skin.SwimRunSpd, SwimWalkSpd: skin.SwimWalkSpd,
+		PAtkSpd: skin.PAtkSpd, MAtkSpd: skin.MAtkSpd,
+		MoveMultiplier: skin.MoveMultiplier, AttackSpeedMultiplier: skin.AttackSpeedMultiplier,
+		RHand: skin.RHand, LHand: skin.LHand,
+	}
+	if rec != want {
+		t.Fatalf("recordOf(NPC) = %+v; want %+v", rec, want)
+	}
+	// NPC-поля нули у игрока.
+	ent := playerEntForRecord()
+	prec := recordOf(ent)
+	if prec.Kind != replica.RecordKindPlayer || prec.TemplateID != 0 || prec.Title != "" ||
+		prec.Attackable || prec.RunSpd != 0 || prec.RHand != 0 {
+		t.Fatalf("recordOf(игрок) несёт NPC-поля: %+v", prec)
+	}
+}
+
+func playerEntForRecord() *Entity {
+	return &Entity{ID: 10, Player: &Player{Rec: persistRec()}}
+}
+
+func persistRec() persist.CharRecord {
+	return persist.CharRecord{Account: "a", Name: "N", ClassID: 0, Race: 0,
+		Level: 1, HP: 80, MP: 30, X: 1, Y: 2, Z: 3}
+}
+
+// Пустой срез — валидное письмо без спавнов в радиусе: не dead-letter,
+// разворот исполнен, регион жив (корнер «0»).
+func TestFoldDeployNPCsEmptySlice(t *testing.T) {
+	static := miniStatic(t)
+	st := &State{}
+	res := Fold(100, 1, stepRNG(1, 100), st, nil,
+		foldPortions(100, deployLetter(t, transport.NPCDeployMsg{CenterX: 200000, CenterY: 200000, Radius: 100})),
+		nil, testEnv(static))
+	if st.DeadLetters != 0 || len(res.Births) != 0 {
+		t.Fatalf("пустой срез: DeadLetters=%d Births=%d; want 0/0", st.DeadLetters, len(res.Births))
+	}
+	if !st.NPCDeployedOnce {
+		t.Fatalf("разворот не отмечен исполненным")
+	}
+}
+
+// B6-точно: d==Radius входит, Radius+1 — нет; полигон в углу квадрата за
+// кругом разворачивается (консервативность bbox-фильтра).
+func TestFoldDeployNPCsSliceFilterExactBoundary(t *testing.T) {
+	const npcOnly = `<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<npc id="20550" level="27" type="Monster" name="Орк" />
+</list>`
+	spawns := `<?xml version="1.0" encoding="UTF-8"?>
+<list enabled="true">
+	<spawn name="Edge">
+		<npc id="20550" x="11000" y="1000" z="-300" respawnDelay="60" />
+		<npc id="20550" x="11001" y="1000" z="-300" respawnDelay="60" />
+	</spawn>
+	<spawn zone="corner">
+		<territory minZ="-1000" maxZ="0">
+			<node x="10800" y="10800" />
+			<node x="11000" y="10800" />
+			<node x="11000" y="11000" />
+		</territory>
+		<npc id="20550" count="1" respawnDelay="22" />
+	</spawn>
+</list>`
+	static := mkStatic(t, npcOnly, spawns)
+	st, res := &State{}, StepResult{}
+	deploySpawns(1, 100, st, static, transport.NPCDeployMsg{CenterX: 1000, CenterY: 1000, Radius: 10000}, emptyGeo, &res)
+	point, corner := 0, 0
+	for i := range res.Births {
+		p := res.Births[i].Ent.Pos
+		switch {
+		case p.X == 11000 && p.Y == 1000:
+			point++ // d=10000 == Radius: входит
+		case p.X == 11001 && p.Y == 1000:
+			t.Errorf("точка d=Radius+1 развёрнута (фильтр нестрогий)")
+		case p.X >= 10800 && p.Y >= 10800:
+			corner++ // полигон в квадрате, но вне круга
+		}
+	}
+	if point != 1 {
+		t.Errorf("точка на границе радиуса: %d; want 1", point)
+	}
+	if corner == 0 {
+		t.Errorf("полигон за кругом (в квадрате) не развёрнут — консервативность потеряна")
+	}
+}
+
+// B8-точно: заданные heading за доменом маскируются — 70000→4464, 65535→65535.
+func TestFoldDeployNPCsHeadingMaskValues(t *testing.T) {
+	npcs := `<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<npc id="20550" level="27" type="Monster" name="Орк" />
+</list>`
+	spawns := `<?xml version="1.0" encoding="UTF-8"?>
+<list enabled="true">
+	<spawn name="Heads">
+		<npc id="20550" x="100" y="100" z="0" heading="70000" respawnDelay="60" />
+		<npc id="20550" x="200" y="100" z="0" heading="65535" respawnDelay="60" />
+	</spawn>
+</list>`
+	static := mkStatic(t, npcs, spawns)
+	st, res := &State{}, StepResult{}
+	deploySpawns(1, 100, st, static, transport.NPCDeployMsg{CenterX: 0, CenterY: 0, Radius: 1000}, emptyGeo, &res)
+	heads := map[int32]int32{}
+	for i := range res.Births {
+		heads[res.Births[i].Ent.Pos.X] = res.Births[i].Ent.Heading
+	}
+	if got := heads[100]; got != 70000&0xFFFF {
+		t.Errorf("heading 70000 → %d; want %d", got, 70000&0xFFFF)
+	}
+	if got := heads[200]; got != 65535 {
+		t.Errorf("heading 65535 → %d; want 65535", got)
+	}
+}
+
+// B4-доп: banned-исключение 3D — banned-полигон с узким Z-диапазоном режет
+// только точки его высоты (2D-фильтр прошёл бы всё или ничего).
+func TestFoldDeployNPCsBannedZRange(t *testing.T) {
+	npcs := `<?xml version="1.0" encoding="UTF-8"?>
+<list>
+	<npc id="20550" level="27" type="Monster" name="Орк" />
+</list>`
+	spawns := `<?xml version="1.0" encoding="UTF-8"?>
+<list enabled="true">
+	<spawn zone="zr">
+		<territory minZ="-1000" maxZ="0">
+			<node x="0" y="0" />
+			<node x="2000" y="0" />
+			<node x="2000" y="2000" />
+		</territory>
+		<banned_territory minZ="-100" maxZ="100">
+			<node x="0" y="0" />
+			<node x="2000" y="0" />
+			<node x="2000" y="1000" />
+			<node x="0" y="1000" />
+		</banned_territory>
+		<npc id="20550" count="16" respawnDelay="22" />
+	</spawn>
+</list>`
+	static := mkStatic(t, npcs, spawns)
+	st, res := &State{}, StepResult{}
+	deploySpawns(1, 100, st, static, transport.NPCDeployMsg{CenterX: 1000, CenterY: 1000, Radius: 10000}, emptyGeo, &res)
+	// Пустая гео: гео-Z = midZ = -500 — вне banned-полосы [-100,100]: весь
+	// banned-полигон прозрачен, все 16 рождений живут. Узость полосы —
+	// оракул 3D-семантики: 2D-фильтр вырезал бы полполилона.
+	if len(res.Births) != 16 {
+		t.Fatalf("births=%d; want 16 (banned с чужим Z-диапазоном не режет)", len(res.Births))
+	}
+	for i := range res.Births {
+		if p := res.Births[i].Ent.Pos; p.Z < -1000 || p.Z > 0 {
+			t.Fatalf("Z %d вне территории", p.Z)
+		}
+	}
 }

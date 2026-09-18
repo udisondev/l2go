@@ -739,7 +739,9 @@ func appendNpc(buf []byte, n *NpcSkin) []byte {
 	buf = binary.AppendUvarint(buf, uint64(n.PAtkSpd))
 	buf = binary.AppendUvarint(buf, uint64(n.MAtkSpd))
 	buf = binary.AppendUvarint(buf, math.Float64bits(n.MoveMultiplier))
-	return binary.AppendUvarint(buf, math.Float64bits(n.AttackSpeedMultiplier))
+	buf = binary.AppendUvarint(buf, math.Float64bits(n.AttackSpeedMultiplier))
+	buf = binary.AppendUvarint(buf, uint64(n.RHand))
+	return binary.AppendUvarint(buf, uint64(n.LHand))
 }
 
 // appendPlayer — сериализация игрока: int64-поля записи — varint (uvarint

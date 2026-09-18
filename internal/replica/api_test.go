@@ -40,6 +40,7 @@ func TestReplicaExportedAPISurface(t *testing.T) {
 		"Title": true, "Attackable": true, "CollisionRadius": true, "CollisionHeight": true,
 		"RunSpd": true, "WalkSpd": true, "SwimRunSpd": true, "SwimWalkSpd": true,
 		"PAtkSpd": true, "MAtkSpd": true, "MoveMultiplier": true, "AttackSpeedMultiplier": true,
+		"RHand": true, "LHand": true,
 	}
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(".")

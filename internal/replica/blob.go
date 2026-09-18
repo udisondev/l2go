@@ -57,6 +57,8 @@ type Record struct {
 	MAtkSpd               int32
 	MoveMultiplier        float64
 	AttackSpeedMultiplier float64
+	RHand                 int32
+	LHand                 int32
 }
 
 // segment — SoA-сегмент одной ячейки: записи по плотным слотам (слот = индекс,
