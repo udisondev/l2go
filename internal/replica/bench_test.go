@@ -154,8 +154,10 @@ func popSuffix(n int) string {
 
 // BenchmarkJoinStepIsolatedFromCrowd — фальсификатор независимости от толпы
 // вне окна (ADR-0004 «Проверка»): изолированный Step одного наблюдателя при
-// толпе 10⁵ вне окна, раскладка толпы по клеткам 1/10²/10⁴. Build линеен по
-// населению и выведен из метрики (только Step+Apply); допустимый рост —
+// толпе 10⁵ вне окна, раскладка толпы ровно в 1/10²/10⁴ клеток. Build линеен
+// по населению и выведен из метрики (в цикле только Step — Apply не зовём:
+// appliedGen остаётся равным base, каждый вызов идёт событийным dirty-путём);
+// допустимый рост —
 // логарифмический по числу клеток (бинарный поиск сегментов). Наклон по
 // слотам толпы = возврат квадрат-скана (граница ~5000 движущихся, P3.10).
 func BenchmarkJoinStepIsolatedFromCrowd(b *testing.B) {
@@ -167,8 +169,11 @@ func BenchmarkJoinStepIsolatedFromCrowd(b *testing.B) {
 				{Entity: 2, X: 100, Y: -100, Kind: RecordKindPlayer, Name: "member"},
 			}
 			for i := range crowd {
-				x := int32(65536 + (i%cells)*8192 + i%97)
-				y := int32(65536 + (i/cells)%cells*8192 + i%89)
+				// толпа раскладывается ровно в cells клеток (кластер = клетка,
+				// смещение внутри — от порядка записи): честные 1/10²/10⁴ клеток
+				c, o := i%cells, i/cells
+				x := int32(65536 + (c%1000)*8192 + o%97)
+				y := int32(65536 + (c/1000)*8192 + o%89)
 				recs = append(recs, Record{Entity: transport.EntityID(1000 + i), X: x, Y: y, Kind: RecordKindPlayer})
 			}
 			obs := []Observer{{Entity: 1}}
