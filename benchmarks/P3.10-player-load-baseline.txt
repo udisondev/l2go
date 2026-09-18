@@ -1,0 +1,145 @@
+# Нагрузочный датчик перемещений (лестница владельца 100/1000/10000/20000; запрос 2026-09-18)
+# машина: локальная разработческая, 16 ядер, go1.27.1, 2026-09-18
+# методика: benchtime 10x × count 5 (лабораторный датчик фазы 3; бюджеты/боты — фаза 4; шаги из-за секундных стоимостей больших N — малые выборки, порядок величин)
+# сценарий: все игроки движутся (worst case dirty); crowd — все в одном enter-круге 3500 (максимальный фан-аут кадров); clusters50 — группы по 50 вне взаимных радиусов (реалистичная локальность)
+# бюджет тика: 100 мс (10 Гц канона) — «вывезет» = шаг ≤ бюджета
+# сводка (медианы, ряды ×5; строки бенчей порваны WARN-логами stdout — числа на строках-хвостах):
+#   100 (любой расклад): 0.3–0.7 мс — запас ×150; 1000 кластеры50: 6 мс (6% бюджета);
+#   1000 толпа (один enter-круг): 59–66 мс — 60% бюджета, предел «толпы» (~1300 в круге пробьют 100 мс:
+#     кадры O(N²) — 999k кадров/шаг при 1000, ~60 нс/кадр);
+#   10000 кластеры50: 361 мс — пробой бюджета ×3.6; 20000: 1414 мс — пробой ×14;
+#   рост 10000→20000 = ×3.9 на ×2 игроков — квадрат join-скана (наблюдатели × слоты;
+#     одна вырожденная ячейка AoI фазы 3), кадры при этом линейны (490k→980k);
+#   аналитическая граница сходимости (квадрат от 20000/1414 мс): ~5000–5500 одновременно
+#     движущихся рассредоточенных ≈ 86–104 мс — на грани бюджета; до ~5000 — вывезет.
+# Выводы: (1) узкое место — событийный join без пространственного индекса; закрытие —
+#   сетка ячеек ADR-0004 ось 6 (фаза 4, подъём локален в replica); (2) «толпа» в одном
+#   enter-круге — фундаментальный предел бандвидга N² (клиент тоже не вывезет) —
+#   радиус 3500 канона и есть защита; (3) аллокации = кадры (1 аллок/кадр) — пул
+#   слэбов/encode-once — фаза 6.
+2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+goos: linux
+goarch: amd64
+pkg: github.com/udisondev/l2go/internal/world
+cpu: AMD Ryzen 9 PRO 8945HS w/ Radeon 780M Graphics
+BenchmarkRegionPlayerLoad/players=100/crowd/step-16         	      10	    683742 ns/op	      9900 frames/op	  749000 B/op	    9920 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/step-16         	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    530635 ns/op	      9900 frames/op	  749000 B/op	    9920 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/step-16         	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    577773 ns/op	      9900 frames/op	  749000 B/op	    9920 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/step-16         	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    616247 ns/op	      9900 frames/op	  749000 B/op	    9920 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/step-16         	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    719759 ns/op	      9900 frames/op	  749000 B/op	    9920 allocs/op
+2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=100/crowd/aoi-16          	      10	    665303 ns/op	      9900 frames/op	  748995 B/op	    9919 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/aoi-16          	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    592082 ns/op	      9900 frames/op	  748984 B/op	    9919 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/aoi-16          	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    662422 ns/op	      9900 frames/op	  748984 B/op	    9919 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/aoi-16          	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    638163 ns/op	      9900 frames/op	  748984 B/op	    9919 allocs/op
+BenchmarkRegionPlayerLoad/players=100/crowd/aoi-16          	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    689306 ns/op	      9900 frames/op	  748984 B/op	    9919 allocs/op
+2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=100/clusters50/step-16    	      10	    280159 ns/op	      4900 frames/op	  384211 B/op	    4920 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/step-16    	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    302389 ns/op	      4900 frames/op	  384200 B/op	    4920 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/step-16    	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    303147 ns/op	      4900 frames/op	  384200 B/op	    4920 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/step-16    	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    291630 ns/op	      4900 frames/op	  384211 B/op	    4920 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/step-16    	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    325599 ns/op	      4900 frames/op	  384200 B/op	    4920 allocs/op
+2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=100/clusters50/aoi-16     	      10	    517937 ns/op	      4900 frames/op	  384206 B/op	    4919 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/aoi-16     	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    309220 ns/op	      4900 frames/op	  384184 B/op	    4919 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/aoi-16     	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    310903 ns/op	      4900 frames/op	  384184 B/op	    4919 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/aoi-16     	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    380730 ns/op	      4900 frames/op	  384184 B/op	    4919 allocs/op
+BenchmarkRegionPlayerLoad/players=100/clusters50/aoi-16     	2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	    403548 ns/op	      4900 frames/op	  384195 B/op	    4919 allocs/op
+2026/09/18 15:23:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=1000/crowd/step-16        	      10	  68453650 ns/op	    999000 frames/op	72277888 B/op	  999026 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/step-16        	2026/09/18 15:23:29 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	  53987822 ns/op	    999000 frames/op	72277888 B/op	  999026 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/step-16        	2026/09/18 15:23:30 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	  59046728 ns/op	    999000 frames/op	72277888 B/op	  999026 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/step-16        	2026/09/18 15:23:31 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	  60130593 ns/op	    999000 frames/op	72277888 B/op	  999026 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/step-16        	2026/09/18 15:23:32 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	  57067788 ns/op	    999000 frames/op	72277888 B/op	  999026 allocs/op
+2026/09/18 15:23:33 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=1000/crowd/aoi-16         	      10	  63327714 ns/op	    999000 frames/op	72277872 B/op	  999025 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/aoi-16         	2026/09/18 15:23:34 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	  65484288 ns/op	    999000 frames/op	72277872 B/op	  999025 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/aoi-16         	2026/09/18 15:23:35 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	  64882880 ns/op	    999000 frames/op	72277872 B/op	  999025 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/aoi-16         	2026/09/18 15:23:36 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	  67191502 ns/op	    999000 frames/op	72277872 B/op	  999025 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/crowd/aoi-16         	2026/09/18 15:23:37 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	  66351965 ns/op	    999000 frames/op	72277872 B/op	  999025 allocs/op
+2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=1000/clusters50/step-16   	      10	   5999819 ns/op	     49000 frames/op	 3883392 B/op	   49026 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/step-16   	2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	   5957969 ns/op	     49000 frames/op	 3883392 B/op	   49026 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/step-16   	2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	   5995761 ns/op	     49000 frames/op	 3883392 B/op	   49026 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/step-16   	2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	   5917359 ns/op	     49000 frames/op	 3883392 B/op	   49026 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/step-16   	2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	   6274814 ns/op	     49000 frames/op	 3883392 B/op	   49026 allocs/op
+2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=1000/clusters50/aoi-16    	      10	   6140894 ns/op	     49000 frames/op	 3883376 B/op	   49025 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/aoi-16    	2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	   6218049 ns/op	     49000 frames/op	 3883376 B/op	   49025 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/aoi-16    	2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	   6442788 ns/op	     49000 frames/op	 3883376 B/op	   49025 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/aoi-16    	2026/09/18 15:23:39 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	   6542646 ns/op	     49000 frames/op	 3883376 B/op	   49025 allocs/op
+BenchmarkRegionPlayerLoad/players=1000/clusters50/aoi-16    	2026/09/18 15:23:40 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	   6537402 ns/op	     49000 frames/op	 3883376 B/op	   49025 allocs/op
+2026/09/18 15:23:40 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=10000/clusters50/step-16  	      10	 372221180 ns/op	    490000 frames/op	38502160 B/op	  490110 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/step-16  	2026/09/18 15:23:45 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	 358039662 ns/op	    490000 frames/op	38502160 B/op	  490110 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/step-16  	2026/09/18 15:23:50 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	 374490812 ns/op	    490000 frames/op	38502160 B/op	  490110 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/step-16  	2026/09/18 15:23:56 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	 359676838 ns/op	    490000 frames/op	38502160 B/op	  490110 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/step-16  	2026/09/18 15:24:01 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	 361435643 ns/op	    490000 frames/op	38502160 B/op	  490110 allocs/op
+2026/09/18 15:24:06 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=10000/clusters50/aoi-16   	      10	 359569193 ns/op	    490000 frames/op	38502144 B/op	  490109 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/aoi-16   	2026/09/18 15:24:11 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	 364228084 ns/op	    490000 frames/op	38502144 B/op	  490109 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/aoi-16   	2026/09/18 15:24:16 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	 365768058 ns/op	    490000 frames/op	38502144 B/op	  490109 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/aoi-16   	2026/09/18 15:24:21 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	 365142620 ns/op	    490000 frames/op	38502144 B/op	  490109 allocs/op
+BenchmarkRegionPlayerLoad/players=10000/clusters50/aoi-16   	2026/09/18 15:24:27 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	 362373894 ns/op	    490000 frames/op	38502144 B/op	  490109 allocs/op
+2026/09/18 15:24:32 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=20000/clusters50/step-16  	      10	1424960809 ns/op	    980000 frames/op	77004432 B/op	  980206 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/step-16  	2026/09/18 15:24:52 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	1375584907 ns/op	    980000 frames/op	77004432 B/op	  980206 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/step-16  	2026/09/18 15:25:11 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	1389905511 ns/op	    980000 frames/op	77004432 B/op	  980206 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/step-16  	2026/09/18 15:25:31 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	1430064503 ns/op	    980000 frames/op	77004432 B/op	  980206 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/step-16  	2026/09/18 15:25:51 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	1413927053 ns/op	    980000 frames/op	77004432 B/op	  980206 allocs/op
+2026/09/18 15:26:10 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+BenchmarkRegionPlayerLoad/players=20000/clusters50/aoi-16   	      10	1384288815 ns/op	    980000 frames/op	77004416 B/op	  980205 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/aoi-16   	2026/09/18 15:26:30 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	1383157963 ns/op	    980000 frames/op	77004416 B/op	  980205 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/aoi-16   	2026/09/18 15:26:49 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	1385115685 ns/op	    980000 frames/op	77004416 B/op	  980205 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/aoi-16   	2026/09/18 15:27:09 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	1382192561 ns/op	    980000 frames/op	77004416 B/op	  980205 allocs/op
+BenchmarkRegionPlayerLoad/players=20000/clusters50/aoi-16   	2026/09/18 15:27:28 WARN world: артефакт без гео-регионов — движение без стен (NullRegion) region=1
+      10	1379082184 ns/op	    980000 frames/op	77004416 B/op	  980205 allocs/op
+PASS
+ok  	github.com/udisondev/l2go/internal/world	260.699s

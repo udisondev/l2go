@@ -584,3 +584,35 @@ func TestJoinSlotReuseInFullPassKeepsNewTenant(t *testing.T) {
 		t.Fatalf("вечный фантом: уход new за exit не эмитил Remove")
 	}
 }
+
+// Одновременное движение наблюдателя и цели: changed-наблюдатель уходит в
+// полный проход, dirty-цикл его скипает — апдейт пары обязан прийти из
+// полного прохода (регресс нагрузочного датчика P3.10: стрим пары терялся,
+// пока двигались оба).
+func TestJoinBothMovingUpdateDelivered(t *testing.T) {
+	pub := NewPublisher()
+	join := NewJoin(CanonJoinConfig())
+	mk := func(x int32) []Record {
+		return []Record{
+			{Entity: 1, X: x, Y: 0, Z: 0, Kind: RecordKindPlayer},
+			{Entity: 2, X: x + 100, Y: 0, Z: 0, Kind: RecordKindPlayer},
+		}
+	}
+	obs := []Observer{{Entity: 1, ConnID: 7}}
+	b1 := pub.Build(mk(0))
+	join.Step(obs, b1)
+	join.Apply()
+	// оба сдвинулись: наблюдатель 1 и цель 2 changed одновременно
+	pub.Commit(b1) // фаза publish шага: без Commit второй Build — то же поколение
+	events := join.Step(obs, pub.Build(mk(100)))
+	join.Apply()
+	var updates int
+	for _, ev := range events {
+		if ev.Kind == EventUpdate && ev.Obs.Entity == 1 && ev.Target.Entity == 2 {
+			updates++
+		}
+	}
+	if updates != 1 {
+		t.Fatalf("апдейтов пары (оба движутся) = %d; want 1 (стрим не теряется)", updates)
+	}
+}

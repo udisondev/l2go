@@ -668,3 +668,32 @@ func TestRegionObserversNPCAndEnterLeavingNotWatching(t *testing.T) {
 		t.Fatalf("фантом EnterLeaving после grace: %v (flash=%d)", known, flashID)
 	}
 }
+
+// Одновременное движение наблюдателя и цели: changed-наблюдатель покрывается
+// полным проходом (dirty-цикл его скипает) — апдейты пары обязан нести
+// полный проход. Регресс нагрузочного датчика P3.10: при 100% движущихся
+// стрим пар терялся целиком (каждый видел застывших соседей).
+func TestRegionBothMovingStreamDelivered(t *testing.T) {
+	_, r := newTestRegion(t, DefaultConfig())
+	for i, x := range []int32{0, 1000} {
+		if _, err := r.Spawn(Entity{Owner: r.id, HP: 100,
+			Pos: Position{X: x, Y: 0, Z: -3000}, Moving: true,
+			Dest:     Position{X: x + 1000, Y: 0, Z: -3000},
+			MoveFrom: Position{X: x, Y: 0, Z: -3000}, MoveDist: 1_000_000,
+			Player: &Player{ConnID: uint64(i + 1), SpeedBudget: speedCAP}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.step() // вводы
+	r.metro.tick.Add(1)
+	r.step() // стрим: обе записи dirty, оба наблюдателя covered
+	moves := 0
+	for _, p := range r.joinPushes {
+		if len(p.Frame) > 0 && p.Frame[0] == protocol.OpCharMoveToLocation {
+			moves++
+		}
+	}
+	if moves != 2 {
+		t.Fatalf("CharMoveToLocation при одновременном движении = %d; want 2 (по одному в каждую сторону)", moves)
+	}
+}

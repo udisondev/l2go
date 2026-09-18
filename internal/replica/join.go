@@ -265,6 +265,12 @@ func (j *Join) fullPass(ref obsRef, blob *Blob, fullEmit bool) {
 				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventRemove, slot: slot})
 			} else if fullEmit {
 				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot}) // повторный ввод — примирение
+			} else if bitHas(seg.changed, slot) {
+				// изменившаяся цель члена: полный проход — единственная точка
+				// обработки пар covered-наблюдателя (dirty-цикл его скипает) —
+				// апдейт движения здесь, иначе одновременное движение
+				// наблюдателя и цели теряет стрим пары
+				j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventUpdate, slot: slot})
 			}
 		case inEnter(ref.rec, rec, j.cfg):
 			j.emit(Event{Obs: ref.o, Target: *rec, Kind: EventIntroduce, slot: slot})
