@@ -122,3 +122,14 @@ func enterworldFixtures(t *testing.T) map[string]fixture.Fixture {
 	}
 	return out
 }
+
+// RequestRestart (C→GS): маркер из одного опкода — тело пакета отсутствует
+// (RestResponse конструктора нет: типизация кадра диспетчеру не нужна).
+func TestWriteRequestRestart(t *testing.T) {
+	t.Parallel()
+	var dst [RequestRestartSize]byte
+	n := WriteRequestRestart(dst[:])
+	if n != RequestRestartSize || dst[0] != byte(requestRestart) {
+		t.Fatalf("WriteRequestRestart = %d, op 0x%02X; want %d, 0x%02X", n, dst[0], RequestRestartSize, byte(requestRestart))
+	}
+}

@@ -83,3 +83,17 @@ func (v UserInfoView) CurMP() (int32, bool) {
 
 // ClassID возвращает класс из хвоста (после титула).
 func (v UserInfoView) ClassID() int32 { return leD(v, v.tailOff()+53) }
+
+// Fields возвращает поля трафик-лога: имя, идентификатор, позиция, уровень
+// (ядро слитка входа — e2e-ассерты).
+func (v UserInfoView) Fields() []Field {
+	name, _ := v.Name()
+	return []Field{
+		{K: "name", V: Quote(name)},
+		{K: "objID", V: num32(v.ObjID())},
+		{K: "x", V: num32(v.X())},
+		{K: "y", V: num32(v.Y())},
+		{K: "z", V: num32(v.Z())},
+		{K: "level", V: num32(v.Level())},
+	}
+}

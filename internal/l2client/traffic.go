@@ -1,9 +1,11 @@
-// Трафик-лог: детерминированные строки, значения полей и имена пакетов.
+// Трафик-лог: детерминированные строки. Представление и сборка полей
+// типизированных пакетов — protocol (Field, Fields-методы представлений,
+// GameServerFrameName); здесь — только писатель строк и форматтеры
+// аргументов исходящих команд.
 
 package l2client
 
 import (
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -13,53 +15,16 @@ import (
 	"github.com/udisondev/l2go/internal/protocol"
 )
 
-// Field — поле типизированного пакета трафик-лога: ключ и готовое значение.
-type Field struct {
-	K, V string
-}
+// Field — поле типизированного пакета трафик-лога; тип и сборка — protocol.
+type Field = protocol.Field
 
-func num(v int64) string    { return strconv.FormatInt(v, 10) }
-func num32(v int32) string  { return num(int64(v)) }
-func flt(v float64) string  { return strconv.FormatFloat(v, 'g', -1, 64) }
-func boolean(v bool) string { return strconv.FormatBool(v) }
-func hexs(b []byte) string  { return hex.EncodeToString(b) }
-
-// Quote оформляет строковое поле: кавычки; управляющие руны (< 0x20, 0x7F) —
-// \xHH, кавычка и обратный слэш — заэскейплены.
-func Quote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r < 0x20 || r == 0x7F:
-			fmt.Fprintf(&b, "\\x%02X", r)
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
+func num(v int64) string   { return strconv.FormatInt(v, 10) }
+func num32(v int32) string { return num(int64(v)) }
+func hexs(b []byte) string { return hex.EncodeToString(b) }
 
 // hexDumpMax — длина hex-дампа фолбэка: поток мусорных 0xFFFF-кадров не
 // заливает лог мегабайтами текста.
 const hexDumpMax = 64
-
-// quoteMax — потолок строкового поля лога: гигантские имена недоверенных
-// пакетов не разворачивают строку в сотни килобайт.
-const quoteMax = 128
-
-// quoted — строковое поле лога: Quote с усечением сверх quoteMax рун.
-func quoted(s string) string {
-	r := []rune(s)
-	if len(r) > quoteMax {
-		return Quote(string(r[:quoteMax])) + "…"
-	}
-	return Quote(s)
-}
 
 // HexBytes — hex-дамп байтов: целиком до 64 Б, дальше первые 64 Б и маркер
 // остатка.
@@ -101,27 +66,4 @@ func logLine(w io.Writer, dir, name string, fields []Field) {
 	}
 	b.WriteByte('\n')
 	_, _ = w.Write([]byte(b.String()))
-}
-
-// unknownName — имя входящего game-кадра без типизированного представления:
-// имя каталога, «??(0xNN)» для неизвестного опкода, Ex-семейство — имя по sub
-// (uint16LE в байтах 1–2) или «??(0xFE:0xNNNN)»; обрезанные тела не читаются.
-func unknownName(body []byte) string {
-	if len(body) == 0 {
-		return "??(0x??)"
-	}
-	if body[0] == protocol.ExGSOpcode {
-		if len(body) < 3 {
-			return "??(0xFE)"
-		}
-		sub := binary.LittleEndian.Uint16(body[1:3])
-		if name, ok := protocol.GameServerExName(sub); ok {
-			return name
-		}
-		return fmt.Sprintf("??(0xFE:0x%04X)", sub)
-	}
-	if name, ok := protocol.GameServerPacketName(body[0]); ok {
-		return name
-	}
-	return fmt.Sprintf("??(0x%02X)", body[0])
 }

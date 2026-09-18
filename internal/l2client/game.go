@@ -95,12 +95,8 @@ func (gc *GameClient) Handshake() error {
 	copy(wireKey[:], v.Key())
 	gc.crypt = crypto.NewGameCrypt(wireKey)
 	gc.crypt.Enable()
-	// Ключ сессии — учётные данные: в трафик-лог не пишется.
-	gc.logRecv(protocol.NameKeyPacket,
-		Field{K: "result", V: num(int64(v.Result()))},
-		Field{K: "encryption", V: boolean(v.Encryption())},
-		Field{K: "serverID", V: num32(v.ServerID())},
-		Field{K: "key", V: num(int64(len(v.Key())))})
+	// Ключ сессии — учётные данные: в полях трафик-лога только его размер.
+	gc.logRecv(protocol.NameKeyPacket, v.Fields()...)
 	return nil
 }
 
@@ -136,7 +132,7 @@ func (gc *GameClient) Auth(ep GameEndpoint, account string) ([]protocol.CharSele
 			}
 			entries = append(entries, e)
 		}
-		gc.logRecv(protocol.NameCharSelectInfo, charSelectionFields(v)...)
+		gc.logRecv(protocol.NameCharSelectInfo, v.Fields()...)
 		return entries, nil
 	case protocol.OpGSLoginFail:
 		v, ok := protocol.NewGSLoginFailView(reply)
@@ -171,14 +167,14 @@ func (gc *GameClient) SelectChar(slot int32) error {
 		if !ok {
 			return fmt.Errorf("стадия CharSelected: обрезанное тело (%d Б)", len(reply))
 		}
-		gc.logRecv(protocol.NameCharSelected, charSelectedFields(v)...)
+		gc.logRecv(protocol.NameCharSelected, v.Fields()...)
 		return nil
 	case protocol.OpGSLoginFail:
 		v, ok := protocol.NewGSLoginFailView(reply)
 		if !ok {
 			return fmt.Errorf("стадия LoginFail: обрезанное тело (%d Б)", len(reply))
 		}
-		gc.logRecv(protocol.NameLoginFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		gc.logRecv(protocol.NameLoginFail, v.Fields()...)
 		return fmt.Errorf("выбор персонажа отклонён: reason=0x%02X", v.Reason())
 	default:
 		return fmt.Errorf("неожиданный ответ выбора персонажа: опкод 0x%02X", reply[0])
@@ -210,7 +206,7 @@ func (gc *GameClient) CreateChar(d protocol.CharacterCreateData) ([]protocol.Cha
 	if !ok {
 		return nil, fmt.Errorf("стадия CharTemplates: обрезанное тело (%d Б)", len(reply))
 	}
-	gc.logRecv(protocol.NameCharTemplates, Field{K: "count", V: num(int64(tv.Count()))})
+	gc.logRecv(protocol.NameCharTemplates, tv.Fields()...)
 
 	wire := make([]byte, protocol.CharacterCreateSize(d))
 	protocol.WriteCharacterCreate(wire, d)
@@ -235,7 +231,7 @@ func (gc *GameClient) CreateChar(d protocol.CharacterCreateData) ([]protocol.Cha
 		if !ok {
 			return nil, fmt.Errorf("стадия CharCreateFail: обрезанное тело (%d Б)", len(reply))
 		}
-		gc.logRecv(protocol.NameCharCreateFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		gc.logRecv(protocol.NameCharCreateFail, v.Fields()...)
 		return nil, fmt.Errorf("создание отклонено: reason=0x%02X", v.Reason())
 	default:
 		return nil, fmt.Errorf("неожиданный ответ создания: опкод 0x%02X", reply[0])
@@ -266,7 +262,7 @@ func (gc *GameClient) readCharList(stage string) ([]protocol.CharSelectionEntry,
 		}
 		entries = append(entries, e)
 	}
-	gc.logRecv(protocol.NameCharSelectInfo, charSelectionFields(v)...)
+	gc.logRecv(protocol.NameCharSelectInfo, v.Fields()...)
 	return entries, nil
 }
 
@@ -298,7 +294,7 @@ func (gc *GameClient) SendRaw(wire []byte, name string) error {
 func (gc *GameClient) ValidatePosition(x, y, z, heading int32) error {
 	var wire [protocol.ValidatePositionSize]byte
 	protocol.WriteValidatePosition(wire[:], x, y, z, heading, 0)
-	return gc.command(wire[:], "VALIDATE_POSITION",
+	return gc.command(wire[:], protocol.NameValidatePosition,
 		Field{K: "x", V: num32(x)}, Field{K: "y", V: num32(y)})
 }
 
@@ -396,9 +392,10 @@ func (gc *GameClient) Logout() error {
 // RequestRestart — команда стационарной фазы: сервер фазы 3 отвечает отказом
 // канона (RestartResponse(false)+ActionFailed), коннект жив.
 func (gc *GameClient) RequestRestart() error {
-	wire := []byte{protocol.OpCRequestRestart}
+	var wire [protocol.RequestRestartSize]byte
+	protocol.WriteRequestRestart(wire[:])
 	select {
-	case gc.commands <- command{wire: wire, name: "REQUEST_RESTART"}:
+	case gc.commands <- command{wire: wire[:], name: protocol.NameRequestRestart}:
 		return nil
 	case <-gc.done:
 		return ErrClosed
@@ -448,17 +445,18 @@ func (gc *GameClient) readPump(frames chan []byte, pumpErr chan<- error) {
 }
 
 // handleFrame расшифровывает и диспетчеризирует входящий кадр стационарной
-// фазы: пустое тело — фолбэк без расшифровки, типизированный — поля, прочий —
-// имя из каталога + hex-фолбэк.
+// фазы: пустое тело — фолбэк без расшифровки, типизированный — имя и поля из
+// protocol (константа + Fields представления), прочий — имя из каталога +
+// hex-фолбэк.
 func (gc *GameClient) handleFrame(f []byte) {
 	if len(f) == 0 {
-		gc.logRecvHex("??(0x??)", f)
+		gc.logRecvHex(protocol.GameServerFrameName(f), f)
 		return
 	}
 	if gc.crypt != nil {
 		if err := gc.crypt.Decrypt(f); err != nil {
 			slog.Debug("game: расшифровка кадра", "err", err)
-			gc.logRecvHex(unknownName(f), f)
+			gc.logRecvHex(protocol.GameServerFrameName(f), f)
 			return
 		}
 	}
@@ -468,89 +466,50 @@ func (gc *GameClient) handleFrame(f []byte) {
 	switch f[0] {
 	case protocol.OpCharSelectInfo:
 		if v, ok := protocol.NewCharSelectionInfoView(f); ok {
-			name, fields, typed = "CHAR_SELECT_INFO", charSelectionFields(v), true
+			name, fields, typed = protocol.NameCharSelectInfo, v.Fields(), true
 		}
 	case protocol.OpCharSelected:
 		if v, ok := protocol.NewCharSelectedView(f); ok {
 			if _, ok2 := v.Name(); ok2 {
-				//Q: Почему так много строковых литероалов особенно в этом пакете, все это должно быть константами в соответствующих пакетах, например в protocol
-				name, fields, typed = "CHAR_SELECTED", charSelectedFields(v), true
+				name, fields, typed = protocol.NameCharSelected, v.Fields(), true
 			}
 		}
 	case protocol.OpUserInfo:
 		// UserInfo — сердце слитка входа: имя/позиция — e2e-ассерты (P3.7).
 		if v, ok := protocol.NewUserInfoView(f); ok {
-			nm, _ := v.Name()
-			name, typed = "USER_INFO", true
-			//Q: Почему мы тут что-то руками собираем? Это должно собираться в protocol, посмотри как ответы собираются в udison/interlude это должны быть функции.
-			fields = []Field{
-				{K: "name", V: Quote(nm)},
-				{K: "objID", V: num32(v.ObjID())},
-				{K: "x", V: num32(v.X())},
-				{K: "y", V: num32(v.Y())},
-				{K: "z", V: num32(v.Z())},
-				{K: "level", V: num32(v.Level())},
-			}
+			name, fields, typed = protocol.NameUserInfo, v.Fields(), true
 		}
 	case protocol.OpCharInfo:
 		// CharInfo — ввод чужого игрока в известность (join AoI, P3.8).
 		if v, ok := protocol.NewCharInfoView(f); ok {
-			nm, _ := v.Name()
-			name, typed = "CHAR_INFO", true
-			fields = []Field{
-				{K: "name", V: Quote(nm)},
-				{K: "objID", V: num32(v.ObjID())},
-				{K: "x", V: num32(v.X())},
-				{K: "y", V: num32(v.Y())},
-				{K: "heading", V: num32(v.Heading())},
-			}
+			name, fields, typed = protocol.NameCharInfo, v.Fields(), true
 		}
 	case protocol.OpDeleteObject:
 		// DeleteObject — уход из известности (join AoI, P3.8).
 		if v, ok := protocol.NewDeleteObjectView(f); ok {
-			name, typed = "DELETE_OBJECT", true
-			fields = []Field{{K: "objID", V: num32(v.ObjID())}}
+			name, fields, typed = protocol.NameDeleteObject, v.Fields(), true
 		}
 	case protocol.OpCharMoveToLocation:
 		// CharMoveToLocation — авторитетный стрим движения (P3.9).
 		if v, ok := protocol.NewCharMoveToLocationView(f); ok {
-			name, typed = "CHAR_MOVE_TO_LOCATION", true
-			fields = []Field{
-				{K: "objID", V: num32(v.ObjID())},
-				{K: "dstX", V: num32(v.DstX())},
-				{K: "dstY", V: num32(v.DstY())},
-				{K: "curX", V: num32(v.X())},
-				{K: "curY", V: num32(v.Y())},
-			}
+			name, fields, typed = protocol.NameCharMoveToLocation, v.Fields(), true
 		}
 	case protocol.OpStopMove:
 		// StopMove — авторитетная остановка (P3.9).
 		if v, ok := protocol.NewStopMoveView(f); ok {
-			name, typed = "STOP_MOVE", true
-			fields = []Field{
-				{K: "objID", V: num32(v.ObjID())},
-				{K: "x", V: num32(v.X())},
-				{K: "y", V: num32(v.Y())},
-				{K: "heading", V: num32(v.Heading())},
-			}
+			name, fields, typed = protocol.NameStopMove, v.Fields(), true
 		}
 	case protocol.OpValidateLocation:
 		// ValidateLocation — snap-back коррекция себе (P3.9).
 		if v, ok := protocol.NewValidateLocationView(f); ok {
-			name, typed = "VALIDATE_LOCATION", true
-			fields = []Field{
-				{K: "objID", V: num32(v.ObjID())},
-				{K: "x", V: num32(v.X())},
-				{K: "y", V: num32(v.Y())},
-				{K: "heading", V: num32(v.Heading())},
-			}
+			name, fields, typed = protocol.NameValidateLocation, v.Fields(), true
 		}
 	}
 	if typed {
 		gc.logRecv(name, fields...)
 		return
 	}
-	gc.logRecvHex(unknownName(f), f)
+	gc.logRecvHex(protocol.GameServerFrameName(f), f)
 }
 
 // sendEnc шифрует и пишет кадр (включённое шифрование).
@@ -592,75 +551,4 @@ func (gc *GameClient) logRecvHex(name string, body []byte) {
 	if gc.opts.Traffic != nil {
 		LogRecvHex(gc.opts.Traffic, name, body)
 	}
-}
-
-// charSelectionFields — поля списка персонажей (читаемое подмножество полей
-// записи; полный разбор — представление).
-func charSelectionFields(v protocol.CharSelectionInfoView) []Field {
-	fields := []Field{{K: "count", V: num(int64(v.Count()))}}
-	for i := 0; i < v.Count(); i++ {
-		e, ok := v.Char(i)
-		if !ok {
-			break
-		}
-		fields = append(fields, Field{K: fmt.Sprintf("[%d]", i), V: fmt.Sprintf(
-			"{name=%s id=%d level=%d class=%d base=%d sex=%d race=%d hp=%s/%s mp=%s/%s sp=%d exp=%d karma=%d}",
-			quoted(e.Name), e.CharID, e.Level, e.ClassID, e.BaseClassID, e.Sex, e.Race,
-			flt(e.CurHP), flt(e.MaxHP), flt(e.CurMP), flt(e.MaxMP), e.SP, e.Exp, e.Karma)})
-	}
-	return fields
-}
-
-// charSelectedFields — поля подтверждения входа.
-func charSelectedFields(v protocol.CharSelectedView) []Field {
-	fields := make([]Field, 0, 14)
-	add := func(k string, val any) {
-		fields = append(fields, Field{K: k, V: fmt.Sprintf("%v", val)})
-	}
-	if name, ok := v.Name(); ok {
-		add("name", quoted(name))
-	}
-	if id, ok := v.CharID(); ok {
-		add("id", id)
-	}
-	if title, ok := v.Title(); ok {
-		add("title", quoted(title))
-	}
-	if lv, ok := v.Level(); ok {
-		add("level", lv)
-	}
-	if c, ok := v.ClassID(); ok {
-		add("class", c)
-	}
-	if x, ok := v.X(); ok {
-		add("x", x)
-	}
-	if y, ok := v.Y(); ok {
-		add("y", y)
-	}
-	if z, ok := v.Z(); ok {
-		add("z", z)
-	}
-	if hp, ok := v.CurHP(); ok {
-		add("hp", flt(hp))
-	}
-	if mp, ok := v.CurMP(); ok {
-		add("mp", flt(mp))
-	}
-	if sp, ok := v.SP(); ok {
-		add("sp", sp)
-	}
-	if exp, ok := v.Exp(); ok {
-		add("exp", exp)
-	}
-	if karma, ok := v.Karma(); ok {
-		add("karma", karma)
-	}
-	if pk, ok := v.PkKills(); ok {
-		add("pk", pk)
-	}
-	if gt, ok := v.GameTime(); ok {
-		add("gameTime", gt)
-	}
-	return fields
 }

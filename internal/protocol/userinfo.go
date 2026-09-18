@@ -13,6 +13,9 @@ const userInfo = 0x04
 // OpUserInfo — публичный опкод GS→C UserInfo (лог l2client, e2e-ассерты).
 const OpUserInfo = userInfo
 
+// NameUserInfo — имя кадра UserInfo для трафик-лога.
+const NameUserInfo = "USER_INFO"
+
 // UserInfoData — варьируемые поля кадра UserInfo; нули и константы канона
 // (vehicleId, paperdoll, аугментации, клан, права, кубики, fishing и пр.)
 // пишет писатель. Передаётся по значению: событийная частота, стек-копия

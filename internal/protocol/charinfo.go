@@ -12,6 +12,9 @@ const charInfo = 0x03
 // OpCharInfo — опкод кадра CharInfo (GS→C).
 const OpCharInfo = charInfo
 
+// NameCharInfo — имя кадра CharInfo для трафик-лога.
+const NameCharInfo = "CHAR_INFO"
+
 // Цвета имени/титула по умолчанию — порт entity/actor/appearance/
 // PlayerAppearance.java @43ac8878 (DEFAULT_TITLE_COLOR, _nameColor).
 const (

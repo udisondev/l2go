@@ -33,6 +33,22 @@ const (
 // шлюза; ответ фазы 3 — RestartResponse(false)+ActionFailed, рестарта нет).
 const OpCRequestRestart = requestRestart
 
+// NameRequestRestart — имя кадра RequestRestart для трафик-лога.
+const NameRequestRestart = "REQUEST_RESTART"
+
+// RequestRestartSize — размер кадра RequestRestart с опкодом: маркер без полей.
+const RequestRestartSize = 1
+
+// WriteRequestRestart пишет кадр RequestRestart (C→GS) — маркер запроса
+// возврата к выбору персонажа, тела у пакета нет.
+func WriteRequestRestart(dst []byte) int {
+	if len(dst) < RequestRestartSize {
+		panic(shortDst("WriteRequestRestart", len(dst), RequestRestartSize))
+	}
+	dst[0] = byte(requestRestart)
+	return RequestRestartSize
+}
+
 // EnterWorldSize — размер кадра EnterWorld с опкодом: 32 Б hwinfo + 4×D +
 // 32 Б hwinfo + D + 20 Б tracert.
 const EnterWorldSize = 105

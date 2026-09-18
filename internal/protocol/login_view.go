@@ -9,7 +9,10 @@ package protocol
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
+	"strconv"
+	"strings"
 )
 
 // leD, leF, leQ — чтение little-endian по офсету без ok: для
@@ -46,6 +49,15 @@ func (v InitView) Modulus() []byte { return v[9:137] }
 // BlowfishKey возвращает динамический ключ Blowfish (16 Б).
 func (v InitView) BlowfishKey() []byte { return v[153:169] }
 
+// Fields возвращает поля трафик-лога: сессия и ревизия (модуль и ключ —
+// учётные данные, не печатаются).
+func (v InitView) Fields() []Field {
+	return []Field{
+		{K: "session", V: num32(v.SessionID())},
+		{K: "revision", V: fmt.Sprintf("0x%04X", v.Revision())},
+	}
+}
+
 // LoginOkView — представление пакета LoginOk (LS→C).
 type LoginOkView []byte
 
@@ -63,6 +75,14 @@ func (v LoginOkView) LoginOkID1() int32 { return leD(v, 1) }
 // LoginOkID2 возвращает вторую часть ключа сессии логина.
 func (v LoginOkView) LoginOkID2() int32 { return leD(v, 5) }
 
+// Fields возвращает поля трафик-лога: ключи сессии логина.
+func (v LoginOkView) Fields() []Field {
+	return []Field{
+		{K: "loginOk1", V: num32(v.LoginOkID1())},
+		{K: "loginOk2", V: num32(v.LoginOkID2())},
+	}
+}
+
 // LoginFailView — представление пакета LoginFail (LS→C).
 type LoginFailView []byte
 
@@ -76,6 +96,11 @@ func NewLoginFailView(b []byte) (LoginFailView, bool) {
 
 // Reason возвращает код причины отказа.
 func (v LoginFailView) Reason() LoginFailReason { return LoginFailReason(v[1]) }
+
+// Fields возвращает поля трафик-лога: код причины отказа.
+func (v LoginFailView) Fields() []Field {
+	return []Field{{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())}}
+}
 
 // AccountKickedView — представление пакета AccountKicked (LS→C).
 type AccountKickedView []byte
@@ -91,6 +116,11 @@ func NewAccountKickedView(b []byte) (AccountKickedView, bool) {
 
 // Reason возвращает код причины исключения аккаунта.
 func (v AccountKickedView) Reason() KickReason { return KickReason(leD(v, 1)) }
+
+// Fields возвращает поля трафик-лога: код причины исключения.
+func (v AccountKickedView) Fields() []Field {
+	return []Field{{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())}}
+}
 
 // PlayOkView — представление пакета PlayOk (LS→C).
 type PlayOkView []byte
@@ -109,6 +139,14 @@ func (v PlayOkView) PlayOkID1() int32 { return leD(v, 1) }
 // PlayOkID2 возвращает вторую часть ключа игровой сессии.
 func (v PlayOkView) PlayOkID2() int32 { return leD(v, 5) }
 
+// Fields возвращает поля трафик-лога: ключи игровой сессии.
+func (v PlayOkView) Fields() []Field {
+	return []Field{
+		{K: "playOk1", V: num32(v.PlayOkID1())},
+		{K: "playOk2", V: num32(v.PlayOkID2())},
+	}
+}
+
 // PlayFailView — представление пакета PlayFail (LS→C).
 type PlayFailView []byte
 
@@ -123,6 +161,11 @@ func NewPlayFailView(b []byte) (PlayFailView, bool) {
 // Reason возвращает код причины отказа.
 func (v PlayFailView) Reason() PlayFailReason { return PlayFailReason(v[1]) }
 
+// Fields возвращает поля трафик-лога: код причины отказа.
+func (v PlayFailView) Fields() []Field {
+	return []Field{{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())}}
+}
+
 // GGAuthView — представление пакета GGAuth (LS→C).
 type GGAuthView []byte
 
@@ -136,6 +179,11 @@ func NewGGAuthView(b []byte) (GGAuthView, bool) {
 
 // Response возвращает код ответа на пробу GameGuard (обычно sessionID).
 func (v GGAuthView) Response() int32 { return leD(v, 1) }
+
+// Fields возвращает поля трафик-лога: подтверждённый идентификатор сессии.
+func (v GGAuthView) Fields() []Field {
+	return []Field{{K: "response", V: num32(v.Response())}}
+}
 
 // ServerListView — представление пакета ServerList (LS→C). Конструктор
 // проверяет только заголовок; записи навигационными геттерами с ok=false на
@@ -226,6 +274,40 @@ func (v ServerListView) Chars(i int) (ServerChars, bool) {
 		}
 	}
 	return e, true
+}
+
+// Fields возвращает поля трафик-лога: записи без ip/port (детерминизм golden
+// при эфемерном порте GS-ноги; адрес — наблюдаемость стадии выбора сервера).
+func (v ServerListView) Fields() []Field {
+	fields := []Field{
+		{K: "count", V: num(int64(v.Count()))},
+		{K: "last", V: num(int64(v.LastServer()))},
+	}
+	charsN, hasChars := v.CharsCount()
+	for i := 0; i < v.Count(); i++ {
+		s, ok := v.Server(i)
+		if !ok {
+			break
+		}
+		suffix := ""
+		if hasChars && i < charsN {
+			if c, ok := v.Chars(i); ok {
+				suffix = fmt.Sprintf(" chars=%d", c.CharCount)
+				if len(c.DeleteTimes) > 0 {
+					times := make([]string, 0, len(c.DeleteTimes))
+					for _, ts := range c.DeleteTimes {
+						times = append(times, num32(ts))
+					}
+					suffix += " del=" + strings.Join(times, ",")
+				}
+			}
+		}
+		fields = append(fields, Field{K: "s" + strconv.Itoa(i+1), V: fmt.Sprintf(
+			"{id=%d cur=%d max=%d age=%d pvp=%s status=%d type=%d brackets=%s%s}",
+			s.ID, s.CurrentPlayers, s.MaxPlayers, s.AgeLimit, boolean(s.PvP),
+			s.Status, s.ServerType, boolean(s.Brackets), suffix)})
+	}
+	return fields
 }
 
 // RequestAuthLoginView — представление wire-пакета RequestAuthLogin (C→LS)

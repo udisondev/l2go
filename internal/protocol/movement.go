@@ -21,12 +21,17 @@ const (
 )
 
 // Опкоды GS→C-кадров движения — клиентский харнесс (компоновка пишет кадры
-// через Write*-писатели, опкоды не читает).
+// через Write*-писатели, опкоды не читает); имена — трафик-лог l2client.
 const (
 	OpDeleteObject       = deleteObject
 	OpCharMoveToLocation = charMoveToLocation
 	OpStopMove           = stopMove
 	OpValidateLocation   = validateLocation
+
+	NameDeleteObject       = "DELETE_OBJECT"
+	NameCharMoveToLocation = "CHAR_MOVE_TO_LOCATION"
+	NameStopMove           = "STOP_MOVE"
+	NameValidateLocation   = "VALIDATE_LOCATION"
 )
 
 // Размеры кадров с опкодом (конвенция AttackSize).
@@ -48,7 +53,8 @@ const (
 	OpCValidatePosition  = validatePosition
 	OpCCannotMoveAnymore = cannotMoveAnymore
 
-	NameMoveToLocation = "MOVE_TO_LOCATION"
+	NameMoveToLocation   = "MOVE_TO_LOCATION"
+	NameValidatePosition = "VALIDATE_POSITION"
 )
 
 // WriteMoveToLocation пишет кадр MoveToLocation (C→GS): цель, точка

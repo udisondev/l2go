@@ -83,3 +83,16 @@ func (v CharInfoView) Standing() bool { return v[v.tailOff()+20] == 1 }
 
 // Running возвращает режим передвижения run/walk.
 func (v CharInfoView) Running() bool { return v[v.tailOff()+21] == 1 }
+
+// Fields возвращает поля трафик-лога: имя, идентификатор, позиция, heading
+// (ввод чужого игрока в известность — e2e-ассерты).
+func (v CharInfoView) Fields() []Field {
+	name, _ := v.Name()
+	return []Field{
+		{K: "name", V: Quote(name)},
+		{K: "objID", V: num32(v.ObjID())},
+		{K: "x", V: num32(v.X())},
+		{K: "y", V: num32(v.Y())},
+		{K: "heading", V: num32(v.Heading())},
+	}
+}

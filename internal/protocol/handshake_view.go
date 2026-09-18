@@ -7,6 +7,8 @@
 
 package protocol
 
+import "fmt"
+
 // ProtocolVersionView — представление пакета ProtocolVersion (C→GS).
 type ProtocolVersionView []byte
 
@@ -138,6 +140,17 @@ func (v KeyPacketView) Encryption() bool { return leD(v, 10) != 0 }
 // ServerID возвращает идентификатор игрового сервера.
 func (v KeyPacketView) ServerID() int32 { return leD(v, 14) }
 
+// Fields возвращает поля трафик-лога: ключ сессии — учётные данные, в полях
+// только его размер.
+func (v KeyPacketView) Fields() []Field {
+	return []Field{
+		{K: "result", V: num(int64(v.Result()))},
+		{K: "encryption", V: boolean(v.Encryption())},
+		{K: "serverID", V: num32(v.ServerID())},
+		{K: "key", V: num(int64(len(v.Key())))},
+	}
+}
+
 // GSLoginFailView — представление пакета LoginFail game-стороны (GS→C).
 type GSLoginFailView []byte
 
@@ -152,6 +165,11 @@ func NewGSLoginFailView(b []byte) (GSLoginFailView, bool) {
 
 // Reason возвращает int32-код причины отказа.
 func (v GSLoginFailView) Reason() GSLoginFailReason { return GSLoginFailReason(leD(v, 1)) }
+
+// Fields возвращает поля трафик-лога: код причины отказа.
+func (v GSLoginFailView) Fields() []Field {
+	return []Field{{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())}}
+}
 
 // CharSelectionInfoView — представление пакета CharSelectionInfo (GS→C).
 // Конструктор проверяет только заголовок; записи — навигацией с ok=false на
@@ -258,6 +276,23 @@ func (v CharSelectionInfoView) parseRecord(off int) (CharSelectionEntry, bool) {
 	e.Enchant = v[t+288]
 	e.AugmentationID = leD(v, t+289)
 	return e, true
+}
+
+// Fields возвращает поля списка персонажей (читаемое подмножество полей
+// записи; полный разбор — навигация представления).
+func (v CharSelectionInfoView) Fields() []Field {
+	fields := []Field{{K: "count", V: num(int64(v.Count()))}}
+	for i := 0; i < v.Count(); i++ {
+		e, ok := v.Char(i)
+		if !ok {
+			break
+		}
+		fields = append(fields, Field{K: fmt.Sprintf("[%d]", i), V: fmt.Sprintf(
+			"{name=%s id=%d level=%d class=%d base=%d sex=%d race=%d hp=%s/%s mp=%s/%s sp=%d exp=%d karma=%d}",
+			quoted(e.Name), e.CharID, e.Level, e.ClassID, e.BaseClassID, e.Sex, e.Race,
+			flt(e.CurHP), flt(e.MaxHP), flt(e.CurMP), flt(e.MaxMP), e.SP, e.Exp, e.Karma)})
+	}
+	return fields
 }
 
 // CharSelectedView — представление пакета CharSelected (GS→C).
@@ -409,4 +444,59 @@ func (v CharSelectedView) CurMP() (float64, bool) {
 		return 0, false
 	}
 	return ReadF(v, base+48)
+}
+
+// Fields возвращает поля подтверждения входа; отсутствующее поле — усечение
+// кадра, пропускается.
+func (v CharSelectedView) Fields() []Field {
+	fields := make([]Field, 0, 15)
+	add := func(k string, val any) {
+		fields = append(fields, Field{K: k, V: fmt.Sprintf("%v", val)})
+	}
+	if name, ok := v.Name(); ok {
+		add("name", quoted(name))
+	}
+	if id, ok := v.CharID(); ok {
+		add("id", id)
+	}
+	if title, ok := v.Title(); ok {
+		add("title", quoted(title))
+	}
+	if lv, ok := v.Level(); ok {
+		add("level", lv)
+	}
+	if c, ok := v.ClassID(); ok {
+		add("class", c)
+	}
+	if x, ok := v.X(); ok {
+		add("x", x)
+	}
+	if y, ok := v.Y(); ok {
+		add("y", y)
+	}
+	if z, ok := v.Z(); ok {
+		add("z", z)
+	}
+	if hp, ok := v.CurHP(); ok {
+		add("hp", flt(hp))
+	}
+	if mp, ok := v.CurMP(); ok {
+		add("mp", flt(mp))
+	}
+	if sp, ok := v.SP(); ok {
+		add("sp", sp)
+	}
+	if exp, ok := v.Exp(); ok {
+		add("exp", exp)
+	}
+	if karma, ok := v.Karma(); ok {
+		add("karma", karma)
+	}
+	if pk, ok := v.PkKills(); ok {
+		add("pk", pk)
+	}
+	if gt, ok := v.GameTime(); ok {
+		add("gameTime", gt)
+	}
+	return fields
 }

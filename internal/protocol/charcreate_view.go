@@ -5,6 +5,8 @@
 
 package protocol
 
+import "fmt"
+
 // CharacterCreateView — представление кадра CharacterCreate (C→GS).
 type CharacterCreateView []byte
 
@@ -108,6 +110,11 @@ func NewCharTemplatesView(b []byte) (CharTemplatesView, bool) {
 // Count возвращает число шаблонов.
 func (v CharTemplatesView) Count() int { return int(leD(v, 1)) }
 
+// Fields возвращает поля трафик-лога: число шаблонов.
+func (v CharTemplatesView) Fields() []Field {
+	return []Field{{K: "count", V: num(int64(v.Count()))}}
+}
+
 // Template возвращает шаблон по индексу; выход за границы — отказ.
 func (v CharTemplatesView) Template(i int) (CharTemplate, bool) {
 	if i < 0 || i >= v.Count() {
@@ -154,6 +161,11 @@ func NewCharCreateFailView(b []byte) (CharCreateFailView, bool) {
 
 // Reason возвращает причину отказа создания.
 func (v CharCreateFailView) Reason() CharCreateFailReason { return CharCreateFailReason(leD(v, 1)) }
+
+// Fields возвращает поля трафик-лога: код причины отказа.
+func (v CharCreateFailView) Fields() []Field {
+	return []Field{{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())}}
+}
 
 // CharDeleteFailView — представление кадра CharDeleteFail (GS→C).
 type CharDeleteFailView []byte

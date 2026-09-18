@@ -1,5 +1,10 @@
 package protocol
 
+import (
+	"encoding/binary"
+	"fmt"
+)
+
 // Каталог опкодов протокола Interlude 746: 494 записи. Источник — перенос
 // udisondev/interlude@34fe4c8657d8b6bf338a5d2e788e194489a44f8f docs/opcodes.md;
 // значения сверены с L2J Mobius master CT_0_Interlude (зеркало
@@ -594,4 +599,28 @@ func GameServerPacketName(op byte) (string, bool) {
 func GameServerExName(sub uint16) (string, bool) {
 	name, ok := gameServerExNames[sub]
 	return name, ok
+}
+
+// GameServerFrameName — имя тела входящего game-кадра без типизированного
+// представления: имя каталога, «??(0xNN)» для неизвестного опкода,
+// Ex-семейство — имя по sub (uint16LE в байтах 1–2) или «??(0xFE:0xNNNN)»;
+// обрезанные тела не читаются.
+func GameServerFrameName(body []byte) string {
+	if len(body) == 0 {
+		return "??(0x??)"
+	}
+	if body[0] == ExGSOpcode {
+		if len(body) < 3 {
+			return "??(0xFE)"
+		}
+		sub := binary.LittleEndian.Uint16(body[1:3])
+		if name, ok := GameServerExName(sub); ok {
+			return name
+		}
+		return fmt.Sprintf("??(0xFE:0x%04X)", sub)
+	}
+	if name, ok := GameServerPacketName(body[0]); ok {
+		return name
+	}
+	return fmt.Sprintf("??(0x%02X)", body[0])
 }

@@ -15,8 +15,6 @@ import (
 	"math/big"
 	"net"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/udisondev/l2go/internal/crypto"
@@ -157,9 +155,7 @@ func (lc *LoginClient) Handshake() error {
 		return fmt.Errorf("стадия Init: %w", err)
 	}
 	lc.pub = &rsa.PublicKey{N: new(big.Int).SetBytes(mod), E: rsaExponent}
-	lc.logRecv(protocol.NameInit,
-		Field{K: "session", V: num32(v.SessionID())},
-		Field{K: "revision", V: fmt.Sprintf("0x%04X", v.Revision())})
+	lc.logRecv(protocol.NameInit, v.Fields()...)
 
 	var guard [protocol.AuthGameGuardSize]byte
 	protocol.WriteAuthGameGuard(guard[:], lc.sessionID)
@@ -179,7 +175,7 @@ func (lc *LoginClient) Handshake() error {
 	if gg.Response() != lc.sessionID {
 		return fmt.Errorf("стадия GGAuth: чужой session %d; want %d", gg.Response(), lc.sessionID)
 	}
-	lc.logRecv(protocol.NameGGAuth, Field{K: "response", V: num32(gg.Response())})
+	lc.logRecv(protocol.NameGGAuth, gg.Fields()...)
 	return nil
 }
 
@@ -213,23 +209,21 @@ func (lc *LoginClient) Login(user, pass string) error {
 			return fmt.Errorf("стадия LoginOk: обрезанное тело (%d Б)", len(reply))
 		}
 		lc.loginOk1, lc.loginOk2 = v.LoginOkID1(), v.LoginOkID2()
-		lc.logRecv(protocol.NameLoginOk,
-			Field{K: "loginOk1", V: num32(lc.loginOk1)},
-			Field{K: "loginOk2", V: num32(lc.loginOk2)})
+		lc.logRecv(protocol.NameLoginOk, v.Fields()...)
 		return nil
 	case protocol.OpLoginFail:
 		v, ok := protocol.NewLoginFailView(reply)
 		if !ok {
 			return fmt.Errorf("стадия LoginFail: обрезанное тело (%d Б)", len(reply))
 		}
-		lc.logRecv(protocol.NameLoginFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		lc.logRecv(protocol.NameLoginFail, v.Fields()...)
 		return fmt.Errorf("логин отклонён: reason=0x%02X", v.Reason())
 	case protocol.OpAccountKicked:
 		v, ok := protocol.NewAccountKickedView(reply)
 		if !ok {
 			return fmt.Errorf("стадия AccountKicked: обрезанное тело (%d Б)", len(reply))
 		}
-		lc.logRecv(protocol.NameAccountKicked, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		lc.logRecv(protocol.NameAccountKicked, v.Fields()...)
 		return fmt.Errorf("аккаунт исключён: reason=0x%02X", v.Reason())
 	default:
 		return fmt.Errorf("неожиданный ответ логина: опкод 0x%02X", reply[0])
@@ -257,7 +251,7 @@ func (lc *LoginClient) ServerList() ([]protocol.ServerListEntry, []protocol.Serv
 	if reply[0] != protocol.OpServerList {
 		if reply[0] == protocol.OpLoginFail {
 			if v, ok := protocol.NewLoginFailView(reply); ok {
-				lc.logRecv(protocol.NameLoginFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+				lc.logRecv(protocol.NameLoginFail, v.Fields()...)
 				return nil, nil, fmt.Errorf("список серверов отклонён: reason=0x%02X", v.Reason())
 			}
 		}
@@ -286,7 +280,7 @@ func (lc *LoginClient) ServerList() ([]protocol.ServerListEntry, []protocol.Serv
 		}
 	}
 	lc.servers = servers
-	lc.logRecv(protocol.NameServerList, serverListFields(v)...)
+	lc.logRecv(protocol.NameServerList, v.Fields()...)
 	return servers, chars, nil
 }
 
@@ -311,15 +305,13 @@ func (lc *LoginClient) SelectServer(id byte) (GameEndpoint, error) {
 			return GameEndpoint{}, fmt.Errorf("стадия PlayOk: обрезанное тело (%d Б)", len(reply))
 		}
 		lc.playOk1, lc.playOk2 = v.PlayOkID1(), v.PlayOkID2()
-		lc.logRecv(protocol.NamePlayOk,
-			Field{K: "playOk1", V: num32(lc.playOk1)},
-			Field{K: "playOk2", V: num32(lc.playOk2)})
+		lc.logRecv(protocol.NamePlayOk, v.Fields()...)
 	case protocol.OpPlayFail:
 		v, ok := protocol.NewPlayFailView(reply)
 		if !ok {
 			return GameEndpoint{}, fmt.Errorf("стадия PlayFail: обрезанное тело (%d Б)", len(reply))
 		}
-		lc.logRecv(protocol.NamePlayFail, Field{K: "reason", V: fmt.Sprintf("0x%02X", v.Reason())})
+		lc.logRecv(protocol.NamePlayFail, v.Fields()...)
 		return GameEndpoint{}, fmt.Errorf("выбор сервера отклонён: reason=0x%02X", v.Reason())
 	default:
 		return GameEndpoint{}, fmt.Errorf("неожиданный ответ выбора сервера: опкод 0x%02X", reply[0])
@@ -374,38 +366,4 @@ func (lc *LoginClient) logSend(name string, fields ...Field) {
 	if lc.opts.Traffic != nil {
 		LogSend(lc.opts.Traffic, name, fields...)
 	}
-}
-
-// serverListFields — поля ServerList: записи без ip/port (детерминизм golden
-// при эфемерном порте GS-ноги сценария; адрес — slog Debug стадии выбора).
-func serverListFields(v protocol.ServerListView) []Field {
-	fields := []Field{
-		{K: "count", V: num(int64(v.Count()))},
-		{K: "last", V: num(int64(v.LastServer()))},
-	}
-	charsN, hasChars := v.CharsCount()
-	for i := 0; i < v.Count(); i++ {
-		s, ok := v.Server(i)
-		if !ok {
-			break
-		}
-		suffix := ""
-		if hasChars && i < charsN {
-			if c, ok := v.Chars(i); ok {
-				suffix = fmt.Sprintf(" chars=%d", c.CharCount)
-				if len(c.DeleteTimes) > 0 {
-					var times []string
-					for _, ts := range c.DeleteTimes {
-						times = append(times, num32(ts))
-					}
-					suffix += " del=" + strings.Join(times, ",")
-				}
-			}
-		}
-		fields = append(fields, Field{K: "s" + strconv.Itoa(i+1), V: fmt.Sprintf(
-			"{id=%d cur=%d max=%d age=%d pvp=%s status=%d type=%d brackets=%s%s}",
-			s.ID, s.CurrentPlayers, s.MaxPlayers, s.AgeLimit, boolean(s.PvP),
-			s.Status, s.ServerType, boolean(s.Brackets), suffix)})
-	}
-	return fields
 }

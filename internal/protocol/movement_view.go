@@ -125,6 +125,18 @@ func (v CharMoveToLocationView) Y() int32 { return leD(v, 21) }
 // Z возвращает текущую Z-координату.
 func (v CharMoveToLocationView) Z() int32 { return leD(v, 25) }
 
+// Fields возвращает поля трафик-лога: идентификатор и точки назначения/
+// отправления в плоскости (авторитетный стрим движения — e2e-ассерты).
+func (v CharMoveToLocationView) Fields() []Field {
+	return []Field{
+		{K: "objID", V: num32(v.ObjID())},
+		{K: "dstX", V: num32(v.DstX())},
+		{K: "dstY", V: num32(v.DstY())},
+		{K: "curX", V: num32(v.X())},
+		{K: "curY", V: num32(v.Y())},
+	}
+}
+
 // StopMoveView — представление кадра StopMove (GS→C).
 type StopMoveView []byte
 
@@ -150,6 +162,17 @@ func (v StopMoveView) Z() int32 { return leD(v, 13) }
 
 // Heading возвращает heading после остановки.
 func (v StopMoveView) Heading() int32 { return leD(v, 17) }
+
+// Fields возвращает поля трафик-лога: идентификатор, точка остановки,
+// heading (авторитетная остановка — e2e-ассерты).
+func (v StopMoveView) Fields() []Field {
+	return []Field{
+		{K: "objID", V: num32(v.ObjID())},
+		{K: "x", V: num32(v.X())},
+		{K: "y", V: num32(v.Y())},
+		{K: "heading", V: num32(v.Heading())},
+	}
+}
 
 // TeleportToLocationView — представление кадра TeleportToLocation (GS→C).
 type TeleportToLocationView []byte
@@ -206,6 +229,17 @@ func (v ValidateLocationView) Z() int32 { return leD(v, 13) }
 // Heading возвращает авторитетный heading.
 func (v ValidateLocationView) Heading() int32 { return leD(v, 17) }
 
+// Fields возвращает поля трафик-лога: идентификатор, авторитетная позиция,
+// heading (snap-back коррекция себе — e2e-ассерты).
+func (v ValidateLocationView) Fields() []Field {
+	return []Field{
+		{K: "objID", V: num32(v.ObjID())},
+		{K: "x", V: num32(v.X())},
+		{K: "y", V: num32(v.Y())},
+		{K: "heading", V: num32(v.Heading())},
+	}
+}
+
 // DeleteObjectView — представление кадра DeleteObject (GS→C).
 type DeleteObjectView []byte
 
@@ -219,3 +253,8 @@ func NewDeleteObjectView(b []byte) (DeleteObjectView, bool) {
 
 // ObjID возвращает EntityID удаляемого объекта.
 func (v DeleteObjectView) ObjID() int32 { return leD(v, 1) }
+
+// Fields возвращает поля трафик-лога: идентификатор уходящего объекта.
+func (v DeleteObjectView) Fields() []Field {
+	return []Field{{K: "objID", V: num32(v.ObjID())}}
+}
