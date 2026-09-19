@@ -3,6 +3,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/udisondev/l2go/internal/artifact"
 	"github.com/udisondev/l2go/internal/data"
 	"github.com/udisondev/l2go/internal/geo"
@@ -11,10 +13,19 @@ import (
 // loadStatic — источник статики embedded-сборки: пустой путь — байты,
 // вшитые в бинарарь (самодостаточная поставка «make embedded → оба
 // бинарника»); непустой — внешний файл (mmap LoadFile), как в dev-сборке.
+// Ошибка несёт метку источника: отказ вшитых байт различим от отказа
+// внешнего файла по журналу.
 func loadStatic(path string) (*data.Static, *geo.Map, *artifact.Meta, error) {
 	if path == "" {
-		return artifact.LoadEmbedded()
+		st, gm, meta, err := artifact.LoadEmbedded()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("вшитые байты бинараря: %w", err)
+		}
+		return st, gm, meta, nil
 	}
 	st, gm, meta, _, err := artifact.LoadFile(path)
-	return st, gm, meta, err
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("артефакт %s: %w", path, err)
+	}
+	return st, gm, meta, nil
 }

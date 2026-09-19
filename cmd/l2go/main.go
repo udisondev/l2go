@@ -132,7 +132,7 @@ func bootstrap(cfg config) (*server, error) {
 	// XML-исходников на рантайм-пути нет.
 	static, gm, meta, err := loadStatic(cfg.ArtifactPath)
 	if err != nil {
-		return nil, fmt.Errorf("l2go: статика: %w", err)
+		return nil, fmt.Errorf("l2go: %w", err)
 	}
 	slog.Info("l2go: статика артефактом",
 		"items", meta.Items, "npcs", meta.Npcs, "spawns", meta.Spawns, "geoRegions", meta.Regions)

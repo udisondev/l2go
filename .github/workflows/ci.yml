@@ -53,7 +53,9 @@ jobs:
           go build -tags embedded ./cmd/...
           # Диспетч статики cmd/l2go под тегом (P3.13): пустой -artifact —
           # вшитые байты, непустой — файл (фальсификатор-самозванец без гео),
-          # replay-guard, полный контур на вшитой статике.
+          # replay-guard, полный контур на вшитой статике. Race-эквивалент —
+          # dev-прогон make check (новой конкуренции нет: стартовый путь);
+          # группа — точечная компиляционно-поведенческая проверка.
           go test -tags embedded -count=1 ./cmd/l2go -run 'TestLoadStatic|TestReplayRequires|TestBootstrapEmbeddedEmptyArtifact'
 
       # Run-цели Makefile (P3.13): guard обязан громко падать без bin/

@@ -27,7 +27,6 @@ func TestLoadStaticDevRequiresPath(t *testing.T) {
 }
 
 func TestLoadStaticDevLoadsFile(t *testing.T) {
-	t.Parallel()
 	st, gm, meta, err := loadStatic(synthArtifact)
 	if err != nil {
 		t.Fatalf("loadStatic(%s): %v", synthArtifact, err)
@@ -40,16 +39,15 @@ func TestLoadStaticDevLoadsFile(t *testing.T) {
 		t.Fatalf("LoadFile-эталон: %v", werr)
 	}
 	if *meta != *want {
-		t.Fatalf("мета разошлась с LoadFile: got %+v, want %+v", *meta, *want)
+		t.Fatalf("мета %s: got %+v, want %+v", synthArtifact, *meta, *want)
 	}
 }
 
 func TestLoadStaticDevMissingFileKeepsPathContext(t *testing.T) {
-	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "нет-такого.l2a")
 	_, _, _, err := loadStatic(missing)
 	if err == nil {
-		t.Fatal("loadStatic(несуществующий): ожидалась ошибка")
+		t.Fatalf("loadStatic(%s): ожидалась ошибка", missing)
 	}
 	if !strings.Contains(err.Error(), missing) {
 		t.Fatalf("ошибка без переданного пути %s: %v", missing, err)

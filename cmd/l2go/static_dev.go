@@ -12,11 +12,15 @@ import (
 
 // loadStatic — источник статики dev-сборки: только внешний артефакт
 // (mmap LoadFile). Самодостаточности нет: пустой путь — ошибка, а не
-// тихая деградация.
+// тихая деградация. Ошибка несёт источник (путь) — отказы разных
+// артефактов различимы в журнале.
 func loadStatic(path string) (*data.Static, *geo.Map, *artifact.Meta, error) {
 	if path == "" {
 		return nil, nil, nil, fmt.Errorf("артефакт статики обязателен (-artifact)")
 	}
 	st, gm, meta, _, err := artifact.LoadFile(path)
-	return st, gm, meta, err
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("артефакт %s: %w", path, err)
+	}
+	return st, gm, meta, nil
 }

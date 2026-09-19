@@ -6,12 +6,12 @@ package main
 // пустой путь грузит вшитые в бинарарь байты (самодостаточная поставка);
 // непустой путь предпочтён вшитым (фальсификатор — артефакт-«самозванец»
 // без гео); -replay остаётся строго с явным -artifact; полный контур
-// поднимается на вшитой статике.
+// поднимается на вшитой статике (уровень — интеграционный: сервер и клиент
+// в одном процессе, имя по конвенции пакета).
 
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -33,14 +33,19 @@ func TestLoadStaticEmbeddedEmptyUsesEmbeddedBytes(t *testing.T) {
 	if werr != nil {
 		t.Fatalf("LoadFile вшитого артефакта: %v", werr)
 	}
-	if !reflect.DeepEqual(meta, want) {
-		t.Fatalf("мета вшитых байт разошлась с файлом: got %+v, want %+v", *meta, *want)
+	if *meta != *want {
+		t.Fatalf("мета вшитых байт: got %+v, want %+v", *meta, *want)
 	}
 }
 
 func TestLoadStaticEmbeddedNonEmptyPrefersFile(t *testing.T) {
+	// Предусловие фальсификатора: вшитый артефакт обязан нести гео,
+	// иначе «самозванец без гео» от него неотличим.
+	if embeddedRegions(t) == 0 {
+		t.Skipf("вшитый артефакт %s без гео: фальсификатор подмены источника неприменим", embeddedArtifactFile)
+	}
 	// Артефакт-самозванец: тот же синт-датапак, но без гео (Regions = 0,
-	// у вшитого — нет); строится тем же конвейером Build.
+	// у вшитого — есть); строится тем же конвейером Build.
 	st, rep, err := data.Load(os.DirFS(filepath.Join("..", "..", "internal", "data", "testdata", "synth")))
 	if err != nil {
 		t.Fatalf("synth-датапак: %v", err)
@@ -60,13 +65,13 @@ func TestLoadStaticEmbeddedNonEmptyPrefersFile(t *testing.T) {
 	if werr != nil {
 		t.Fatalf("LoadFile-эталон: %v", werr)
 	}
-	if !reflect.DeepEqual(meta, want) {
-		t.Fatalf("мета разошлась с LoadFile: got %+v, want %+v", *meta, *want)
+	if *meta != *want {
+		t.Fatalf("мета %s: got %+v, want %+v", noGeo, *meta, *want)
 	}
 	if gm == nil {
 		t.Fatal("гео nil при непустом пути (in-band пустой источник)")
 	}
-	if embeddedMeta := embeddedRegions(t); meta.Regions == embeddedMeta {
+	if meta.Regions == embeddedRegions(t) {
 		t.Fatalf("непустой путь не различим от вшитых байт (Regions=%d): подмена источника", meta.Regions)
 	}
 }
@@ -92,11 +97,12 @@ func TestReplayRequiresArtifactInEmbeddedBuild(t *testing.T) {
 	}
 }
 
-// Кейс S9 (желательный): полный контур на вшитой статике — вход до слитка,
-// NPC стартовой окрестности развёрнуты (сквозная страховка диспатча).
+// Кейс S9 (желательный): полный контур на вшитой статике — вход до слитка
+// и NPC стартальной окрестности развёрнуты (сквозная страховка диспатча).
 func TestBootstrapEmbeddedEmptyArtifactFullContour(t *testing.T) {
 	env := startE2EOpts(t, 50, 4, e2eOpts{npc: true, useEmbeddedStatic: true})
 	s := enterWorld(t, env, "embedded")
 	waitForLine(t, s.out, "USER_INFO", 3*time.Second)
 	assertSlivokOrder(t, s.out)
+	waitForLine(t, s.out, "NPC_INFO", 3*time.Second)
 }
