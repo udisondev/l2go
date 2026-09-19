@@ -45,6 +45,7 @@ type Report struct {
 	Fragments    int // IP-фрагментов пропущено
 	Resyncs      int // перепрыгов через дыры seq
 	LostBytes    int // байтов потеряно в дырах seq
+	BadPackets   int // пакетов не диссекцируются (мусор внутри контейнера)
 }
 
 // Convert читает захват (контейнер определяется по магии), собирает
@@ -63,7 +64,7 @@ func Convert(r io.Reader, w io.Writer) (Report, error) {
 		readErr = convertLoop(&rep, w, func() (gopacket.PacketDataSource, error) {
 			rd, err := pcapgo.NewNgReader(br, pcapgo.DefaultNgReaderOptions)
 			if err != nil {
-				return nil, fmt.Errorf("pcap: pcapng: %w", err)
+				return nil, fmt.Errorf("pcap: pcapng: %w: %w", err, ErrContainer)
 			}
 			return rd, nil
 		})
@@ -152,15 +153,15 @@ func (h *halfStream) push(seq uint32, ts int64, data []byte) error {
 		h.started = true
 		h.next = seq
 	}
-	end := seq + uint32(len(data))
-	switch {
-	case end <= h.next: // ретрансмиссия позади окна — дубль
+	// порядок следования — знаковой разностью: переход seq через 2^32 в
+	// длинном потоке не должен тихо превращать новые данные в дубли
+	if int32(seq+uint32(len(data))-h.next) <= 0 { // целиком позади окна — дубль
 		return nil
-	case seq < h.next: // перекрытие: суффикс от next
-		data = data[h.next-seq:]
-		seq = h.next
 	}
-	if seq > h.next { // дыра — в очередь до флеша
+	switch d := int32(seq - h.next); {
+	case d < 0: // перекрытие: суффикс от next
+		data = data[-d:]
+	case d > 0: // дыра — в очередь до флеша
 		h.hold(segment{seq: seq, ts: ts, data: bytes.Clone(data)})
 		return nil
 	}
@@ -170,10 +171,11 @@ func (h *halfStream) push(seq uint32, ts int64, data []byte) error {
 	return h.drain()
 }
 
-// hold вставляет сегмент в очередь с сохранением порядка по seq.
+// hold вставляет сегмент в очередь с сохранением порядка следования
+// (знаковая разность seq — переход через 2^32 не ломает порядок).
 func (h *halfStream) hold(seg segment) {
 	i := len(h.pending)
-	for i > 0 && h.pending[i-1].seq > seg.seq {
+	for i > 0 && int32(seg.seq-h.pending[i-1].seq) < 0 {
 		i--
 	}
 	h.pending = append(h.pending, segment{})
@@ -193,15 +195,15 @@ func (h *halfStream) emit(ts int64, data []byte) error {
 func (h *halfStream) drain() error {
 	for len(h.pending) > 0 {
 		seg := h.pending[0]
-		if seg.seq > h.next {
+		if int32(seg.seq-h.next) > 0 {
 			return nil
 		}
 		h.pending = h.pending[1:]
-		if seg.seq+uint32(len(seg.data)) <= h.next {
+		if int32(seg.seq+uint32(len(seg.data))-h.next) <= 0 {
 			continue // дубль из очереди
 		}
-		if seg.seq < h.next {
-			seg.data = seg.data[h.next-seg.seq:]
+		if d := int32(seg.seq - h.next); d < 0 {
+			seg.data = seg.data[-d:]
 		}
 		if err := h.emit(seg.ts, seg.data); err != nil {
 			return err
@@ -215,15 +217,16 @@ func (h *halfStream) drain() error {
 func (h *halfStream) flush(rep *Report) error {
 	for _, seg := range h.pending {
 		switch {
-		case seg.seq+uint32(len(seg.data)) <= h.next:
+		case int32(seg.seq+uint32(len(seg.data))-h.next) <= 0:
 			continue // дубль
-		case seg.seq <= h.next:
-			seg.data = seg.data[h.next-seg.seq:]
+		case int32(seg.seq-h.next) <= 0:
+			seg.data = seg.data[-int32(seg.seq-h.next):]
 		default:
+			lost := int32(seg.seq - h.next)
 			rep.Resyncs++
-			rep.LostBytes += int(seg.seq - h.next)
+			rep.LostBytes += int(lost)
 			slog.Warn("pcap: дыра seq — ресинк направления",
-				"connID", h.id, "lost", int(seg.seq-h.next))
+				"connID", h.id, "lost", lost)
 		}
 		if err := h.emit(seg.ts, seg.data); err != nil {
 			return err
@@ -356,7 +359,12 @@ func (c *converter) onPacket(ts int64, lt layers.LinkType, data []byte, snapped 
 		return err
 	}
 	if err := p.DecodeLayers(data, &c.decoded); err != nil {
-		return fmt.Errorf("pcap: диссекция: %w", err)
+		// мусорный пакет внутри валидного контейнера — громкий пропуск с
+		// счётчиком: конвертация живых потоков продолжается (salvage, как и
+		// на обрыве контейнера)
+		c.rep.BadPackets++
+		slog.Warn("pcap: пакет не диссекцируется — пропущен", "packet", c.rep.BadPackets, "err", err)
+		return nil
 	}
 	// фрагмент проверяется до TCP: диссектор не собирает TCP из фрагментов,
 	// слоя TCP у такого пакета нет вовсе
@@ -417,6 +425,11 @@ func (c *converter) onSegment(ts int64, src, dst endpoint, tcp *layers.TCP) erro
 		if err := c.jw.ConnOpen(id, src.String(), dst.String(), ts); err != nil {
 			return err
 		}
+		// SYN с нагрузкой (TCP Fast Open): данные занимают seq с ISN+1
+		if len(tcp.Payload) > 0 {
+			return f.c2s.push(tcp.Seq+1, ts, tcp.Payload)
+		}
+		return nil
 	case !known && !isSYN:
 		c.rep.SkippedNoSyn++
 		if !c.warned[key] {
@@ -428,14 +441,20 @@ func (c *converter) onSegment(ts int64, src, dst endpoint, tcp *layers.TCP) erro
 	case known && isSYN:
 		// дублирующийся SYN известного потока — игнор без flip клиента
 		return nil
-	case known && isSYNACK && !f.s2c.started:
-		// SYN-ACK засеивает окно сервера (ISN+1)
-		f.s2c.started = true
-		f.s2c.next = tcp.Seq + 1
+	case known && isSYNACK:
+		// SYN-ACK засеивает окно сервера (ISN+1); дублирующийся SYN-ACK
+		// известного потока окно не двигает
+		if !f.s2c.started {
+			f.s2c.started = true
+			f.s2c.next = tcp.Seq + 1
+		}
+		// SYN-ACK с нагрузкой (TFO-ответ сервера): данные с ISN+1
+		if len(tcp.Payload) > 0 {
+			return f.s2c.push(tcp.Seq+1, ts, tcp.Payload)
+		}
 		return nil
 	}
 
-	// SYN может нести payload (tcp fast open) — данные идут обычным путём
 	half := &f.c2s
 	if src != f.client {
 		half = &f.s2c

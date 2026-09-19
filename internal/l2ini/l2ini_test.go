@@ -56,14 +56,14 @@ func legacyTestKey(t *testing.T) Key {
 
 // B1: roundtrip modern побайтовый на границах чанковки и выравнивания.
 func TestIniRoundtripModernByteExact(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		n    int
 	}{
 		{"1Б", 1},
 		{"граница чанка 124", 124},
-		{"перелив 125", 125},
-		{"хвост %4=1", 125 + 0}, // 125 уже даёт %4=1; отдельные хвосты ниже
+		{"перелив 125 (хвост %4=1)", 125},
 		{"хвост %4=2", 126},
 		{"хвост %4=3", 127},
 		{"сотни блоков", 64 * 1024},
@@ -71,6 +71,7 @@ func TestIniRoundtripModernByteExact(t *testing.T) {
 	plain := samplePlain()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var input []byte
 			switch {
 			case tc.n <= len(plain):
@@ -103,6 +104,7 @@ func TestIniRoundtripModernByteExact(t *testing.T) {
 // (производные байты: Encode детерминирован, дрейф констант/формата красит).
 // Генерация: L2_WRITE_GOLDEN=1 go test ./internal/l2ini.
 func TestIniDecodeGoldenFixture(t *testing.T) {
+	t.Parallel()
 	plain := samplePlain()
 	if os.Getenv("L2_WRITE_GOLDEN") == "1" {
 		file, err := Encode(plain, Modern)
@@ -141,6 +143,7 @@ func TestIniDecodeGoldenFixture(t *testing.T) {
 
 // B3: legacy-ветка (decrypt 0x35) на синтетической паре той же формы.
 func TestIniLegacyDecodeSyntheticKey(t *testing.T) {
+	t.Parallel()
 	key := legacyTestKey(t)
 	file, err := Encode(samplePlain(), key)
 	if err != nil {
@@ -157,6 +160,7 @@ func TestIniLegacyDecodeSyntheticKey(t *testing.T) {
 
 // B4: verify ловит порчу в заголовке, теле и самом CRC.
 func TestIniVerifyRejectsCorruptionTable(t *testing.T) {
+	t.Parallel()
 	file, err := Encode(samplePlain(), Modern)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
@@ -182,12 +186,13 @@ func TestIniVerifyRejectsCorruptionTable(t *testing.T) {
 
 // B5: злые входы — именованные ошибки с контекстом, не паники.
 func TestIniEvilInputsTable(t *testing.T) {
+	t.Parallel()
 	valid, err := Encode(samplePlain(), Modern)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
 	// валидная структура блоков + мусорный zlib: пересобираем тело вручную
-	garbageBlob := append([]byte{0, 0, 0, 16}, 0xDE, 0xAD, 0xBE, 0xEF)
+	garbageBlob := append([]byte{16, 0, 0, 0}, 0xDE, 0xAD, 0xBE, 0xEF)
 	garbageBody := pad(garbageBlob)
 	garbage := append(header413(), encryptBlocks(garbageBody, Modern)...)
 	garbage = append(garbage, make([]byte, tailSize)...)
@@ -224,7 +229,7 @@ func TestIniEvilInputsTable(t *testing.T) {
 	// отвечает громкой ошибкой)
 	t.Run("длина чанка >124", func(t *testing.T) {
 		key := legacyTestKey(t)
-		blob := append([]byte{0, 0, 0, 16}, 1, 2, 3, 4)
+		blob := append([]byte{16, 0, 0, 0}, 1, 2, 3, 4)
 		blocks := pad(blob)
 		blocks[3] = 200 // невозможно для честного энкодера
 		file := append(header413(), encryptBlocks(blocks, key)...)
@@ -251,13 +256,19 @@ func sizeMismatch(t *testing.T, valid []byte) []byte {
 		t.Fatalf("Decode базового файла: %v", err)
 	}
 	var z bytes.Buffer
-	binary.Write(&z, binary.LittleEndian, uint32(len(got)+1))
+	if err := binary.Write(&z, binary.LittleEndian, uint32(len(got)+1)); err != nil {
+		t.Fatalf("префикс размера: %v", err)
+	}
 	zw, err := zlib.NewWriterLevel(&z, zlib.BestCompression)
 	if err != nil {
 		t.Fatalf("zlib-уровень: %v", err)
 	}
-	zw.Write(got)
-	zw.Close()
+	if _, err := zw.Write(got); err != nil {
+		t.Fatalf("zlib-запись: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zlib-закрытие: %v", err)
+	}
 	blob := z.Bytes()
 	file := append(header413(), encryptBlocks(pad(blob), Modern)...)
 	return append(file, make([]byte, tailSize)...)
@@ -274,6 +285,7 @@ func withVersion(file []byte, version string) []byte {
 
 // B6: несовпадение семейства — громкий отказ, не тихий успех.
 func TestIniDecodeWrongFamilyNotSilent(t *testing.T) {
+	t.Parallel()
 	file, err := Encode(samplePlain(), Modern)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
@@ -291,15 +303,22 @@ func TestIniDecodeWrongFamilyNotSilent(t *testing.T) {
 
 // B7: чужой (неканоничный) zlib-поток канонизируется по данным.
 func TestIniEncodeCanonicalizesForeignZlib(t *testing.T) {
+	t.Parallel()
 	plain := samplePlain()
 	var foreign bytes.Buffer
-	binary.Write(&foreign, binary.LittleEndian, uint32(len(plain)))
+	if err := binary.Write(&foreign, binary.LittleEndian, uint32(len(plain))); err != nil {
+		t.Fatalf("префикс размера: %v", err)
+	}
 	zw, err := zlib.NewWriterLevel(&foreign, zlib.HuffmanOnly) // иной канон, чем BestCompression
 	if err != nil {
 		t.Fatalf("zlib-уровень: %v", err)
 	}
-	zw.Write(plain)
-	zw.Close()
+	if _, err := zw.Write(plain); err != nil {
+		t.Fatalf("zlib-запись: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zlib-закрытие: %v", err)
+	}
 	file := append(header413(), encryptBlocks(pad(foreign.Bytes()), Modern)...)
 	file = append(file, make([]byte, tailSize)...)
 
@@ -332,6 +351,7 @@ func TestIniEncodeCanonicalizesForeignZlib(t *testing.T) {
 
 // B8: идемпотентность encode (raw-RSA без случайного паддинга).
 func TestIniEncodeDeterministicRepeat(t *testing.T) {
+	t.Parallel()
 	a, err := Encode(samplePlain(), Modern)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
@@ -361,6 +381,7 @@ func ExampleDecode() {
 
 // B9: результат decode не алиасит входной буфер.
 func TestIniDecodeDoesNotAliasInput(t *testing.T) {
+	t.Parallel()
 	file, err := Encode(samplePlain(), Modern)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
@@ -372,7 +393,53 @@ func TestIniDecodeDoesNotAliasInput(t *testing.T) {
 	for i := range file {
 		file[i] ^= 0xAA
 	}
-	if bytes.Equal(got, samplePlain()) != true {
+	if !bytes.Equal(got, samplePlain()) {
 		t.Fatal("plaintext изменился после мутации входа — алиасинг")
+	}
+}
+
+// F-sec-2 (S8): декомпрессионная бомба — заявленный размер ограничивает
+// чтение; исчерпание памяти невозможно, отказ именованный.
+func TestIniDecodeBombBounded(t *testing.T) {
+	t.Parallel()
+	// заявлен 1 байт, поток распаковывается в мегабайты — чтение обрезано
+	var bomb bytes.Buffer
+	if err := binary.Write(&bomb, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("префикс размера: %v", err)
+	}
+	zw, err := zlib.NewWriterLevel(&bomb, zlib.BestCompression)
+	if err != nil {
+		t.Fatalf("zlib-уровень: %v", err)
+	}
+	if _, err := zw.Write(bytes.Repeat([]byte{0}, 8<<20)); err != nil {
+		t.Fatalf("zlib-запись: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zlib-закрытие: %v", err)
+	}
+	file := append(header413(), encryptBlocks(pad(bomb.Bytes()), Modern)...)
+	file = append(file, make([]byte, tailSize)...)
+	if _, err := Decode(file, Modern); !errors.Is(err, ErrSize) {
+		t.Errorf("Decode(бомба) err = %v; want ErrSize", err)
+	}
+	// заявлен размер за абсолютным капом — отказ до распаковки
+	var huge bytes.Buffer
+	if err := binary.Write(&huge, binary.LittleEndian, uint32(maxPlainSize+1)); err != nil {
+		t.Fatalf("префикс размера: %v", err)
+	}
+	zw2, err := zlib.NewWriterLevel(&huge, zlib.BestCompression)
+	if err != nil {
+		t.Fatalf("zlib-уровень: %v", err)
+	}
+	if _, err := zw2.Write([]byte("x")); err != nil {
+		t.Fatalf("zlib-запись: %v", err)
+	}
+	if err := zw2.Close(); err != nil {
+		t.Fatalf("zlib-закрытие: %v", err)
+	}
+	file2 := append(header413(), encryptBlocks(pad(huge.Bytes()), Modern)...)
+	file2 = append(file2, make([]byte, tailSize)...)
+	if _, err := Decode(file2, Modern); !errors.Is(err, ErrSize) {
+		t.Errorf("Decode(over-кап) err = %v; want ErrSize", err)
 	}
 }

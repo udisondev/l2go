@@ -160,18 +160,26 @@ func powBlock(block []byte, exp, mod *big.Int) []byte {
 	return out
 }
 
+// maxPlainSize — абсолютный кап распаковки: l2.ini — килобайтный конфиг;
+// без капа сжатый высокой степенью вход исчерпывает память до сверки размера.
+const maxPlainSize = 64 << 20
+
 // inflate — [u32 LE размер][zlib-поток] → открытый текст с проверкой размера.
+// Чтение ограничено заявленным размером (+1 байт на детект перебора) и капом.
 func inflate(blob []byte) ([]byte, error) {
 	if len(blob) < 4 {
 		return nil, fmt.Errorf("l2ini: сжатый blob %d байт < 4: %w", len(blob), ErrZlib)
 	}
 	want := binary.LittleEndian.Uint32(blob)
+	if want > maxPlainSize {
+		return nil, fmt.Errorf("l2ini: заявлено %d байт > капа %d: %w", want, maxPlainSize, ErrSize)
+	}
 	zr, err := zlib.NewReader(bytes.NewReader(blob[4:]))
 	if err != nil {
 		return nil, fmt.Errorf("l2ini: %w: %w", ErrZlib, err)
 	}
 	defer zr.Close()
-	plain, err := io.ReadAll(zr)
+	plain, err := io.ReadAll(io.LimitReader(zr, int64(want)+1))
 	if err != nil {
 		return nil, fmt.Errorf("l2ini: %w: %w", ErrZlib, err)
 	}

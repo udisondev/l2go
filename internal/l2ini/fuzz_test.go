@@ -19,7 +19,7 @@ func FuzzIniDecode(f *testing.F) {
 		if _, err := Decode(data, Modern); err == nil && len(data) == 0 {
 			t.Fatal("пустой вход декодирован")
 		}
-		_ = Verify(data)
+		_ = Verify(data) // любой исход допустим: фаззинг ловит паники, не семантику
 		if _, err := Decode(data, Legacy413); err == nil && len(data) == 0 {
 			t.Fatal("пустой вход декодирован (legacy)")
 		}

@@ -89,7 +89,10 @@ func TestCmdIniLegacyFlagOnModernFile(t *testing.T) {
 func TestCmdIniEvilArgsTable(t *testing.T) {
 	dir := t.TempDir()
 	encPath := filepath.Join(dir, "l2.ini")
-	file, _ := l2ini.Encode(plainForCLI(), l2ini.Modern)
+	file, err := l2ini.Encode(plainForCLI(), l2ini.Modern)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
 	if err := os.WriteFile(encPath, file, 0o644); err != nil {
 		t.Fatalf("запись: %v", err)
 	}

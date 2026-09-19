@@ -3,6 +3,7 @@ package pcap
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/netip"
@@ -163,40 +164,13 @@ func s2c(seq uint32, flags byte, payload []byte) []byte {
 	return tcpFrame(serverIP, clientIP, serverPort, clientPort, seq, 0, flags, payload)
 }
 
-// l2Flow — полный L2 game-флоу: SYN → ProtocolVersion (классик 5Б) →
-// SYN-ACK → KeyPacket → шифрованные кадры → FIN-обмен.
-func l2Flow(c *capture) []byte {
-	var key [8]byte
-	for i := range key {
-		key[i] = byte(0xA0 + i)
+// l2Flow — полный L2 game-флоу (кадры classicFrames с временными метками):
+// SYN → ProtocolVersion (классик 5Б) → SYN-ACK → KeyPacket → шифрованный
+// Logout → FIN-обмен.
+func l2Flow(c *capture) {
+	for i, fr := range classicFrames() {
+		c.packet(at(int64(i)), fr)
 	}
-	keyPacket := make([]byte, protocol.KeyPacketSize)
-	protocol.WriteKeyPacket(keyPacket, 1, key[:], true, 1)
-	clientFrame := make([]byte, protocol.LogoutSize)
-	protocol.WriteLogout(clientFrame)
-	cliCrypt := crypto.NewGameCrypt(key)
-	cliCrypt.Enable()
-	cliCrypt.Encrypt(clientFrame)
-
-	pv := make([]byte, 2+protocol.ProtocolVersionSize)
-	binary.LittleEndian.PutUint16(pv, uint16(protocol.ProtocolVersionSize+2))
-	protocol.WriteProtocolVersion(pv[2:], protocol.ProtocolVersionInterlude)
-	kp := make([]byte, 2+len(keyPacket))
-	binary.LittleEndian.PutUint16(kp, uint16(len(keyPacket)+2))
-	copy(kp[2:], keyPacket)
-	lg := make([]byte, 2+len(clientFrame))
-	binary.LittleEndian.PutUint16(lg, uint16(len(clientFrame)+2))
-	copy(lg[2:], clientFrame)
-
-	c.packet(at(0), c2s(1000, syn, nil))                     // SYN, ISN=999+1
-	c.packet(at(1), s2c(2000, syn|ack, nil))                 // SYN-ACK
-	c.packet(at(2), c2s(1001, ack, nil))                     // ACK
-	c.packet(at(3), c2s(1001, ack|0x08, pv))                 // ProtocolVersion
-	c.packet(at(4), s2c(2001, ack|0x08, kp))                 // KeyPacket
-	c.packet(at(5), c2s(uint32(1001+len(pv)), ack|0x08, lg)) // Logout (зашифрован)
-	c.packet(at(6), c2s(uint32(1001+len(pv)+len(lg)), fin, nil))
-	c.packet(at(7), s2c(uint32(2001+len(kp)), fin|ack, nil))
-	return lg
 }
 
 // readJournal — записи журнала из выхода конвертера.
@@ -237,7 +211,9 @@ func TestPcapConvertClassicToJournal(t *testing.T) {
 	if open.Type != 1 || open.ConnID != 1 ||
 		open.Listen != "10.0.0.1:49152" || open.Upstream != "10.0.0.2:7777" ||
 		open.OpenedAt != at(0).UnixNano() {
-		t.Fatalf("connOpen: %+v", open)
+		t.Fatalf("connOpen: got type=%d id=%d listen=%q upstream=%q openedAt=%d; want 1/1/%q/%q/%d",
+			open.Type, open.ConnID, open.Listen, open.Upstream, open.OpenedAt,
+			"10.0.0.1:49152", "10.0.0.2:7777", at(0).UnixNano())
 	}
 	var datas []tap.Record
 	for _, r := range recs {
@@ -267,17 +243,11 @@ func TestPcapConvertClassicToJournal(t *testing.T) {
 
 // D2: тот же сценарий в pcapng-контейнере — тот же журнал.
 func TestPcapConvertNgContainer(t *testing.T) {
-	classic := newClassicCapture()
-	l2Flow(classic)
-
 	var ngBuf bytes.Buffer
 	nw, err := pcapgo.NewNgWriter(&ngBuf, layers.LinkTypeEthernet)
 	if err != nil {
 		t.Fatalf("NgWriter: %v", err)
 	}
-	// переписываем те же кадры: классик-билдер дал байты, но временные метки
-	// нужны по пакетно — собираем заново через кадры из l2Flow
-	// (используем предопределённые кадры через билдер выше)
 	frames := classicFrames()
 	for i, fr := range frames {
 		if err := nw.WritePacket(gopacket.CaptureInfo{
@@ -395,6 +365,7 @@ func dataRecords(t *testing.T, buf *bytes.Buffer) []tap.Record {
 
 // D3: ретрансмиссии и дубли — по одному вхождению байтов.
 func TestPcapRetransmissionsDeduplicated(t *testing.T) {
+	t.Parallel()
 	h, buf := newHalf(t, 500)
 	payload := []byte("HELLO")
 	for range 3 {
@@ -418,6 +389,7 @@ func TestPcapRetransmissionsDeduplicated(t *testing.T) {
 
 // D4: out-of-order — журнал в порядке seq.
 func TestPcapOutOfOrderReordered(t *testing.T) {
+	t.Parallel()
 	h, buf := newHalf(t, 500)
 	if err := h.push(600, 3, []byte("CCC")); err != nil {
 		t.Fatalf("push: %v", err)
@@ -444,6 +416,7 @@ func TestPcapOutOfOrderReordered(t *testing.T) {
 
 // D5: перекрывающая ретрансмиссия длиннее исходного — хвост один раз.
 func TestPcapOverlapExtends(t *testing.T) {
+	t.Parallel()
 	h, buf := newHalf(t, 500)
 	if err := h.push(500, 1, []byte("AAAA")); err != nil {
 		t.Fatalf("push: %v", err)
@@ -463,6 +436,7 @@ func TestPcapOverlapExtends(t *testing.T) {
 
 // D6: дыра seq — ресинк с счётчиком, данные после дыры доезжают.
 func TestPcapSeqGapResyncsLoudly(t *testing.T) {
+	t.Parallel()
 	h, buf := newHalf(t, 500)
 	if err := h.push(500, 1, []byte("AAA")); err != nil {
 		t.Fatalf("push: %v", err)
@@ -512,7 +486,7 @@ func TestPcapFlowWithoutSynSkippedLoudly(t *testing.T) {
 	if err := tap.Decode(bytes.NewReader(journal.Bytes()), tap.DecodeOptions{Log: &log}); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if strings.Contains(log.String(), "noanswer") {
+	if strings.Contains(log.String(), hex.EncodeToString([]byte("noanswer"))) {
 		t.Fatal("SYN-less данные попали в журнал")
 	}
 }
@@ -553,10 +527,10 @@ func TestPcapFinRstAndPortReuse(t *testing.T) {
 		t.Fatalf("connClose %d, want 2", len(closes))
 	}
 	if closes[0].ConnID != 1 || closes[0].Err != "" {
-		t.Fatalf("чистое закрытие: %+v", closes[0])
+		t.Fatalf("чистое закрытие: got id=%d err=%q; want id=1 err=\"\"", closes[0].ConnID, closes[0].Err)
 	}
 	if closes[1].ConnID != 2 || !strings.Contains(closes[1].Err, "RST") {
-		t.Fatalf("RST-закрытие: %+v", closes[1])
+		t.Fatalf("RST-закрытие: got id=%d err=%q; want id=2 c RST", closes[1].ConnID, closes[1].Err)
 	}
 	// клиент остался источником SYN: первая data-запись — CtoS
 	opens := []tap.Record{}
@@ -566,11 +540,19 @@ func TestPcapFinRstAndPortReuse(t *testing.T) {
 		}
 	}
 	if len(opens) != 2 || opens[0].ConnID != 1 || opens[1].ConnID != 2 {
-		t.Fatalf("connOpen: %+v", opens)
+		t.Fatalf("connOpen: got %d записей id=%v; want 2 с id [1 2]", len(opens), connIDs(opens))
 	}
 	if opens[0].Listen != "10.0.0.1:49152" {
-		t.Fatalf("клиент flipнулся: %+v", opens[0])
+		t.Fatalf("клиент flipнулся: got listen=%q; want %q", opens[0].Listen, "10.0.0.1:49152")
 	}
+}
+
+func connIDs(recs []tap.Record) []uint64 {
+	ids := make([]uint64, len(recs))
+	for i, r := range recs {
+		ids[i] = r.ConnID
+	}
+	return ids
 }
 
 // D9: не-TCP шум игнорируется, не-L2 TCP-поток конвертируется (hex на decode).
@@ -726,6 +708,7 @@ func TestPcapConverterDeterministic(t *testing.T) {
 
 // D14: таймстемпы µs → UnixNano точно (включая нулевую эпоху).
 func TestPcapTimestampsMicrosToNanos(t *testing.T) {
+	t.Parallel()
 	c := newClassicCapture()
 	ts := time.Unix(1, 1000) // 1 с + 1 мкс
 	c.packet(ts, c2s(1000, syn, nil))
@@ -800,7 +783,7 @@ func TestPcapEvilContainersTable(t *testing.T) {
 		in   []byte
 	}{
 		{"случайный мусор", bytes.Repeat([]byte{0xDE, 0xAD}, 50)},
-		{"валидный l2.ini", func() []byte {
+		{"префикс чужого заголовка 413", func() []byte {
 			// заголовок 413-файла — чужой домен, не pcap
 			out := make([]byte, 64)
 			copy(out, "L\x00i\x00n\x00")
@@ -837,6 +820,7 @@ func TestPcapEvilContainersTable(t *testing.T) {
 
 // D17: служебные сегменты без нагрузки не пишутся.
 func TestPcapPureAcksNoDataRecords(t *testing.T) {
+	t.Parallel()
 	c := newClassicCapture()
 	c.packet(at(0), c2s(1000, syn, nil))
 	c.packet(at(1), s2c(2000, syn|ack, nil))
@@ -908,5 +892,90 @@ func TestPcapJournalDecodesFullFlow(t *testing.T) {
 	}
 	if log.String() != string(wantLog) {
 		t.Errorf("лог декодера дрейфовал:\ngot:\n%s\nwant:\n%s", log.String(), wantLog)
+	}
+}
+
+// F-sec-4 (S8): переход seq через 2^32 — непрерывные данные не теряются.
+func TestPcapSeqWraparound(t *testing.T) {
+	t.Parallel()
+	h, buf := newHalf(t, 0xFFFFFFF0)
+	first := bytes.Repeat([]byte{1}, 100) // seq 0xFFFFFFF0 → конец за 2^32
+	if err := h.push(0xFFFFFFF0, 1, first); err != nil {
+		t.Fatalf("push через границу: %v", err)
+	}
+	second := []byte{2, 2}
+	if err := h.push(0x54, 2, second); err != nil { // продолжение после wrap
+		t.Fatalf("push после wrap: %v", err)
+	}
+	var got []byte
+	for _, r := range dataRecords(t, buf) {
+		got = append(got, r.Bytes...)
+	}
+	if len(got) != len(first)+len(second) {
+		t.Fatalf("через границу 2^32 потеряно: %d из %d байт", len(got), len(first)+len(second))
+	}
+}
+
+// F-sec-3 (S8): SYN/SYN-ACK с нагрузкой (TCP Fast Open) — данные доезжают.
+func TestPcapSynPayloadTfo(t *testing.T) {
+	c := newClassicCapture()
+	pv := wirePV()
+	c.packet(at(0), c2s(1000, syn, pv))               // TFO: данные в SYN (с ISN+1)
+	c.packet(at(1), s2c(2000, syn|ack, []byte{9, 9})) // TFO-ответ сервера
+	c.packet(at(2), c2s(1001+uint32(len(pv)), fin, nil))
+	c.packet(at(3), s2c(2003, fin|ack, nil))
+	var journal bytes.Buffer
+	rep, err := Convert(bytes.NewReader(c.buf.Bytes()), &journal)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if rep.Conns != 1 {
+		t.Fatalf("Conns = %d, want 1", rep.Conns)
+	}
+	var datas []tap.Record
+	for _, rec := range readJournal(t, journal.Bytes()) {
+		if rec.Type == 2 {
+			datas = append(datas, rec)
+		}
+	}
+	if len(datas) != 2 {
+		t.Fatalf("data-записей %d, want 2 (TFO обеих сторон): %+v", len(datas), datas)
+	}
+	if datas[0].Dir != tap.DirCtoS || !bytes.Equal(datas[0].Bytes, pv) {
+		t.Errorf("TFO-клиент: dir=%d bytes=%x", datas[0].Dir, datas[0].Bytes)
+	}
+	if datas[1].Dir != tap.DirStoC || !bytes.Equal(datas[1].Bytes, []byte{9, 9}) {
+		t.Errorf("TFO-сервер: dir=%d bytes=%x", datas[1].Dir, datas[1].Bytes)
+	}
+}
+
+// F-sec-5 (S8): мусорный пакет внутри валидного контейнера — громкий пропуск,
+// конвертация продолжается (salvage живых потоков, как на обрыве).
+func TestPcapMidPacketGarbageContinues(t *testing.T) {
+	c := newClassicCapture()
+	pv := wirePV()
+	c.packet(at(0), c2s(1000, syn, nil))
+	c.packet(at(1), s2c(2000, syn|ack, nil))
+	// мусор: ethertype IPv4, но заголовок короче 20 байт
+	junk := make([]byte, 14+6)
+	junk[12], junk[13] = 0x08, 0x00
+	c.packet(at(2), junk)
+	c.packet(at(3), c2s(1001, ack|0x08, pv))
+	c.packet(at(4), c2s(1001+uint32(len(pv)), fin, nil))
+	c.packet(at(5), s2c(2001, fin|ack, nil))
+	var journal bytes.Buffer
+	rep, err := Convert(bytes.NewReader(c.buf.Bytes()), &journal)
+	if err != nil {
+		t.Fatalf("Convert: %v (want salvage-продолжение)", err)
+	}
+	if rep.BadPackets != 1 || rep.Conns != 1 {
+		t.Fatalf("отчёт: BadPackets=%d Conns=%d, want 1/1", rep.BadPackets, rep.Conns)
+	}
+	var log bytes.Buffer
+	if err := tap.Decode(bytes.NewReader(journal.Bytes()), tap.DecodeOptions{Log: &log}); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !strings.Contains(log.String(), "PROTOCOL_VERSION") {
+		t.Errorf("данные после мусорного пакета не доехали:\n%s", log.String())
 	}
 }

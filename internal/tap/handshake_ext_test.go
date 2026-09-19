@@ -2,12 +2,16 @@ package tap
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/udisondev/l2go/internal/crypto"
 	"github.com/udisondev/l2go/internal/protocol"
 )
+
+// Запись журнала идёт в bytes.Buffer и не падает; «_ =» на писателе записей —
+// идиома пакета (прецедент decode_test.go).
 
 // extendedProtocolVersion — расширенный хендшейк 265 Б: опкод + версия +
 // 260-байтовая таблица патченных клиентов (живое свидетельство KT3-3).
@@ -24,6 +28,7 @@ func extendedProtocolVersion(version int32, tableFill byte) []byte {
 // Расширенный ProtocolVersion (265 Б) классифицируется как game-хендшейк —
 // имя из каталога, не hex.
 func TestDecodeClassifiesExtendedProtocolVersion(t *testing.T) {
+	t.Parallel()
 	journal := buildJournal(t, func(jw *JournalWriter) {
 		_ = jw.ConnOpen(1, "a:1", "b:2", 0)
 		_ = jw.writeData(recData, 1, DirCtoS, 1, wireRecord(extendedProtocolVersion(protocol.ProtocolVersionInterlude, 0)))
@@ -41,6 +46,7 @@ func TestDecodeClassifiesExtendedProtocolVersion(t *testing.T) {
 // Сквозная расшифровка game-ноги за расширенным хендшейком: KeyPacket сеет
 // оба движка, кадры обеих ног расшифровываются и получают имена каталога.
 func TestDecodeExtendedHandshakeDecryptsGameLeg(t *testing.T) {
+	t.Parallel()
 	var key [8]byte
 	for i := range key {
 		key[i] = byte(i + 1)
@@ -96,6 +102,7 @@ func TestDecodeExtendedHandshakeDecryptsGameLeg(t *testing.T) {
 
 // Маркер таблицы различает семейства хендшейка в логе: ровно у расширенного.
 func TestDecodeProtocolVersionTableMarkerDifferential(t *testing.T) {
+	t.Parallel()
 	classic := make([]byte, protocol.ProtocolVersionSize)
 	protocol.WriteProtocolVersion(classic, protocol.ProtocolVersionInterlude)
 
@@ -125,6 +132,7 @@ func TestDecodeProtocolVersionTableMarkerDifferential(t *testing.T) {
 // версия читается, Decode молчит (регресс-пин; красный не требуется —
 // поведение уже canon).
 func TestDecodeProbeProtocolVersionFFFFFFFF(t *testing.T) {
+	t.Parallel()
 	frame := make([]byte, protocol.ProtocolVersionSize)
 	protocol.WriteProtocolVersion(frame, -2)
 	journal := buildJournal(t, func(jw *JournalWriter) {
@@ -144,8 +152,10 @@ func TestDecodeProbeProtocolVersionFFFFFFFF(t *testing.T) {
 // Строгая пара размеров хендшейка {5, 265}: прочие размеры с опкодом 0x00 —
 // hex-деградация с нейтральным именем (толерантность не просачивается).
 func TestDecodeProtocolVersionStrictSizes(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{4, 6, 264, 266} {
-		t.Run(string(rune('0'+size%10))+string(rune('0'+size/100)), func(t *testing.T) {
+		t.Run(strconv.Itoa(size)+"Б", func(t *testing.T) {
+			t.Parallel()
 			frame := make([]byte, size)
 			frame[0] = protocol.OpProtocolVersion
 			journal := buildJournal(t, func(jw *JournalWriter) {
@@ -169,6 +179,7 @@ func TestDecodeProtocolVersionStrictSizes(t *testing.T) {
 // Мусорная таблица расширенного хендшейка не роняет декодер: версия читается,
 // остальное — байты без интерпретации.
 func TestDecodeExtendedTableGarbageNoPanic(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("паника: %v", r)
