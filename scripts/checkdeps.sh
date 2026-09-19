@@ -26,6 +26,8 @@ allowed() {
 	internal/loginlink|internal/admin) echo "internal/transport pkg/mtls" ;;
 	internal/l2client) echo "internal/protocol internal/protocol/fixture internal/crypto internal/tap" ;;
 	internal/tap) echo "internal/protocol internal/protocol/fixture internal/crypto" ;;
+	internal/l2ini) echo "" ;;
+	internal/pcap) echo "internal/tap internal/crypto internal/protocol internal/protocol/fixture" ;;
 	internal/login) echo "internal/protocol internal/crypto internal/persist internal/loginlink internal/l2client internal/protocol/fixture internal/transport pkg/mtls" ;;
 		*) echo "UNLISTED" ;;
 	esac
@@ -68,9 +70,10 @@ done
 # что компилируется в наши пакеты, включая тесты; полный `go list -m all`
 # тянет неиспользуемые требования go.mod зависимостей) — закрытый allowlist;
 # список = фактический граф gRPC-стыка (P3.4, решение 1: grpc + protobuf и
-# транзитивные минимумы). Добавление новой — красный и явное решение
-# (ADR/план), не молча.
-allowed_mods="google.golang.org/grpc google.golang.org/protobuf google.golang.org/genproto/googleapis/rpc golang.org/x/net golang.org/x/sys golang.org/x/text"
+# транзитивные минимумы) + gopacket (P3.14, S0-решение: офлайн-ридеры pcap/
+# pcapng и диссекция Eth/IP/TCP конвертера l2pcap). Добавление новой — красный
+# и явное решение (ADR/план), не молча.
+allowed_mods="google.golang.org/grpc google.golang.org/protobuf google.golang.org/genproto/googleapis/rpc golang.org/x/net golang.org/x/sys golang.org/x/text github.com/gopacket/gopacket"
 mods_graph="$(go list -deps -test -f '{{with .Module}}{{if ne .Path "github.com/udisondev/l2go"}}{{.Path}}{{end}}{{end}}' ./... | sort -u)" ||
 	{ echo "checkdeps: go list недоступен" >&2; exit 1; }
 while IFS= read -r mod; do

@@ -4,7 +4,11 @@
 //
 //	l2tap -login-map 127.0.0.1:2106=server:2106 -map 127.0.0.1:7777=server:7777 -out session.tap
 //
-// Decode: журнал → читаемый лог и/или фикстуры.
+// Decode: журнал → читаемый лог и/или фикстуры. Известны оба семейства
+// game-хендшейка: классический ProtocolVersion 5 Б и расширенный 265 Б
+// (опкод + версия + таблица патченных клиентов); игровая нога расшифровывается
+// ключом из KeyPacket самого журнала, кадры получают имена опкодов из каталога
+// протокола; соединения без валидного хендшейка — hex.
 //
 //	l2tap -decode session.tap -out-log traffic.txt -out-fixtures fixtures.json
 //
@@ -57,6 +61,13 @@ func main() {
 	)
 	flag.Var(&capture, "map", "пара listen=upstream (повторяемый)")
 	flag.Var(&logins, "login-map", "login-пара listen=upstream (rewrite-ветка)")
+	flag.Usage = func() {
+		fmt.Fprintln(os.Stderr, "использование: l2tap -login-map l=u -map l=u -out <журнал>")
+		fmt.Fprintln(os.Stderr, "           l2tap -decode <журнал> [-out-log <лог>] [-out-fixtures <файл>]")
+		fmt.Fprintln(os.Stderr, "  decode знает оба семейства game-хендшейка (ProtocolVersion 5 и 265 Б),")
+		fmt.Fprintln(os.Stderr, "  расшифровывает игровую ногу ключом из KeyPacket журнала; без хендшейка — hex.")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	level := slog.LevelInfo

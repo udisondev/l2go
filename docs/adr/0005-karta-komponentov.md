@@ -67,6 +67,8 @@ slog, простота, гайды стиля и производительно�
 | `internal/persist` | transport |
 | `internal/l2client` | protocol, protocol/fixture, crypto, tap |
 | `internal/tap` | protocol, protocol/fixture, crypto |
+| `internal/l2ini` | — |
+| `internal/pcap` | tap; crypto, protocol, protocol/fixture (тесты конвертера: сборка L2-кадров синтетических захватов) |
 | `internal/login` | protocol, crypto, persist, loginlink, l2client (тесты интеграционного контура), transport/protocol-fixture (транзитивно), pkg/mtls (тестовый mTLS-стек) |
 | `internal/loginlink` | transport, pkg/mtls |
 | `internal/admin` | transport, pkg/mtls |
@@ -75,7 +77,11 @@ slog, простота, гайды стиля и производительно�
    Обоснование рёбер: криптоблок исходящего кадра — стейтлес-стадия энкода; расшифровка
    входящих кадров — провода (conn); пограничники (loginlink, admin) входят в мир только
    письмами слепым push (Kick, надзор, регистрация сессии); писатели protocol пишут в буфер
-   вызывающего — пул-дисциплина и крипта остаются на стадиях вызывающих.
+   вызывающего — пул-дисциплина и крипта остаются на стадиях вызывающих. Инструменты живой
+   диагностики (P3.14): l2ini — самодостаточный кодек формата l2.ini (RSA big.Int, zlib,
+   CRC32 — stdlib, внутренних рёбер нет); pcap — читает захваты pcap/pcapng (внешний модуль
+   gopacket: pcapgo-ридеры обоих контейнеров + диссекция Eth/IP/TCP) и пишет журнал тапа
+   через единственный писатель формата (tap).
 
    **Критерий жизни скелета:** скелет (пакет из одних типов) живёт в репозитории, только
    если пакет есть в реестре горячих путей или имеет живое ребро в графе скелетов. Критерий

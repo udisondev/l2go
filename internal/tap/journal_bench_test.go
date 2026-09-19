@@ -6,11 +6,11 @@ import "testing"
 // (компромисс F15: медленный Log блокирует все соединения).
 func BenchmarkJournalWrite256(b *testing.B) {
 	payload := make([]byte, 256)
-	jw := newJournalWriter(discardWriter{})
+	jw := NewJournalWriter(discardWriter{})
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	for b.Loop() {
-		if err := jw.data(recData, 1, DirCtoS, 0, payload); err != nil {
+		if err := jw.writeData(recData, 1, DirCtoS, 0, payload); err != nil {
 			b.Fatalf("data: %v", err)
 		}
 	}
@@ -18,11 +18,11 @@ func BenchmarkJournalWrite256(b *testing.B) {
 
 func BenchmarkJournalWrite1456(b *testing.B) {
 	payload := make([]byte, 1456)
-	jw := newJournalWriter(discardWriter{})
+	jw := NewJournalWriter(discardWriter{})
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	for b.Loop() {
-		if err := jw.data(recData, 1, DirCtoS, 0, payload); err != nil {
+		if err := jw.writeData(recData, 1, DirCtoS, 0, payload); err != nil {
 			b.Fatalf("data: %v", err)
 		}
 	}

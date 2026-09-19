@@ -12,30 +12,30 @@ import (
 // Раундтрип всех типов записей: запись → чтение → те же поля.
 func TestJournalRoundtrip(t *testing.T) {
 	var buf bytes.Buffer
-	jw := newJournalWriter(&buf)
-	if err := jw.connOpen(7, "127.0.0.1:2106", "37.228.91.208:7777", 12345); err != nil {
+	jw := NewJournalWriter(&buf)
+	if err := jw.ConnOpen(7, "127.0.0.1:2106", "37.228.91.208:7777", 12345); err != nil {
 		t.Fatalf("connOpen: %v", err)
 	}
-	if err := jw.data(recData, 7, DirCtoS, 1, []byte{1, 2, 3}); err != nil {
+	if err := jw.writeData(recData, 7, DirCtoS, 1, []byte{1, 2, 3}); err != nil {
 		t.Fatalf("data: %v", err)
 	}
-	if err := jw.data(recData, 7, DirStoC, 2, bytes.Repeat([]byte{9}, 300)); err != nil {
+	if err := jw.writeData(recData, 7, DirStoC, 2, bytes.Repeat([]byte{9}, 300)); err != nil {
 		t.Fatalf("data big: %v", err)
 	}
-	if err := jw.data(recOriginal, 7, DirStoC, 3, []byte{4}); err != nil {
+	if err := jw.writeData(recOriginal, 7, DirStoC, 3, []byte{4}); err != nil {
 		t.Fatalf("original: %v", err)
 	}
-	if err := jw.connClose(7, errors.New("обрыв ноги")); err != nil {
+	if err := jw.ConnClose(7, errors.New("обрыв ноги")); err != nil {
 		t.Fatalf("connClose: %v", err)
 	}
-	if err := jw.connClose(8, nil); err != nil {
+	if err := jw.ConnClose(8, nil); err != nil {
 		t.Fatalf("connClose nil: %v", err)
 	}
-	if err := jw.flush(); err != nil {
+	if err := jw.Flush(); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 
-	jr := newJournalReader(bytes.NewReader(buf.Bytes()))
+	jr := NewJournalReader(bytes.NewReader(buf.Bytes()))
 	var got []Record
 	for {
 		rec, err := jr.Next()
@@ -79,10 +79,10 @@ func TestJournalRoundtrip(t *testing.T) {
 func TestJournalEvilInputs(t *testing.T) {
 	valid := func() []byte {
 		var buf bytes.Buffer
-		jw := newJournalWriter(&buf)
-		_ = jw.connOpen(1, "a:1", "b:2", 0)
-		_ = jw.data(recData, 1, DirCtoS, 0, []byte{1})
-		_ = jw.flush()
+		jw := NewJournalWriter(&buf)
+		_ = jw.ConnOpen(1, "a:1", "b:2", 0)
+		_ = jw.writeData(recData, 1, DirCtoS, 0, []byte{1})
+		_ = jw.Flush()
 		return buf.Bytes()
 	}
 	cases := []struct {
@@ -102,10 +102,10 @@ func TestJournalEvilInputs(t *testing.T) {
 		}},
 		{"dir вне {1,2}", func() []byte {
 			var buf bytes.Buffer
-			jw := newJournalWriter(&buf)
-			_ = jw.connOpen(1, "a", "b", 0)
-			_ = jw.data(recData, 1, 7, 0, []byte{1})
-			_ = jw.flush()
+			jw := NewJournalWriter(&buf)
+			_ = jw.ConnOpen(1, "a", "b", 0)
+			_ = jw.writeData(recData, 1, 7, 0, []byte{1})
+			_ = jw.Flush()
 			return buf.Bytes()
 		}},
 		{"len-несогласованность data", func() []byte {
@@ -136,7 +136,7 @@ func TestJournalEvilInputs(t *testing.T) {
 					t.Fatalf("паника: %v", r)
 				}
 			}()
-			jr := newJournalReader(bytes.NewReader(tc.raw()))
+			jr := NewJournalReader(bytes.NewReader(tc.raw()))
 			for {
 				_, err := jr.Next()
 				if errors.Is(err, io.EOF) {
@@ -156,14 +156,14 @@ func TestJournalEvilInputs(t *testing.T) {
 // Ошибка писателя залипает: capture обязан остановиться, а не молчать.
 func TestJournalWriterStickyError(t *testing.T) {
 	fail := &failWriter{}
-	jw := newJournalWriter(fail)
-	if err := jw.connOpen(1, "a", "b", 0); err == nil {
+	jw := NewJournalWriter(fail)
+	if err := jw.ConnOpen(1, "a", "b", 0); err == nil {
 		t.Fatal("хотели ошибку")
 	}
-	if err := jw.data(recData, 1, DirCtoS, 0, []byte{1}); err == nil {
+	if err := jw.writeData(recData, 1, DirCtoS, 0, []byte{1}); err == nil {
 		t.Fatal("залипшая ошибка не возвращена")
 	}
-	if err := jw.connClose(1, nil); err == nil {
+	if err := jw.ConnClose(1, nil); err == nil {
 		t.Fatal("залипшая ошибка не возвращена")
 	}
 }

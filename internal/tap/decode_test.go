@@ -14,12 +14,12 @@ import (
 )
 
 // buildJournal — журнал из записей заданными писателями.
-func buildJournal(t *testing.T, write func(jw *journalWriter)) []byte {
+func buildJournal(t *testing.T, write func(jw *JournalWriter)) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	jw := newJournalWriter(&buf)
+	jw := NewJournalWriter(&buf)
 	write(jw)
-	if err := jw.flush(); err != nil {
+	if err := jw.Flush(); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 	return buf.Bytes()
@@ -36,10 +36,10 @@ func TestDecodeGameFrameBeforeKeyPacketNoPanic(t *testing.T) {
 			t.Fatalf("паника: %v", r)
 		}
 	}()
-	journal := buildJournal(t, func(jw *journalWriter) {
-		_ = jw.connOpen(1, "a:1", "b:2", 0)
-		_ = jw.data(recData, 1, DirCtoS, 1, gameRecord([]byte{0x00, 0xEA, 0x02, 0x00, 0x00})) // ProtocolVersion
-		_ = jw.data(recData, 1, DirCtoS, 2, gameRecord([]byte{0x09}))                         // LOGOUT — до KeyPacket
+	journal := buildJournal(t, func(jw *JournalWriter) {
+		_ = jw.ConnOpen(1, "a:1", "b:2", 0)
+		_ = jw.writeData(recData, 1, DirCtoS, 1, gameRecord([]byte{0x00, 0xEA, 0x02, 0x00, 0x00})) // ProtocolVersion
+		_ = jw.writeData(recData, 1, DirCtoS, 2, gameRecord([]byte{0x09}))                         // LOGOUT — до KeyPacket
 	})
 	var log bytes.Buffer
 	if err := Decode(bytes.NewReader(journal), DecodeOptions{Log: &log}); err != nil {
@@ -53,10 +53,10 @@ func TestDecodeGameFrameBeforeKeyPacketNoPanic(t *testing.T) {
 // Обрыв хвоста журнала — salvage: целые записи разбираются, фикстуры
 // выгружаются, Decode не возвращает ошибку.
 func TestDecodeSalvageTruncatedTail(t *testing.T) {
-	journal := buildJournal(t, func(jw *journalWriter) {
-		_ = jw.connOpen(1, "a:1", "b:2", 0)
-		_ = jw.data(recData, 1, DirCtoS, 1, wireRecord([]byte{0x00, 0xEA, 0x02, 0x00, 0x00}))
-		_ = jw.data(recData, 1, DirCtoS, 2, wireRecord([]byte{0x09})) // эта запись будет обрезана
+	journal := buildJournal(t, func(jw *JournalWriter) {
+		_ = jw.ConnOpen(1, "a:1", "b:2", 0)
+		_ = jw.writeData(recData, 1, DirCtoS, 1, wireRecord([]byte{0x00, 0xEA, 0x02, 0x00, 0x00}))
+		_ = jw.writeData(recData, 1, DirCtoS, 2, wireRecord([]byte{0x09})) // эта запись будет обрезана
 	})
 	truncated := journal[:len(journal)-3] // рвём тело последней записи
 
@@ -74,11 +74,11 @@ func TestDecodeSalvageTruncatedTail(t *testing.T) {
 
 // data после connClose допускается (F14).
 func TestDecodeDataAfterConnClose(t *testing.T) {
-	journal := buildJournal(t, func(jw *journalWriter) {
-		_ = jw.connOpen(1, "a:1", "b:2", 0)
-		_ = jw.data(recData, 1, DirCtoS, 1, wireRecord([]byte{0x00, 0xEA, 0x02, 0x00, 0x00}))
-		_ = jw.connClose(1, nil)
-		_ = jw.data(recData, 1, DirCtoS, 2, wireRecord([]byte{0x00, 0xEA, 0x02, 0x00, 0x00}))
+	journal := buildJournal(t, func(jw *JournalWriter) {
+		_ = jw.ConnOpen(1, "a:1", "b:2", 0)
+		_ = jw.writeData(recData, 1, DirCtoS, 1, wireRecord([]byte{0x00, 0xEA, 0x02, 0x00, 0x00}))
+		_ = jw.ConnClose(1, nil)
+		_ = jw.writeData(recData, 1, DirCtoS, 2, wireRecord([]byte{0x00, 0xEA, 0x02, 0x00, 0x00}))
 	})
 	var log bytes.Buffer
 	if err := Decode(bytes.NewReader(journal), DecodeOptions{Log: &log}); err != nil {
@@ -92,11 +92,11 @@ func TestDecodeDataAfterConnClose(t *testing.T) {
 // Чужой magic изолирован: валидная структура записей с инвертированным
 // заголовком — ошибка именно заголовка (S8: мутация проверки magic выживала).
 func TestJournalForeignMagicIsolated(t *testing.T) {
-	journal := buildJournal(t, func(jw *journalWriter) {
-		_ = jw.connOpen(1, "a", "b", 0)
+	journal := buildJournal(t, func(jw *JournalWriter) {
+		_ = jw.ConnOpen(1, "a", "b", 0)
 	})
 	journal[0] = 'X' // ломаем только magic, записи целы
-	jr := newJournalReader(bytes.NewReader(journal))
+	jr := NewJournalReader(bytes.NewReader(journal))
 	if _, err := jr.Next(); err == nil || !errors.Is(err, errBadHeader) {
 		t.Fatalf("хотели errBadHeader, получили %v", err)
 	}
@@ -131,7 +131,7 @@ func (w *lockedBuffer) bytes() []byte {
 // телом (хвост без полного кадра).
 func journalHasTailData(t *testing.T, snapshot []byte) bool {
 	t.Helper()
-	rd := newJournalReader(bytes.NewReader(snapshot))
+	rd := NewJournalReader(bytes.NewReader(snapshot))
 	for {
 		rec, err := rd.Next()
 		if errors.Is(err, io.EOF) {
@@ -148,7 +148,7 @@ func journalHasTailData(t *testing.T, snapshot []byte) bool {
 
 // journalHasData — в снимке есть целая data-запись любого размера.
 func journalHasData(snapshot []byte) bool {
-	rd := newJournalReader(bytes.NewReader(snapshot))
+	rd := NewJournalReader(bytes.NewReader(snapshot))
 	for {
 		rec, err := rd.Next()
 		if err != nil {

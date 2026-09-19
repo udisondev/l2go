@@ -22,5 +22,7 @@ internal/artifact/embedded/artifact.l2a
 /l2login
 /l2go
 /l2data
+/l2pcap
+/l2ini
 /l2tap
 /l2client

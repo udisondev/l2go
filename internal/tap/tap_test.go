@@ -109,7 +109,7 @@ func TestTapHalfClose(t *testing.T) {
 	}
 
 	// журнал полон: data обеих ног + connClose
-	jr := newJournalReader(bytes.NewReader(journal.bytes()))
+	jr := NewJournalReader(bytes.NewReader(journal.bytes()))
 	var dataN, closeN int
 	for {
 		rec, err := jr.Next()
@@ -186,7 +186,7 @@ func TestTapShutdown(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	jr := newJournalReader(bytes.NewReader(journal.bytes()))
+	jr := NewJournalReader(bytes.NewReader(journal.bytes()))
 	sawClose := false
 	for {
 		rec, err := jr.Next()

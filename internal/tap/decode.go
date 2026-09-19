@@ -62,7 +62,7 @@ type connDec struct {
 func Decode(r io.Reader, opts DecodeOptions) error {
 	conns := make(map[uint64]*connDec)
 	order := make([]uint64, 0, 8)
-	jr := newJournalReader(r)
+	jr := NewJournalReader(r)
 	for {
 		rec, err := jr.Next()
 		if errors.Is(err, io.EOF) {
@@ -180,7 +180,10 @@ func decodeFrame(c *connDec, leg *legDec, dir byte, frame, orig []byte, log io.W
 	}
 }
 
-// classify — определение login/game по первому кадру ноги.
+// classify — определение login/game по первому кадру ноги. Хендшейк game —
+// строгая пара размеров {классический, расширенный}: прочие размеры с опкодом
+// ProtocolVersion классификацией не признаются (нейтральный hex, не имена
+// каталога по случайному совпадению).
 func classify(c *connDec, dir byte, frame []byte) error {
 	if dir == DirStoC {
 		work := make([]byte, len(frame))
@@ -194,7 +197,8 @@ func classify(c *connDec, dir byte, frame []byte) error {
 		}
 		return fmt.Errorf("S→C кадр %d Б не похож на Init", len(frame))
 	}
-	if len(frame) == protocol.ProtocolVersionSize && frame[0] == protocol.OpProtocolVersion {
+	if frame[0] == protocol.OpProtocolVersion &&
+		(len(frame) == protocol.ProtocolVersionSize || len(frame) == protocol.ProtocolVersionExtendedSize) {
 		c.kind = kindGame
 		return nil
 	}
@@ -608,8 +612,12 @@ func serverListLogFields(v protocol.ServerListView) []logField {
 }
 
 func logProtocolVersion(w io.Writer, v protocol.ProtocolVersionView) {
-	logLine(w, DirCtoS, protocol.NameProtocolVersion,
-		[]logField{{K: "version", V: logNum32(v.Version())}})
+	fields := []logField{{K: "version", V: logNum32(v.Version())}}
+	if len(v) >= protocol.ProtocolVersionExtendedSize {
+		fields = append(fields, logField{
+			K: "table", V: logNum(int64(len(v) - protocol.ProtocolVersionSize))})
+	}
+	logLine(w, DirCtoS, protocol.NameProtocolVersion, fields)
 }
 
 func logKeyPacket(w io.Writer, v protocol.KeyPacketView) {

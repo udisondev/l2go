@@ -1,0 +1,32 @@
+# P3.14 l2ini/l2pcap baseline (2026-09-19, go1.27.1, AMD Ryzen 9 PRO 8945HS)
+# l2ini: golden-сэмпл 304 Б (2 блока RSA); l2pcap: синт-захват 10 потоков × 29 пакетов
+BenchmarkIniDecode-16    	    7080	     17544 ns/op	  17.33 MB/s	   46090 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    6288	     18056 ns/op	  16.84 MB/s	   46089 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    6411	     18089 ns/op	  16.81 MB/s	   46088 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    8862	     18765 ns/op	  16.20 MB/s	   46088 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    9711	     17859 ns/op	  17.02 MB/s	   46089 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    7054	     18199 ns/op	  16.70 MB/s	   46090 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    8721	     18590 ns/op	  16.35 MB/s	   46089 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    5662	     18995 ns/op	  16.00 MB/s	   46089 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    6592	     18393 ns/op	  16.53 MB/s	   46087 B/op	      25 allocs/op
+BenchmarkIniDecode-16    	    6294	     18728 ns/op	  16.23 MB/s	   46089 B/op	      25 allocs/op
+BenchmarkIniEncode-16    	     133	    918378 ns/op	   0.33 MB/s	 1157814 B/op	      72 allocs/op
+BenchmarkIniEncode-16    	     120	   1015090 ns/op	   0.30 MB/s	 1158125 B/op	      73 allocs/op
+BenchmarkIniEncode-16    	     100	   1007909 ns/op	   0.30 MB/s	 1158015 B/op	      73 allocs/op
+BenchmarkIniEncode-16    	     124	    973029 ns/op	   0.31 MB/s	 1158037 B/op	      73 allocs/op
+BenchmarkIniEncode-16    	     121	    973196 ns/op	   0.31 MB/s	 1158073 B/op	      73 allocs/op
+BenchmarkIniEncode-16    	     121	    969777 ns/op	   0.31 MB/s	 1158058 B/op	      73 allocs/op
+BenchmarkIniEncode-16    	     121	    964376 ns/op	   0.31 MB/s	 1158120 B/op	      73 allocs/op
+BenchmarkIniEncode-16    	     120	    999776 ns/op	   0.30 MB/s	 1157982 B/op	      73 allocs/op
+BenchmarkIniEncode-16    	     127	    952161 ns/op	   0.32 MB/s	 1158110 B/op	      73 allocs/op
+BenchmarkIniEncode-16    	     128	    931414 ns/op	   0.32 MB/s	 1158031 B/op	      73 allocs/op
+BenchmarkPcapConvert-16    	    1582	     75338 ns/op	 482.15 MB/s	  136661 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1506	     77189 ns/op	 470.59 MB/s	  136640 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1710	     73053 ns/op	 497.23 MB/s	  136640 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1602	     74687 ns/op	 486.35 MB/s	  136640 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1576	     74750 ns/op	 485.94 MB/s	  136640 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1669	     75655 ns/op	 480.12 MB/s	  136640 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1621	     75682 ns/op	 479.96 MB/s	  136640 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1552	     77159 ns/op	 470.77 MB/s	  136640 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1467	     78220 ns/op	 464.38 MB/s	  136640 B/op	     914 allocs/op
+BenchmarkPcapConvert-16    	    1464	     77346 ns/op	 469.63 MB/s	  136640 B/op	     914 allocs/op

@@ -40,10 +40,14 @@ const ProtocolVersionInterlude int32 = 746
 // Фиксированные размеры пакетов (с опкодом).
 const (
 	ProtocolVersionSize = 5
-	LogoutSize          = 1
-	CharacterSelectSize = 19
-	KeyPacketSize       = 23
-	GSLoginFailSize     = 5
+	// ProtocolVersionExtendedSize — расширенный хендшейк патченных клиентов:
+	// опкод + версия + 260-байтовая таблица (живое свидетельство KT3-3);
+	// серверу достаточно версии, таблицу не разбирает.
+	ProtocolVersionExtendedSize = 265
+	LogoutSize                  = 1
+	CharacterSelectSize         = 19
+	KeyPacketSize               = 23
+	GSLoginFailSize             = 5
 )
 
 // GSLoginFailReason — код причины LoginFail game-стороны (int32, шире

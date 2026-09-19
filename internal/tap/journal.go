@@ -36,32 +36,33 @@ const (
 	DirStoC = recDirStoC
 )
 
-// journalWriter — единственный писатель журнала: все записи под мьютексом,
+// JournalWriter — единственный писатель журнала: все записи под мьютексом,
 // первая ошибка залипает (capture обязан остановиться, а не молчать). Без
 // буферизации: ошибка писателя видна сразу, а не на flush.
-type journalWriter struct {
+type JournalWriter struct {
 	mu  sync.Mutex
 	w   io.Writer
 	err error
 }
 
-func newJournalWriter(w io.Writer) *journalWriter {
-	j := &journalWriter{w: w}
+// NewJournalWriter создаёт писателя журнала и пишет заголовок формата.
+func NewJournalWriter(w io.Writer) *JournalWriter {
+	j := &JournalWriter{w: w}
 	if _, err := io.WriteString(w, journalMagic); err != nil {
 		j.err = fmt.Errorf("tap: заголовок журнала: %w", err)
 	}
 	return j
 }
 
-// flush — точка завершения capture; при прямой записи новых данных нет.
-func (j *journalWriter) flush() error {
+// Flush — точка завершения capture; при прямой записи новых данных нет.
+func (j *JournalWriter) Flush() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.err
 }
 
 // writeRecord — [тип u8][длина u32 LE][тело].
-func (j *journalWriter) writeRecord(typ byte, body []byte) error {
+func (j *JournalWriter) writeRecord(typ byte, body []byte) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.err != nil {
@@ -81,7 +82,8 @@ func (j *journalWriter) writeRecord(typ byte, body []byte) error {
 	return nil
 }
 
-func (j *journalWriter) connOpen(id uint64, listen, upstream string, openedAt int64) error {
+// ConnOpen пишет запись открытия соединения.
+func (j *JournalWriter) ConnOpen(id uint64, listen, upstream string, openedAt int64) error {
 	body := make([]byte, 0, 20+len(listen)+len(upstream))
 	var num [8]byte
 	binary.LittleEndian.PutUint64(num[:], id)
@@ -98,7 +100,9 @@ func (j *journalWriter) connOpen(id uint64, listen, upstream string, openedAt in
 	return j.writeRecord(recConnOpen, body)
 }
 
-func (j *journalWriter) data(typ byte, id uint64, dir byte, ts int64, b []byte) error {
+// writeData пишет запись данных ноги (data или original); original — только
+// capture-режим, внешние производители журнала пишут через Data.
+func (j *JournalWriter) writeData(typ byte, id uint64, dir byte, ts int64, b []byte) error {
 	body := make([]byte, 0, 21+len(b))
 	var num [8]byte
 	binary.LittleEndian.PutUint64(num[:], id)
@@ -113,7 +117,9 @@ func (j *journalWriter) data(typ byte, id uint64, dir byte, ts int64, b []byte) 
 	return j.writeRecord(typ, body)
 }
 
-func (j *journalWriter) connClose(id uint64, connErr error) error {
+// ConnClose пишет запись закрытия соединения (пустая ошибка — чистое
+// завершение).
+func (j *JournalWriter) ConnClose(id uint64, connErr error) error {
 	var msg []byte
 	if connErr != nil {
 		msg = []byte(connErr.Error())
@@ -127,6 +133,12 @@ func (j *journalWriter) connClose(id uint64, connErr error) error {
 	body = append(body, l[:]...)
 	body = append(body, msg...)
 	return j.writeRecord(recConnClose, body)
+}
+
+// Data пишет запись данных ноги соединения — внешний производитель журнала
+// (конвертер pcap); направление — DirCtoS/DirStoC относительно клиента.
+func (j *JournalWriter) Data(id uint64, dir byte, ts int64, b []byte) error {
+	return j.writeData(recData, id, dir, ts, b)
 }
 
 // Record — одна запись журнала.
@@ -144,18 +156,20 @@ type Record struct {
 // errBadHeader — чужой заголовок журнала (не наш файл вовсе).
 var errBadHeader = errors.New("чужой заголовок")
 
-// journalReader — последовательное чтение журнала с валидацией формата.
-type journalReader struct {
+// JournalReader — последовательное чтение журнала с валидацией формата.
+// Next возвращает записи до io.EOF; обрыв хвоста и чужой заголовок — ошибки.
+type JournalReader struct {
 	r       *bufio.Reader
 	started bool
 }
 
-func newJournalReader(r io.Reader) *journalReader {
-	return &journalReader{r: bufio.NewReader(r)}
+// NewJournalReader создаёт чтеца журнала.
+func NewJournalReader(r io.Reader) *JournalReader {
+	return &JournalReader{r: bufio.NewReader(r)}
 }
 
 // Next возвращает следующую запись; io.EOF — чистый конец журнала.
-func (j *journalReader) Next() (Record, error) {
+func (j *JournalReader) Next() (Record, error) {
 	if !j.started {
 		magic := make([]byte, len(journalMagic))
 		if _, err := io.ReadFull(j.r, magic); err != nil {

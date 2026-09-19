@@ -51,7 +51,7 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.Log == nil {
 		return fmt.Errorf("tap: журнал не задан")
 	}
-	jw := newJournalWriter(opts.Log)
+	jw := NewJournalWriter(opts.Log)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -92,7 +92,7 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			closeLive()
 			connsWG.Wait()
-			_ = jw.flush()
+			_ = jw.Flush()
 			return fmt.Errorf("tap: слушаю %s: %w", m.Listen, err)
 		}
 		listeners = append(listeners, ln)
@@ -140,7 +140,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	closeLive()
 	connsWG.Wait()
-	if err := jw.flush(); err != nil && runErr == nil {
+	if err := jw.Flush(); err != nil && runErr == nil {
 		runErr = err
 	}
 	return runErr
@@ -150,7 +150,7 @@ func Run(ctx context.Context, opts Options) error {
 // (отмена контекста закрывает соединение в любом окне), dial с контекстом,
 // две ноги зеркалирования, connClose после завершения обеих (data после
 // connClose в журнале исключена: запись — после WaitGroup).
-func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *journalWriter, id uint64, mu *sync.Mutex, live *[]*connPair, stopOnJournalErr func()) {
+func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *JournalWriter, id uint64, mu *sync.Mutex, live *[]*connPair, stopOnJournalErr func()) {
 	pair := &connPair{client: client}
 	mu.Lock()
 	*live = append(*live, pair)
@@ -166,7 +166,7 @@ func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *j
 		mu.Unlock()
 	}
 
-	if err := jw.connOpen(id, m.Listen, m.Upstream, time.Now().UnixNano()); err != nil {
+	if err := jw.ConnOpen(id, m.Listen, m.Upstream, time.Now().UnixNano()); err != nil {
 		stopOnJournalErr()
 		unregister()
 		_ = client.Close()
@@ -176,7 +176,7 @@ func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *j
 	up, err := d.DialContext(ctx, "tcp", m.Upstream)
 	if err != nil {
 		err = fmt.Errorf("подключение к %s: %w", m.Upstream, err)
-		_ = jw.connClose(id, err)
+		_ = jw.ConnClose(id, err)
 		unregister()
 		_ = client.Close()
 		return
@@ -208,7 +208,7 @@ func handleConn(ctx context.Context, client net.Conn, m Map, opts Options, jw *j
 	_ = up.Close()
 	unregister()
 	connErr := joinLegErrs(err1, err2)
-	if cerr := jw.connClose(id, connErr); cerr != nil {
+	if cerr := jw.ConnClose(id, connErr); cerr != nil {
 		stopOnJournalErr()
 	}
 }
@@ -261,7 +261,7 @@ func gameEndpoint(opts Options) (ip [4]byte, port int32, ok bool) {
 // рукопожатиями вида "READY\n" несовместимы с ожиданием полного кадра).
 // EOF — полузакрытие (CloseWrite противоположной ноги), ошибка — разрыв
 // соединения вызывающим (после завершения обеих ног).
-func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewriter, framed bool) error {
+func pump(rd, wr net.Conn, dir byte, id uint64, jw *JournalWriter, rw *loginRewriter, framed bool) error {
 	if !framed {
 		return pumpRaw(rd, wr, dir, id, jw)
 	}
@@ -291,14 +291,14 @@ func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewr
 					slog.Warn("tap: rewrite пропущен", "connID", id, "err", rerr)
 				} else {
 					if orig != nil {
-						if jerr := jw.data(recOriginal, id, dir, time.Now().UnixNano(), orig); jerr != nil {
+						if jerr := jw.writeData(recOriginal, id, dir, time.Now().UnixNano(), orig); jerr != nil {
 							return jerr
 						}
 					}
 					out = rewritten
 				}
 			}
-			if jerr := jw.data(recData, id, dir, time.Now().UnixNano(), out); jerr != nil {
+			if jerr := jw.writeData(recData, id, dir, time.Now().UnixNano(), out); jerr != nil {
 				return jerr
 			}
 			if _, werr := wr.Write(out); werr != nil {
@@ -312,7 +312,7 @@ func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewr
 				// соединение закрывается с ошибкой)
 				if len(buf) > 0 {
 					slog.Warn("tap: хвост потока без полного кадра", "bytes", len(buf))
-					if jerr := jw.data(recData, id, dir, time.Now().UnixNano(), buf); jerr != nil {
+					if jerr := jw.writeData(recData, id, dir, time.Now().UnixNano(), buf); jerr != nil {
 						return jerr
 					}
 					if _, werr := wr.Write(buf); werr != nil {
@@ -339,14 +339,14 @@ func pump(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter, rw *loginRewr
 // пересылается (без нарезки на кадры; крипто-состояние ноги не отслеживается —
 // разбор делает декодер по журналу). Порядок «журнал до пересылки» — как в
 // кадровом pump.
-func pumpRaw(rd, wr net.Conn, dir byte, id uint64, jw *journalWriter) error {
+func pumpRaw(rd, wr net.Conn, dir byte, id uint64, jw *JournalWriter) error {
 	tmp := make([]byte, 4096)
 	for {
 		n, err := rd.Read(tmp)
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, tmp[:n])
-			if jerr := jw.data(recData, id, dir, time.Now().UnixNano(), chunk); jerr != nil {
+			if jerr := jw.writeData(recData, id, dir, time.Now().UnixNano(), chunk); jerr != nil {
 				return jerr
 			}
 			if _, werr := wr.Write(chunk); werr != nil {
