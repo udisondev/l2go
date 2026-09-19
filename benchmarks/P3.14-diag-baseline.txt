@@ -1,5 +1,6 @@
 # P3.14 l2ini/l2pcap baseline (2026-09-19, go1.27.1, AMD Ryzen 9 PRO 8945HS)
 # l2ini: golden-сэмпл 304 Б (2 блока RSA); l2pcap: синт-захват 10 потоков × 29 пакетов
+# PcapConvert: allocs/op включает рост bytes.Buffer харнесса внутри b.Loop (machine-пыль)
 BenchmarkIniDecode-16    	    7080	     17544 ns/op	  17.33 MB/s	   46090 B/op	      25 allocs/op
 BenchmarkIniDecode-16    	    6288	     18056 ns/op	  16.84 MB/s	   46089 B/op	      25 allocs/op
 BenchmarkIniDecode-16    	    6411	     18089 ns/op	  16.81 MB/s	   46088 B/op	      25 allocs/op
