@@ -98,7 +98,7 @@ func TestReplayRequiresArtifactInEmbeddedBuild(t *testing.T) {
 }
 
 // Кейс S9 (желательный): полный контур на вшитой статике — вход до слитка
-// и NPC стартальной окрестности развёрнуты (сквозная страховка диспатча).
+// и NPC стартовой окрестности развёрнуты (сквозная страховка диспатча).
 func TestBootstrapEmbeddedEmptyArtifactFullContour(t *testing.T) {
 	env := startE2EOpts(t, 50, 4, e2eOpts{npc: true, useEmbeddedStatic: true})
 	s := enterWorld(t, env, "embedded")
