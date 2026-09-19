@@ -51,6 +51,22 @@ jobs:
           # (для l2login тег инертен — артефакт не импортируется; сборка
           # доказывает компиляцию поставочной конфигурации; прецедент P2.7).
           go build -tags embedded ./cmd/...
+          # Диспетч статики cmd/l2go под тегом (P3.13): пустой -artifact —
+          # вшитые байты, непустой — файл (фальсификатор-самозванец без гео),
+          # replay-guard, полный контур на вшитой статике.
+          go test -tags embedded -count=1 ./cmd/l2go -run 'TestLoadStatic|TestReplayRequires|TestBootstrapEmbeddedEmptyArtifact'
+
+      # Run-цели Makefile (P3.13): guard обязан громко падать без bin/
+      # с подсказкой make embedded (молчаливый ноль — класс P3.4-F7).
+      - name: "Run-цели: guard без bin/ (P3.13)"
+        run: |
+          set -e
+          for tgt in run-login run-game; do
+            if make "$tgt" >out.txt 2>err.txt; then
+              echo "FAIL: make $tgt обязан падать без bin/"; exit 1
+            fi
+            grep -q "make embedded" err.txt || { echo "FAIL: make $tgt без подсказки"; cat err.txt; exit 1; }
+          done
 
       # Реплей-гейт D6 (фаза 3): закоммиченная фикстура DoD-сессии × текущий
       # код свёртки — ловит дрейф детерминизма между коммитами. Артефакт —

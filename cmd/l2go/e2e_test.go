@@ -144,11 +144,14 @@ type e2eEnv struct {
 	portions string // каталог лога порций GS
 }
 
-// e2eOpts — параметры старта контура сверх hz/grace (P3.12).
+// e2eOpts — параметры старта контура сверх hz/grace (P3.12; P3.13 —
+// useEmbeddedStatic: bootstrap с пустым -artifact, вшитая статика
+// embedded-сборки).
 type e2eOpts struct {
-	npc              bool
-	portionsPayloads bool
-	portionsDir      string
+	npc               bool
+	portionsPayloads  bool
+	portionsDir       string
+	useEmbeddedStatic bool
 }
 
 // startE2E — полный контур с ускоренными тиками (hz) и коротким grace;
@@ -223,10 +226,14 @@ func startE2EOpts(t *testing.T, hz, graceTicks int, opts e2eOpts) *e2eEnv {
 	if opts.npc {
 		radius = 20000
 	}
+	artifactPath := synthArtifact
+	if opts.useEmbeddedStatic {
+		artifactPath = "" // вшитая статика embedded-сборки (диспетчер loadStatic)
+	}
 	srv, err := bootstrap(config{
 		Addr: "127.0.0.1:0", Hz: hz,
 		PersistDir:       gsPersist,
-		ArtifactPath:     synthArtifact,
+		ArtifactPath:     artifactPath,
 		PortionsDir:      opts.portionsDir,
 		PortionsPayloads: opts.portionsPayloads,
 		LinkAddr:         linkLn.Addr().String(),

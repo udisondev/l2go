@@ -121,18 +121,18 @@ type server struct {
 // посреди подъёма сворачивает уже поднятое.
 func bootstrap(cfg config) (*server, error) {
 	switch {
-	case cfg.ArtifactPath == "":
-		return nil, fmt.Errorf("l2go: артефакт статики обязателен")
 	case cfg.Hz <= 0:
 		return nil, fmt.Errorf("l2go: Hz = %d: нулевые лимиты запрещены", cfg.Hz)
 	case cfg.MaxConns <= 0:
 		return nil, fmt.Errorf("l2go: MaxConns = %d: нулевые лимиты запрещены", cfg.MaxConns)
 	}
 
-	// Статика — только артефактом: XML-исходников на рантайм-пути нет.
-	static, gm, meta, _, err := artifact.LoadFile(cfg.ArtifactPath)
+	// Статика — артефактом: внешним файлом (-artifact, mmap) или, в
+	// embedded-сборке, вшитыми в бинарарь байтами (пустой -artifact);
+	// XML-исходников на рантайм-пути нет.
+	static, gm, meta, err := loadStatic(cfg.ArtifactPath)
 	if err != nil {
-		return nil, fmt.Errorf("l2go: артефакт %s: %w", cfg.ArtifactPath, err)
+		return nil, fmt.Errorf("l2go: статика: %w", err)
 	}
 	slog.Info("l2go: статика артефактом",
 		"items", meta.Items, "npcs", meta.Npcs, "spawns", meta.Spawns, "geoRegions", meta.Regions)

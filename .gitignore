@@ -20,3 +20,7 @@ internal/artifact/embedded/artifact.l2a
 
 # Артефакты сборки в корне
 /l2login
+/l2go
+/l2data
+/l2tap
+/l2client

@@ -4,7 +4,7 @@ STATICCHECK_VERSION ?= v0.8.1
 
 # check — единственная команда для агентов и CI: все ворота разом
 # (build + lint: vet, staticcheck, gofmt + checkdeps + test -race).
-.PHONY: build test race lint checkdeps check tidy fuzz-smoke fuzz-long embedded
+.PHONY: build test race lint checkdeps check tidy fuzz-smoke fuzz-long embedded run-login run-game
 
 build:
 	$(GO) build ./...
@@ -80,3 +80,18 @@ embedded:
 		$(GO) run ./cmd/l2data build "$(DATA)"; \
 	fi
 	$(GO) build -tags embedded -o bin/ ./...
+
+# Живой контур приёмки (P3.13): бинарники embedded-сборки — сначала
+# make embedded DATA=… GEO=… Дефолты флагов живут в самих бинарниках
+# (единый источник); всё сверх дефолтов — переменными:
+#   make run-game GAME_FLAGS="-npc-center x,y -npc-radius N -hz 20"
+#   make run-login LOGIN_FLAGS="-addr :2106"
+# run-game пишет лог порций с телами писем (-portions-payloads): сессия
+# приёмки обязана быть реплей-контрактом D6 («баг = тест»).
+run-login:
+	@test -x bin/l2login || { echo "нет bin/l2login: сначала make embedded DATA=<корень датапака> [GEO=<каталог геодаты>]" >&2; exit 2; }
+	./bin/l2login $(LOGIN_FLAGS)
+
+run-game:
+	@test -x bin/l2go || { echo "нет bin/l2go: сначала make embedded DATA=<корень датапака> [GEO=<каталог геодаты>]" >&2; exit 2; }
+	./bin/l2go -portions-payloads $(GAME_FLAGS)
